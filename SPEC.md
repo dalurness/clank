@@ -1,16 +1,18 @@
 # Clank Language Specification v1.0
 
-Clank is a strongly-typed, applicative-primary language designed for AI agent authorship. Pipeline syntax (`|>`) provides left-to-right composition sugar. All tokens are ASCII. Types do the heavy lifting — refinement types, algebraic effects, affine types, row polymorphism, and interfaces compose orthogonally.
+Clank is a strongly-typed, applicative-primary language designed for AI agent authorship. Pipeline syntax (`|>`) provides left-to-right composition sugar. All tokens are ASCII. Algebraic effects provide extensible control flow.
 
 ## 1. Lexical Structure
 
 ```
 ident       = alpha { alpha | digit | '_' | '-' }
-keywords    = let in fn if then else match do type effect affine
-              handle resume mod use pub clone true false interface
-              impl Self deriving where opaque
+keywords    = let in fn if then else match do type effect
+              handle resume mod use pub true false
+reserved    = affine clone interface impl Self deriving where opaque
 comment     = '#' ... newline
 ```
+
+Reserved keywords are lexed but have no semantic meaning in the current implementation. They exist to prevent collision with planned features (see ROADMAP.md).
 
 Primitives: `Int` (arbitrary-precision), `Rat` (rational), `Bool`, `Str` (UTF-8), `Byte`, `()` (unit).
 
@@ -20,15 +22,12 @@ Compounds: `[T]` (list), `(T, U)` (tuple), `{k: T}` (record), `T | U` (tagged un
 
 ```ebnf
 program     = { top-level } ;
-top-level   = definition | type-decl | effect-decl | interface-decl
-            | impl-block | mod-decl | use-decl ;
+top-level   = definition | type-decl | effect-decl | mod-decl | use-decl ;
 
 definition  = ['pub'] ident ':' type-sig '=' expr ;
 type-sig    = '(' params ')' '->' effect-ann type-expr ;
 
-type-decl   = ['pub' ['opaque']] 'type' ident [type-params] '=' type-body
-              [deriving] ;
-            | 'affine' 'type' ident [type-params] '=' type-body ;
+type-decl   = ['pub'] 'type' ident [type-params] '=' type-body ;
 type-body   = type-expr | variant { '|' variant } ;
 variant     = ident ['(' type-expr { ',' type-expr } ')'] ;
 
@@ -64,20 +63,17 @@ All operators desugar to function calls. `a |> f(b)` = `f(a, b)`. `a ++ b` = `st
 
 ## 3. Type System
 
-### 3.1 Effect System (Koka-style)
+### 3.1 Effect System
 
-Every function type includes an effect row: `T -> <effects> U`.
+Every function type includes an effect annotation: `T -> <effects> U`.
 
 ```
 <>                  -- pure
 <io>                -- I/O
 <exn[E]>            -- may raise E
-<state[S]>          -- mutable state S
-<async>             -- async operations
-<io, exn | e>       -- open row (polymorphic tail)
 ```
 
-Built-in effects: `io` (not handleable), `exn[E]`, `state[S]`, `async`. User-defined effects via `effect Name { op : T -> U }`. Effect rows are unordered sets with row-polymorphic unification (Rémy-style).
+Built-in effects: `io` (not handleable), `exn[E]`. User-defined effects via `effect Name { op : T -> U }`.
 
 **Handlers** interpret effects:
 
@@ -88,98 +84,78 @@ handle computation {
 }
 ```
 
-The continuation `k` may be called 0, 1, or many times. Effect-polymorphic functions use row variables: `map : ([a], (a) -> <e> b) -> <e> [b]`.
+Continuations are one-shot: `k` may be called 0 or 1 times. A second call raises error E211.
 
-### 3.2 Refinement Types
+The type checker collects effects from expressions and warns on undeclared effects, but does not perform full row-polymorphic unification or effect subtyping. Effect annotations are checked as flat sets.
 
-`{T | P}` — values of type T satisfying predicate P. Predicates are QF_UFLIRA (decidable, verified by SMT solver). `v` refers to the refined value.
+### 3.2 Records
 
-```
-div : (n: Int, d: Int{> 0}) -> <> Int
-mean : (xs: [Rat]{len > 0}) -> <> Rat
-clamp : (lo: Int, hi: Int{>= lo}, x: Int) -> <> Int{>= lo && <= hi}
-```
-
-Shorthand: `Int{> 0}` means `{Int | v > 0}`. Built-in measures: `len` (lists, strings), `fst`, `snd`. User measures via `measure` keyword (must be total, pure, structurally recursive). Liquid type inference discovers refinements for unannotated bindings.
-
-### 3.3 Affine Types
-
-Types are unrestricted (use freely) or affine (use at most once). Primitives are unrestricted. Compound types inherit affinity from components.
+Records are structural key-value maps:
 
 ```
-affine type File
-affine type Connection
+{name: "Alice", age: 30}    -- record literal
+rec.name                     -- field access
+rec{age: 31}                 -- record update (new record with field replaced)
 ```
 
-- **Move**: using an affine value consumes it; further use is a compile error
-- **Borrow**: `&x` creates a read-only reference without consuming; scoped to one call, cannot be stored or returned
-- **Clone**: `clone &x` explicitly duplicates (requires `Clone` interface)
-- **Discard**: `discard x` explicitly abandons a resource (linter-flaggable)
-- Branches must consume the same affine values on all paths
-- GC handles memory; affine types enforce resource protocols (close, disconnect)
+Operations: `rec.field` (access), `rec{field: val}` (update), `{f: v, ..base}` (spread). Records are structurally typed. The type checker does not enforce row polymorphism — record types are not open or closed, and there is no row-variable unification.
 
-### 3.4 Row Polymorphism (Records)
+### 3.3 Type Inference
 
-Records support open types via row variables:
+The type checker performs basic Hindley-Milner-style inference:
 
-```
-{name: Str}              -- closed: exactly these fields
-{name: Str | r}          -- open: at least name, r = rest
-```
+- Literal types (Int, Rat, Bool, Str, Unit)
+- Variable lookup and scoping
+- Let-binding with type propagation
+- If-then-else branch unification
+- Lambda and function application
+- Match expressions with pattern binding
+- List and tuple construction
+- Exhaustiveness checking for match (variant registry)
 
-Operations: `rec.field` (access), `rec{field: val}` (update), `{f: v, ..base}` (spread), `{f | rest}` (open destructure). Row unification is Rémy-style, preserves principal types. Closed records reject extra fields; open records accept them.
-
-### 3.5 Interfaces (Typeclasses)
-
-```
-interface Show { show : (Self) -> <> Str }
-interface Ord : Eq { cmp : (Self, Self) -> <> Ordering }
-interface Into<T> { into : (Self) -> <> T }
-
-impl Show for Int { show = int-to-str }
-type Color = Red | Green | Blue deriving (Eq, Show, Clone)
-```
-
-Constraints via `where`: `sort : ([a]) -> <> [a] where Ord a`. Built-in interfaces: `Clone`, `Show`, `Eq`, `Ord`, `Default`, `Into`/`From`. Monomorphized at compile time. Coherence: one impl per type-interface pair; orphan impls are warnings.
+The checker does **not** currently enforce: refinement predicates, affine use-at-most-once, full effect row unification, or interface constraints. These are planned (see ROADMAP.md).
 
 ## 4. Module System
 
 ```
 mod math.stats
-use std.io (print, read)
+use std.io (print)
 use std.list (map, filter)
 
-pub mean : (xs: [Rat]{len > 0}) -> <> Rat = ...
+pub mean : (xs: [Rat]) -> <> Rat = ...
 ```
 
 - **1:1 file mapping**: `src/math/stats.clk` → `mod math.stats`
 - **Explicit imports**: every name listed, no globs
 - **Visibility**: private by default, `pub` to export
-- **`pub opaque type`**: exports name without constructors
 - **Public functions must have explicit effect annotations**
-- **Impls are always public** (coherence requires it)
-- **Packages**: `clank.pkg` manifest, `std` always available
 
-## 5. Standard Library (240 words)
+## 5. Built-in Functions
 
-### Tier 1 (auto-imported)
+Core operations are available without imports. These are the actually implemented builtins:
 
-| Module | Words | Key functions |
-|--------|-------|---------------|
-| `std.str` | 24 | `len get slc has split join trim up lo rep cat fmt` |
-| `std.json` | 15 | `enc dec get set path keys merge` |
-| `std.fs` | 19 | `open close read write lines exists ls mkdir with` |
-| `std.col` | 49 | `rev sort zip flat flatmap take drop find any all range group scan` + Map/Set ops |
-| `std.http` | 9 | `get post put del req json` |
-| `std.err` | 18 | `ok fail unwrap try throw some none` + Option/Result ops |
-| `std.proc` | 9 | `run sh ok pipe bg wait kill exit` |
-| `std.env` | 6 | `get set rm all has` |
+### Arithmetic
+`add`, `sub`, `mul`, `div`, `mod`, `negate`
 
-### Tier 2 (requires `use`)
+### Comparison
+`eq`, `neq`, `lt`, `gt`, `lte`, `gte`
 
-`std.srv` (HTTP server, 11), `std.cli` (arg parsing, 8), `std.dt` (datetime, 15), `std.csv` (8), `std.log` (structured JSON logging, 8), `std.test` (11), `std.rx` (regex, 7), `std.math` (22).
+### Logic
+`and`, `or`, `not`
 
-Key types: `Json` (sum type), `Result<a, e>`, `Option<a>`, `Ordering`, `Err`, `Map<k, v>` (association list). File/server/process handles are affine. All functions declare effects. Test and log output is structured JSON.
+### Strings
+`str.cat` (concatenation), `show` (value to string), `split`, `trim`, `join`, `print` (I/O)
+
+### Lists
+`len`, `head`, `tail`, `cons`, `cat`, `rev`, `get`, `map`, `filter`, `fold`, `flat-map`, `range`, `zip`
+
+### Tuples
+`fst`, `snd`, `tuple.get`
+
+### Effects
+`raise` (trigger `exn` effect)
+
+The full standard library catalog (std.str, std.json, std.fs, std.http, std.proc, etc.) described in `docs/stdlib-catalog.md` is not yet implemented. See ROADMAP.md.
 
 ## 6. Example
 
@@ -187,13 +163,8 @@ Key types: `Json` (sum type), `Result<a, e>`, `Option<a>`, `Ordering`, `Err`, `M
 mod app.main
 
 use std.io (print)
-use std.fs (read)
-use std.str (split, show)
 
-word-count : (path: Str) -> <io, exn> () =
-  path |> read |> split(" ") |> len |> show |> print
-
-factorial : (n: Int{>= 0}) -> <> Int =
+factorial : (n: Int) -> <> Int =
   if n == 0 then 1 else n * factorial(n - 1)
 
 effect DivError { div-by-zero : () -> <> () }
@@ -207,5 +178,14 @@ area : (s: Shape) -> <> Rat =
   match s {
     Circle(r) => r * r * 3.14159
     Rect(w, h) => w * h
+  }
+
+greet : (rec: {name: Str}) -> <io> () =
+  rec.name |> str.cat("Hello, ") |> print
+
+main : () -> <io> () =
+  do {
+    print(show(factorial(10)))
+    greet({name: "Agent"})
   }
 ```

@@ -10,7 +10,7 @@ Current state of the implementation and what's next.
 - **Lexer** (`src/lexer.ts`) — Full tokenization of all Clank syntax, all keywords including `affine`, `handle`, `resume`, `perform`, `effect`
 - **Parser** (`src/parser.ts`) — Recursive descent parser producing full AST: definitions, type declarations, effect declarations, expressions, pattern matching, do-blocks, handle expressions, modules, imports
 - **Desugarer** (`src/desugar.ts`) — Pipeline operator (`|>`), operator-to-function desugaring (`++` → `str.cat`), do-block expansion
-- **Type Checker** (`src/checker.ts`) — Type inference, function signature checking, exhaustiveness checking for pattern matches, variant registry, interface awareness
+- **Type Checker** (`src/checker.ts`) — Type inference, function signature checking, exhaustiveness checking for pattern matches, variant registry
 - **Tree-Walking Interpreter** (`src/eval.ts`) — Complete AST-level evaluator with closures, recursion, effects, handlers, pattern matching, records, tuples, lists
 - **Bytecode Compiler** (`src/compiler.ts`) — AST to 87-opcode bytecode compilation, jump patching, closure capture, effect handler compilation
 - **Stack VM** (`src/vm.ts`) — Full 87-opcode execution engine with call stack, data stack, closures, effect handler stack, continuations, structured trap errors
@@ -83,6 +83,9 @@ Bidirectional terse/verbose conversion (`clank pretty` / `clank terse`). Lexical
 
 ### Workspace Orchestration — `docs/workspace-orchestration.md`, `docs/local-deps-workspace.md`
 Multi-package workspaces, local dependency resolution, coordinated builds. Specced but depends on the package manager.
+
+### Interface / Impl System (Typeclasses)
+Interface declarations, impl blocks, `where` constraints, `deriving` clauses, `Self` type, and `pub opaque type`. Keywords are reserved in the lexer but have no parser rules, type checker logic, or runtime dispatch. Planned features: `Clone`, `Show`, `Eq`, `Ord`, `Default`, `Into`/`From` built-in interfaces; monomorphization; coherence checking; orphan impl warnings.
 
 ### Row Polymorphism Inference — `docs/row-polymorphism.md`
 Rémy-style row unification for records and effect rows. The parser and checker handle records, but full row-polymorphic unification (open records, row variables, principal types) is not implemented in the type checker.
