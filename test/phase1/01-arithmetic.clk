@@ -1,0 +1,14 @@
+# Test: basic arithmetic expressions
+# Expected output:
+# 15
+# -3
+# 42
+# 3
+# 2
+
+main : () -> <io> () =
+  print(show(10 + 5))
+  print(show(4 - 7))
+  print(show(6 * 7))
+  print(show(10 / 3))
+  print(show(17 % 5))

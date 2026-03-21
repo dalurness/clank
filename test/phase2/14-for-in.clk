@@ -1,0 +1,21 @@
+# Test: for/in expressions (map, filter+map, fold, filter+fold)
+# Expected output:
+# [2, 4, 6, 8, 10]
+# [4, 16]
+# 15
+# 12
+
+main : () -> <io> () =
+  let xs = [1, 2, 3, 4, 5]
+
+  # map form: for x in xs do f(x)
+  print(show(for x in xs do x * 2))
+
+  # filter+map form: for x in xs if p(x) do f(x)
+  print(show(for x in xs if x % 2 == 0 do x * x))
+
+  # fold form: for x in xs fold acc = init do g(acc, x)
+  print(show(for x in xs fold total = 0 do total + x))
+
+  # filter+fold form: for x in xs if p(x) fold acc = init do g(acc, x)
+  print(show(for x in xs if x > 2 fold total = 0 do total + x))

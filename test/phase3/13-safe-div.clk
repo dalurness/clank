@@ -1,0 +1,19 @@
+# Test: safe division using built-in exn effect (Example 8.4)
+# div raises on division by zero, handler catches and returns None
+# Expected output:
+# Some(5)
+# None
+# Some(3)
+
+type Option = Some(Int) | None
+
+safe-div : (n: Int, d: Int) -> <> Option =
+  handle div(n, d) {
+    return x -> Some(x),
+    raise _ resume _ -> None
+  }
+
+main : () -> <io> () =
+  print(show(safe-div(10, 2)))
+  print(show(safe-div(10, 0)))
+  print(show(safe-div(9, 3)))

@@ -1,0 +1,26 @@
+# Spec example 8.2: FizzBuzz
+# Expected output:
+# 1
+# 2
+# Fizz
+# 4
+# Buzz
+# Fizz
+# 7
+# 8
+# Fizz
+# Buzz
+# 11
+# Fizz
+# 13
+# 14
+# FizzBuzz
+
+fizzbuzz : (n: Int) -> <io> () =
+  if n % 15 == 0 then print("FizzBuzz")
+  else if n % 3 == 0 then print("Fizz")
+  else if n % 5 == 0 then print("Buzz")
+  else print(show(n))
+
+main : () -> <io> () =
+  map(range(1, 15), fizzbuzz)

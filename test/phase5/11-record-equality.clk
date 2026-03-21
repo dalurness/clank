@@ -1,0 +1,16 @@
+# Test: record equality and show
+# Expected output:
+# true
+# false
+# true
+# {x: 1, y: 2}
+
+main : () -> <io> () =
+  let a = {x: 1, y: 2}
+  let b = {x: 1, y: 2}
+  let c = {x: 1, y: 3}
+  print(show(a == b))
+  print(show(a == c))
+  let d = {a | y: 2}
+  print(show(a == d))
+  print(show(a))

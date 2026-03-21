@@ -1,0 +1,21 @@
+# Test: nested effect aliases (alias referencing another alias)
+
+effect counter {
+  inc : () -> Int
+}
+
+effect alias Counting = <counter>
+effect alias CountAndIO = <Counting, io>
+
+run : () -> <CountAndIO> () =
+  let x = perform inc()
+  print(show(x))
+
+main : () -> <io> () =
+  handle run() {
+    return v -> v,
+    inc resume k -> k(7)
+  }
+
+# Expected output:
+# 7

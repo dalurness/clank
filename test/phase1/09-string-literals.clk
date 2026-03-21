@@ -1,0 +1,12 @@
+# Test: string literals and concatenation
+# Expected output:
+# hello
+# hello world
+#
+# abc123
+
+main : () -> <io> () =
+  print("hello")
+  print("hello" ++ " " ++ "world")
+  print("")
+  print("abc" ++ show(123))

@@ -1,0 +1,12 @@
+# Test: match arm alignment
+
+type Shape = Circle(Rat) | Rect(Rat, Rat)
+
+area : (s: Shape) -> <> Rat =
+  match s {
+    Circle(r)  => r * r * 3.14159
+    Rect(w, h) => w * h
+  }
+
+main : () -> <io> () =
+  print(show(area(Circle(5.0))))

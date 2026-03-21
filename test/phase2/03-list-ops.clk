@@ -1,0 +1,23 @@
+# Test: list operations (map, filter, fold, len, head, tail, cons, cat, rev)
+# Expected output:
+# [2, 4, 6, 8, 10]
+# [2, 4]
+# 15
+# 5
+# 1
+# [2, 3, 4, 5]
+# [0, 1, 2, 3]
+# [1, 2, 3, 4, 5]
+# [3, 2, 1]
+
+main : () -> <io> () =
+  let xs = [1, 2, 3, 4, 5]
+  print(show(map(xs, fn(x) => x * 2)))
+  print(show(filter(xs, fn(x) => x % 2 == 0)))
+  print(show(fold(xs, 0, fn(acc, x) => acc + x)))
+  print(show(len(xs)))
+  print(show(head(xs)))
+  print(show(tail(xs)))
+  print(show(cons(0, [1, 2, 3])))
+  print(show(cat([1, 2], [3, 4, 5])))
+  print(show(rev([1, 2, 3])))

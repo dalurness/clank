@@ -1,0 +1,15 @@
+# Test: functional record update
+# Expected output:
+# Ada
+# 37
+# Grace
+# 37
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  let older = {person | age: 37}
+  print(older.name)
+  print(show(older.age))
+  let renamed = {older | name: "Grace"}
+  print(renamed.name)
+  print(show(renamed.age))

@@ -1,0 +1,20 @@
+# Test: tuple creation, show, and match destructuring
+# Expected output:
+# (1, 2)
+# (hello, true, 42)
+# 30
+# 6
+
+main : () -> <io> () =
+  let pair = (1, 2)
+  print(show(pair))
+  let triple = ("hello", true, 42)
+  print(show(triple))
+  let coords = (10, 20)
+  match coords {
+    (x, y) => print(show(x + y))
+  }
+  let nested = ((1, 2), (3, 4))
+  match nested {
+    ((a, b), (c, d)) => print(show(a + b + c))
+  }

@@ -1,0 +1,17 @@
+# Test: multiple effect declarations
+# Verifies that multiple effect declarations can coexist.
+
+effect log {
+  info : Str -> ()
+}
+
+effect store {
+  get-val : Str -> Str,
+  set-val : Str -> ()
+}
+
+main : () -> <io> () =
+  print("two effects declared")
+
+# Expected output:
+# two effects declared

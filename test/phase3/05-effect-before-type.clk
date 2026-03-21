@@ -1,0 +1,19 @@
+# Test: effect declarations before type declarations
+# Verifies ordering flexibility of top-level forms.
+
+effect notify {
+  send : Str -> ()
+}
+
+type Priority = High | Medium | Low
+
+main : () -> <io> () =
+  let p = High
+  match p {
+    High => print("high priority")
+    Medium => print("medium")
+    Low => print("low")
+  }
+
+# Expected output:
+# high priority

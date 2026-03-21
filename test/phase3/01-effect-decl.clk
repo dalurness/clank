@@ -1,0 +1,15 @@
+# Test: effect declaration parsing and registration
+# Verifies that effect declarations parse correctly and
+# the effect definition is registered in the environment.
+
+effect log {
+  info  : Str -> (),
+  warn  : Str -> (),
+  error : Str -> ()
+}
+
+main : () -> <io> () =
+  print("effect declared")
+
+# Expected output:
+# effect declared

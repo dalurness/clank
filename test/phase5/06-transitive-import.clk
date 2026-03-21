@@ -1,0 +1,8 @@
+# Test transitive module imports (module imports another module)
+# Expected output:
+# 20
+
+use enhanced-math (quadruple)
+
+main : () -> <io> () =
+  print(show(quadruple(5)))

@@ -1,0 +1,16 @@
+# Test: subtracting multiple effects at once
+# <io, exn, log \ io, log> should leave only exn
+
+effect log {
+  info : Str -> ()
+}
+
+effect exn {
+  raise : Str -> ()
+}
+
+main : () -> <io, exn, log \ io, log> () =
+  print("multi-subtract works")
+
+# Expected output:
+# multi-subtract works

@@ -1,0 +1,17 @@
+# Test type declarations + match expressions
+
+type Shape = Circle(Rat) | Rect(Rat, Rat)
+
+area : (s: Shape) -> <> Rat =
+  match s {
+    Circle(r) => r * r * 3.14159
+    Rect(w, h) => w * h
+  }
+
+main : () -> <> () =
+  let c = Circle(5.0)
+  let r = Rect(3.0, 4.0)
+  let a1 = area(c)
+  let a2 = area(r)
+  print(show(a1))
+  print(show(a2))

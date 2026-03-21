@@ -1,0 +1,18 @@
+# Test: records passed to functions and returned
+# Expected output:
+# Ada
+# 37
+# true
+
+get-name : (rec: {name: Str, age: Int}) -> <> Str =
+  rec.name
+
+birthday : (rec: {name: Str, age: Int}) -> <> {name: Str, age: Int} =
+  {rec | age: rec.age + 1}
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  print(get-name(person))
+  let older = birthday(person)
+  print(show(older.age))
+  print(show(person.age == 36))

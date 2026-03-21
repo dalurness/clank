@@ -1,0 +1,26 @@
+# Test: short-circuit evaluation for && and ||
+# Expected output:
+# false
+# true
+# safe-and
+# safe-or
+# true
+# false
+
+# bomb divides by zero — would crash without short-circuit
+bomb : () -> <> Bool =
+  1 / 0 == 0
+
+main : () -> <io> () =
+  do {
+    # && short-circuits on false: bomb() never called
+    print(show(false && bomb()))
+    # || short-circuits on true: bomb() never called
+    print(show(true || bomb()))
+    # verify in if-condition context
+    print(if false && bomb() then "bad" else "safe-and")
+    print(if true || bomb() then "safe-or" else "bad")
+    # non-short-circuit cases still work
+    print(show(true && true))
+    print(show(false || false))
+  }

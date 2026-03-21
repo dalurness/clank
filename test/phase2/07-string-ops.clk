@@ -1,0 +1,17 @@
+# Test: string operations (split, join, trim, show, ++)
+# Expected output:
+# [hello, world, foo]
+# 3
+# hello-world-foo
+# hello
+# hello world
+# 42
+
+main : () -> <io> () =
+  let words = split("hello world foo", " ")
+  print(show(words))
+  print(show(len(words)))
+  print(join(words, "-"))
+  print(trim("  hello  "))
+  print("hello" ++ " " ++ "world")
+  print(show(42))

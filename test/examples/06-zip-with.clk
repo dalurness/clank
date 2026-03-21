@@ -1,0 +1,10 @@
+# Spec example 8.6: Zip-with (lambda + named locals)
+# Expected output:
+# [5, 7, 9]
+
+zip-with : (xs: [Int], ys: [Int], f: (Int -> Int -> Int)) -> <> [Int] =
+  map(zip(xs, ys), fn(pair) => f(fst(pair), snd(pair)))
+
+main : () -> <io> () =
+  let result = zip-with([1, 2, 3], [4, 5, 6], fn(a, b) => a + b)
+  print(show(result))

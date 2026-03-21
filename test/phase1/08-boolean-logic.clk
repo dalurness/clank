@@ -1,0 +1,14 @@
+# Test: boolean operators (&&, ||, !)
+# Expected output:
+# false
+# true
+# true
+# false
+# true
+
+main : () -> <io> () =
+  print(show(true && false))
+  print(show(true || false))
+  print(show(!false))
+  print(show(!true))
+  print(show((true || false) && !(false && true)))

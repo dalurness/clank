@@ -1,0 +1,17 @@
+# Test: effect declarations alongside regular function definitions
+# Verifies that effects and functions coexist in the same program.
+
+effect counter {
+  increment : () -> Int,
+  get-count : () -> Int
+}
+
+double : (x: Int) -> <> Int =
+  x * 2
+
+main : () -> <io> () =
+  let result = double(21)
+  print(show(result))
+
+# Expected output:
+# 42

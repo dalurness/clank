@@ -1,0 +1,8 @@
+# Module exporting an effect alias
+mod myaliases
+
+pub effect logger {
+  log_msg : Str -> ()
+}
+
+pub effect alias WithLog = <logger, io>

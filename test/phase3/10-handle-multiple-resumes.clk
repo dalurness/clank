@@ -1,0 +1,22 @@
+# Test: multiple resumes in sequence
+# Verifies that a handler can resume multiple times through
+# a computation with several effect operations.
+# Expected output:
+# 60
+
+effect ask {
+  get-num : Str -> Int
+}
+
+add-three : () -> <ask> Int =
+  let a = get-num("first")
+  let b = get-num("second")
+  let c = get-num("third")
+  a + b + c
+
+main : () -> <io> () =
+  let result = handle add-three() {
+    return x -> x,
+    get-num label resume k -> k(20)
+  }
+  print(show(result))

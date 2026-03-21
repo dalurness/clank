@@ -1,0 +1,27 @@
+# Test: nested handlers for different effects
+# An inner handler handles one effect, outer handler handles another.
+# Expected output:
+# hello world
+
+effect greet {
+  get-name : () -> Str
+}
+
+effect fmt {
+  prefix : () -> Str
+}
+
+make-greeting : () -> <greet, fmt> Str =
+  let p = prefix()
+  let n = get-name()
+  p ++ " " ++ n
+
+main : () -> <io> () =
+  let result = handle (handle make-greeting() {
+    return x -> x,
+    get-name _ resume k -> k("world")
+  }) {
+    return x -> x,
+    prefix _ resume k -> k("hello")
+  }
+  print(result)

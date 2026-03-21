@@ -1,0 +1,16 @@
+# Test: comparison operators
+# Expected output:
+# true
+# false
+# true
+# false
+# true
+# true
+
+main : () -> <io> () =
+  print(show(1 == 1))
+  print(show(1 != 1))
+  print(show(3 < 5))
+  print(show(3 > 5))
+  print(show(5 <= 5))
+  print(show(7 >= 3))

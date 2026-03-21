@@ -1,0 +1,20 @@
+# Test: higher-order functions and closures
+# Expected output:
+# 15
+# [2, 3, 4]
+# 10
+
+apply-twice : (f: (Int -> Int), x: Int) -> <> Int =
+  f(f(x))
+
+make-adder : (n: Int) -> <> (Int -> Int) =
+  fn(x) => x + n
+
+main : () -> <io> () =
+  let result = apply-twice(fn(x) => x + 5, 5)
+  print(show(result))
+  let inc = make-adder(1)
+  let xs = map([1, 2, 3], inc)
+  print(show(xs))
+  let add3 = make-adder(3)
+  print(show(add3(7)))

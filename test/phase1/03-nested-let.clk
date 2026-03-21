@@ -1,0 +1,11 @@
+# Test: nested let-in expressions
+# Expected output:
+# 60
+# 13
+
+main : () -> <io> () =
+  let result = let a = 3 in let b = 4 in a * b * 5
+  print(show(result))
+  let outer = 10
+  let inner = let x = outer + 1 in x + 2
+  print(show(inner))

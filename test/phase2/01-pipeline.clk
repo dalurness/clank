@@ -1,0 +1,14 @@
+# Test: pipeline operator (|>)
+# Expected output:
+# 5
+# 3
+# 42
+# hello world
+
+main : () -> <io> () =
+  5 |> show |> print
+  let xs = [1, 2, 3]
+  xs |> len |> show |> print
+  let result = 6 |> mul(7)
+  print(show(result))
+  print("hello" ++ " world")

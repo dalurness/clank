@@ -1,0 +1,7 @@
+# Test: formatter indentation (2-space)
+# Expected: already canonical
+
+main : () -> <io> () =
+  let x = 1
+  let y = 2
+  print(show(x + y))

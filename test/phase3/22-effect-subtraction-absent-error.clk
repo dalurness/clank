@@ -1,0 +1,11 @@
+# Test: error when subtracting an absent effect
+# Subtracting 'log' from <io> should fail since log is not present
+
+effect log {
+  info : Str -> ()
+}
+
+main : () -> <io \ log> () =
+  print("should not reach")
+
+# Expected: error

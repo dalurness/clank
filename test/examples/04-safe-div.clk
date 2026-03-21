@@ -1,0 +1,15 @@
+# Spec example 8.4: Safe division with effects
+# Expected output:
+# Some(5)
+# None
+# Some(3)
+
+type Option = Some(Int) | None
+
+safe-div : (a: Int, b: Int) -> <> Option =
+  if b == 0 then None else Some(a / b)
+
+main : () -> <io> () =
+  print(show(safe-div(10, 2)))
+  print(show(safe-div(10, 0)))
+  print(show(safe-div(9, 3)))

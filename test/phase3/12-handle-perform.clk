@@ -1,0 +1,15 @@
+# Test: explicit perform syntax with handler
+# Uses the perform keyword to trigger an effect operation.
+# Expected output:
+# 99
+
+effect val {
+  ask : () -> Int
+}
+
+main : () -> <io> () =
+  let result = handle (perform ask()) {
+    return x -> x,
+    ask _ resume k -> k(99)
+  }
+  print(show(result))

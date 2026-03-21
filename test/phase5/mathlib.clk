@@ -1,0 +1,12 @@
+# A simple math library module
+mod mathlib
+
+pub double : (n: Int) -> <> Int =
+  n + n
+
+pub triple : (n: Int) -> <> Int =
+  n + n + n
+
+# private helper — should NOT be importable
+helper : (n: Int) -> <> Int =
+  n + 1

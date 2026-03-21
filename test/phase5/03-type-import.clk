@@ -1,0 +1,12 @@
+# Test importing types and variant constructors
+# Expected output:
+# 75
+# 24
+
+use shapes (Circle, Rect, area)
+
+main : () -> <io> () =
+  let c = Circle(5)
+  let r = Rect(4, 6)
+  let _ = print(show(area(c)))
+  print(show(area(r)))

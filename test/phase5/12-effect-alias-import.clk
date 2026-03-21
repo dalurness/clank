@@ -1,0 +1,17 @@
+# Test importing a pub effect alias from another module
+# Expected output:
+# logged: hello
+# done
+
+use myaliases (WithLog, log_msg)
+
+greet : () -> <WithLog> () =
+  perform log_msg("hello")
+  print("done")
+
+main : () -> <io> () =
+  handle greet() {
+    return v -> v,
+    log_msg msg resume k ->
+      let _ = print("logged: " ++ msg) in k(())
+  }

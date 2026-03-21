@@ -1,0 +1,12 @@
+# Test: effect subtraction in type signatures
+# Verifies that effect subtraction works: <io, log \ log> = <io>
+
+effect log {
+  info : Str -> ()
+}
+
+main : () -> <io, log \ log> () =
+  print("subtraction works")
+
+# Expected output:
+# subtraction works

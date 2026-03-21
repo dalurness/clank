@@ -1,0 +1,7 @@
+# Test: operator spacing
+
+main : () -> <io> () =
+  print(show(2 + 3 * 4))
+  print(show((2 + 3) * 4))
+  print(show(1 == 1 && 2 != 3))
+  print(show("hello" ++ " " ++ "world"))

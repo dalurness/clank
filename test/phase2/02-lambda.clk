@@ -1,0 +1,19 @@
+# Test: lambda expressions
+# Expected output:
+# 10
+# 25
+# 7
+
+apply : (f: (Int -> Int), x: Int) -> <> Int =
+  f(x)
+
+double-apply : (f: (Int -> Int), x: Int) -> <> Int =
+  f(f(x))
+
+main : () -> <io> () =
+  let add5 = fn(x) => x + 5
+  print(show(apply(add5, 5)))
+  let sq = fn(x) => x * x
+  print(show(apply(sq, 5)))
+  let result = double-apply(fn(x) => x + 2, 3)
+  print(show(result))

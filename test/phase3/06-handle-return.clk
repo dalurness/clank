@@ -1,0 +1,15 @@
+# Test: handle expression with return clause only
+# A handle with no effect operations — the return clause
+# transforms the result of the handled computation.
+# Expected output:
+# 42
+
+effect dummy {
+  noop : () -> ()
+}
+
+main : () -> <io> () =
+  let result = handle 21 {
+    return x -> x + x
+  }
+  print(show(result))

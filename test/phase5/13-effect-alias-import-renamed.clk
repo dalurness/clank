@@ -1,0 +1,17 @@
+# Test importing a pub effect alias with a local rename
+# Expected output:
+# [LOG] world
+# ok
+
+use myaliases (WithLog as MyEffects, log_msg)
+
+say : () -> <MyEffects> () =
+  perform log_msg("world")
+  print("ok")
+
+main : () -> <io> () =
+  handle say() {
+    return v -> v,
+    log_msg msg resume k ->
+      let _ = print("[LOG] " ++ msg) in k(())
+  }

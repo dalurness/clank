@@ -1,0 +1,18 @@
+# Test: perform expression parsing
+# This tests that perform syntax parses correctly.
+# Since no handler is installed, calling perform on an effect
+# operation should produce an unhandled effect error.
+# We test parsing by using perform in a branch that doesn't execute.
+
+effect ask {
+  prompt : Str -> Str
+}
+
+use-perform : (x: Int) -> <ask> Str =
+  perform prompt("hello")
+
+main : () -> <io> () =
+  print("perform parses ok")
+
+# Expected output:
+# perform parses ok

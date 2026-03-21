@@ -1,0 +1,21 @@
+# Test: basic effect alias declaration and usage
+# An alias expands to its constituent effects in type checking.
+
+effect log {
+  info : Str -> ()
+}
+
+effect alias Logged = <log, io>
+
+greet : () -> <Logged> () =
+  perform info("hello")
+  print("world")
+
+main : () -> <io> () =
+  handle greet() {
+    return v -> v,
+    info msg resume k -> k(())
+  }
+
+# Expected output:
+# world

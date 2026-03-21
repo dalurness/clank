@@ -1,0 +1,11 @@
+# Test: let bindings
+# Expected output:
+# 30
+# 25
+
+main : () -> <io> () =
+  let x = 10
+  let y = 20
+  print(show(x + y))
+  let z = x + 15
+  print(show(z))

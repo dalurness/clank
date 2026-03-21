@@ -1,0 +1,11 @@
+# Test: chained field access and nested records
+# Expected output:
+# Ada
+# Lovelace
+# Ada Lovelace
+
+main : () -> <io> () =
+  let person = {name: {first: "Ada", last: "Lovelace"}, age: 36}
+  print(person.name.first)
+  print(person.name.last)
+  print(person.name.first ++ " " ++ person.name.last)

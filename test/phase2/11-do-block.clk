@@ -1,0 +1,22 @@
+# Test: do-block parsing and evaluation
+# Expected output:
+# hello
+# world
+# 3
+# 15
+
+main : () -> <io> () =
+  do {
+    print("hello")
+    print("world")
+  }
+  do {
+    x <- 1 + 2
+    print(show(x))
+  }
+  do {
+    a <- 5
+    b <- 10
+    c <- a + b
+    print(show(c))
+  }

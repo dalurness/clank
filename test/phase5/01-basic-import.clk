@@ -1,0 +1,12 @@
+# Test basic module import
+# Expected output:
+# 10
+# 15
+
+use mathlib (double, triple)
+
+main : () -> <io> () =
+  let d = double(5)
+  let t = triple(5)
+  let _ = print(show(d))
+  print(show(t))

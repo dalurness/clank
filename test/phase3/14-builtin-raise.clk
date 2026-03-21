@@ -1,0 +1,17 @@
+# Test: built-in raise effect operation
+# raise is available without declaring effect exn
+# Expected output:
+# caught: something went wrong
+# ok: 42
+
+main : () -> <io> () =
+  let r1 = handle raise("something went wrong") {
+    return x -> "ok: " ++ show(x),
+    raise msg resume _ -> "caught: " ++ msg
+  }
+  print(r1)
+  let r2 = handle 42 {
+    return x -> "ok: " ++ show(x),
+    raise msg resume _ -> "caught: " ++ msg
+  }
+  print(r2)

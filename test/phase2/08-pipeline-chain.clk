@@ -1,0 +1,19 @@
+# Test: chained pipelines with lambdas and list ops
+# Expected output:
+# [4, 16]
+# 12
+# hello world
+
+main : () -> <io> () =
+  let result = [1, 2, 3, 4, 5]
+    |> filter(fn(x) => x % 2 == 0)
+    |> map(fn(x) => x * x)
+  print(show(result))
+  let sum = [1, 2, 3, 4, 5]
+    |> filter(fn(x) => x > 2)
+    |> fold(0, fn(acc, x) => acc + x)
+  print(show(sum))
+  let msg = split("hello world", " ")
+    |> map(fn(s) => s)
+    |> join(" ")
+  print(msg |> trim)

@@ -1,0 +1,22 @@
+# Test: recursive list processing with head/tail
+# Expected output:
+# 15
+# 3
+# [1, 2, 3, 4, 5]
+
+sum-list : (xs: [Int]) -> <> Int =
+  if len(xs) == 0 then 0
+  else head(xs) + sum-list(tail(xs))
+
+count : (xs: [Int]) -> <> Int =
+  if len(xs) == 0 then 0
+  else 1 + count(tail(xs))
+
+range : (lo: Int, hi: Int) -> <> [Int] =
+  if lo > hi then []
+  else cons(lo, range(lo + 1, hi))
+
+main : () -> <io> () =
+  print(show(sum-list([1, 2, 3, 4, 5])))
+  print(show(count([10, 20, 30])))
+  print(show(range(1, 5)))

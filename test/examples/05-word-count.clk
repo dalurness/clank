@@ -1,0 +1,9 @@
+# Spec example 8.5: Word count (pipeline style)
+# Demonstrates the pipeline pattern from the spec:
+#   path |> read |> split(" ") |> len |> show |> print
+# Adapted to use a string literal instead of file I/O
+# Expected output:
+# 5
+
+main : () -> <io> () =
+  "the quick brown fox jumps" |> split(" ") |> len |> show |> print

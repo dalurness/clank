@@ -1,0 +1,7 @@
+# Test that importing a private name fails
+# Expected: runtime error about 'helper' not exported
+
+use mathlib (helper)
+
+main : () -> <io> () =
+  print(show(helper(5)))

@@ -1,0 +1,13 @@
+# Test: dotted builtin names (str.cat, tuple.get)
+# Expected output:
+# hello world
+# 2
+# b
+
+main : () -> <io> () =
+  let greeting = str.cat("hello ", "world")
+  print(greeting)
+  let t = (1, 2, 3)
+  print(show(tuple.get(t, 1)))
+  let pair = ("a", "b")
+  print(tuple.get(pair, 1))

@@ -1,0 +1,22 @@
+# Test: handle multiple effect operations with resume
+# The handler provides values for two different operations.
+# Expected output:
+# hello 42
+
+effect config {
+  get-name : () -> Str,
+  get-port : () -> Int
+}
+
+make-msg : () -> <config> Str =
+  let name = get-name()
+  let port = get-port()
+  name ++ " " ++ show(port)
+
+main : () -> <io> () =
+  let result = handle make-msg() {
+    return x -> x,
+    get-name _ resume k -> k("hello"),
+    get-port _ resume k -> k(42)
+  }
+  print(result)

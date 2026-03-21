@@ -1,0 +1,8 @@
+# Test nested module path resolution (directory-based)
+# Expected output:
+# Hello, World!
+
+use utils.strings (greet)
+
+main : () -> <io> () =
+  print(greet("World"))

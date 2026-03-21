@@ -1,0 +1,17 @@
+# Test: declaration grouping with effects
+
+effect log {
+  info : Str -> ()
+}
+
+type Level = Debug | Info | Warn
+
+show-level : (l: Level) -> <> Str =
+  match l {
+    Debug => "DEBUG"
+    Info  => "INFO"
+    Warn  => "WARN"
+  }
+
+main : () -> <io> () =
+  print(show-level(Info))

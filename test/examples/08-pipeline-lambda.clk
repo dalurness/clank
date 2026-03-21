@@ -1,0 +1,9 @@
+# Spec example 8.8: Pipeline with lambda
+# Expected output:
+# [2, 4, 6]
+
+evens-as-strings : (xs: [Int]) -> <> [Str] =
+  xs |> filter(fn(x) => x % 2 == 0) |> map(show)
+
+main : () -> <io> () =
+  print(show(evens-as-strings([1, 2, 3, 4, 5, 6])))

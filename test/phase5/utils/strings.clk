@@ -1,0 +1,5 @@
+# String utility module
+mod utils.strings
+
+pub greet : (name: Str) -> <> Str =
+  "Hello, " ++ name ++ "!"

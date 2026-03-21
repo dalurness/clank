@@ -1,0 +1,12 @@
+# Module exporting a type with variants
+mod shapes
+
+pub type Shape
+  = Circle(Int)
+  | Rect(Int, Int)
+
+pub area : (s: Shape) -> <> Int =
+  match s {
+    Circle(r) => r * r * 3
+    Rect(w, h) => w * h
+  }

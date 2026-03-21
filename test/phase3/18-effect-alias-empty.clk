@@ -1,0 +1,12 @@
+# Test: effect alias with empty effect set (pure alias)
+
+effect alias Pure = <>
+
+add-two : (x: Int) -> <Pure> Int =
+  x + 2
+
+main : () -> <io> () =
+  print(show(add-two(3)))
+
+# Expected output:
+# 5

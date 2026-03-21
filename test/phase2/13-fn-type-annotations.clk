@@ -1,0 +1,22 @@
+# Test: function type annotations in parameters
+# Expected output:
+# 10
+# [2, 4, 6]
+# 20
+
+apply-fn : (f: (Int -> Int), x: Int) -> <> Int =
+  f(x)
+
+transform-list : (xs: [Int], f: (Int -> Int)) -> <> [Int] =
+  map(xs, f)
+
+compose : (f: (Int -> Int), g: (Int -> Int), x: Int) -> <> Int =
+  f(g(x))
+
+main : () -> <io> () =
+  let result = apply-fn(fn(x) => x * 2, 5)
+  print(show(result))
+  let doubled = transform-list([1, 2, 3], fn(x) => x * 2)
+  print(show(doubled))
+  let composed = compose(fn(x) => x * 2, fn(x) => x + 3, 7)
+  print(show(composed))

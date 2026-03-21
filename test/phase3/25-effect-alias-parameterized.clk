@@ -1,0 +1,20 @@
+# Test: parameterized effect alias — param propagated to constituent effects
+# effect alias WithLog<L> = <L, io> should substitute L when used as WithLog<logger>.
+
+effect logger {
+  log-msg : Str -> ()
+}
+
+effect alias WithLog<L> = <L, io>
+
+run : () -> <WithLog<logger>> () =
+  perform log-msg("hello from alias")
+
+main : () -> <io> () =
+  handle run() {
+    return v -> v,
+    log-msg msg resume k -> print(msg)
+  }
+
+# Expected output:
+# hello from alias

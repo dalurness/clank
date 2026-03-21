@@ -1,0 +1,15 @@
+# Test: subtraction in alias definitions
+# effect alias pure-web = <web \ exn> should resolve at alias definition time
+
+effect exn {
+  raise : Str -> ()
+}
+
+effect alias web = <io, exn>
+effect alias pure-web = <web \ exn>
+
+main : () -> <pure-web> () =
+  print("alias subtraction def works")
+
+# Expected output:
+# alias subtraction def works

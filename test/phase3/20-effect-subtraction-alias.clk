@@ -1,0 +1,14 @@
+# Test: effect subtraction with aliases
+# Verifies that aliases are expanded before subtraction
+
+effect log {
+  info : Str -> ()
+}
+
+effect alias web = <io, log>
+
+main : () -> <web \ log> () =
+  print("alias subtraction works")
+
+# Expected output:
+# alias subtraction works

@@ -1,0 +1,30 @@
+# Test: effect alias combining multiple effects
+# Verifies that aliases expand correctly for effect checking.
+
+effect counter {
+  inc : () -> Int
+}
+
+effect logger {
+  log-msg : Str -> ()
+}
+
+effect alias AllEffects = <counter, logger, io>
+
+run-counter : () -> <AllEffects> Int =
+  let x = perform inc()
+  perform log-msg("counted")
+  print(show(x))
+  x
+
+main : () -> <io> () =
+  let result = handle run-counter() {
+    return v -> v,
+    inc resume k -> k(42),
+    log-msg msg resume k -> k(())
+  }
+  print(show(result))
+
+# Expected output:
+# 42
+# 42

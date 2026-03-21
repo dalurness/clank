@@ -1,0 +1,20 @@
+# Test: handle effect with abort (no resume)
+# When the handler doesn't call resume, the computation is aborted
+# and the handler's return value is used.
+# Expected output:
+# -1
+
+effect exn {
+  raise : Str -> Int
+}
+
+might-fail : () -> <exn> Int =
+  let x = raise("oops")
+  x + 100
+
+main : () -> <io> () =
+  let result = handle might-fail() {
+    return x -> x,
+    raise msg resume k -> -1
+  }
+  print(show(result))

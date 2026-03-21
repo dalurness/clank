@@ -1,0 +1,11 @@
+# Test: record creation and field access
+# Expected output:
+# Ada
+# 36
+# {name: Ada, age: 36}
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  print(person.name)
+  print(show(person.age))
+  print(show(person))

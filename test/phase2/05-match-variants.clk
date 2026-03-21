@@ -1,0 +1,32 @@
+# Test: match expressions with variant destructuring
+# Expected output:
+# circle with radius 5
+# area: 12
+# none
+# got 42
+
+type Shape
+  = Circle(Int)
+  | Rect(Int, Int)
+
+type Option
+  = Some(Int)
+  | None()
+
+describe : (s: Shape) -> <io> () =
+  match s {
+    Circle(r) => print("circle with radius " ++ show(r))
+    Rect(w, h) => print("area: " ++ show(w * h))
+  }
+
+show-option : (o: Option) -> <io> () =
+  match o {
+    Some(x) => print("got " ++ show(x))
+    None() => print("none")
+  }
+
+main : () -> <io> () =
+  describe(Circle(5))
+  describe(Rect(3, 4))
+  show-option(None)
+  show-option(Some(42))

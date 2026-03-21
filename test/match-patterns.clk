@@ -1,0 +1,44 @@
+# Test various pattern types
+
+type Color = Red | Green | Blue
+
+type Option = Some(Int) | None
+
+# Test wildcard + literal + variant patterns
+describe : (c: Color) -> <> Str =
+  match c {
+    Red => "red"
+    Green => "green"
+    _ => "other"
+  }
+
+# Test Option with None (nullary variant)
+unwrap-or : (o: Option, default: Int) -> <> Int =
+  match o {
+    Some(x) => x
+    None => default
+  }
+
+# Test tuple destructuring
+swap : (t: (Int, Int)) -> <> (Int, Int) =
+  match t {
+    (a, b) => (b, a)
+  }
+
+# Test literal pattern matching
+fizz : (n: Int) -> <> Str =
+  let r = n % 3
+  match r {
+    0 => "fizz"
+    _ => show(n)
+  }
+
+main : () -> <> () =
+  print(describe(Red))
+  print(describe(Blue))
+  print(show(unwrap-or(Some(42), 0)))
+  print(show(unwrap-or(None, 99)))
+  let swapped = swap((1, 2))
+  print(show(swapped))
+  print(fizz(9))
+  print(fizz(7))

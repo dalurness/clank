@@ -1,0 +1,15 @@
+# Test: subtracting all effects results in empty row
+# <io, exn \ io, exn> should produce <> (pure)
+
+effect exn {
+  raise : Str -> ()
+}
+
+sum : (a: Int, b: Int) -> <io, exn \ io, exn> Int =
+  a + b
+
+main : () -> <io> () =
+  print(show(sum(1, 2)))
+
+# Expected output:
+# 3

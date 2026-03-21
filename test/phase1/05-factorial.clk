@@ -1,0 +1,15 @@
+# Test: recursive factorial function
+# Expected output:
+# 1
+# 1
+# 120
+# 3628800
+
+factorial : (n: Int) -> <> Int =
+  if n == 0 then 1 else n * factorial(n - 1)
+
+main : () -> <io> () =
+  print(show(factorial(0)))
+  print(show(factorial(1)))
+  print(show(factorial(5)))
+  print(show(factorial(10)))

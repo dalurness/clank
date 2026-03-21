@@ -1,0 +1,6 @@
+# Module exporting an effect
+mod myeffect
+
+pub effect counter {
+  inc : () -> Int
+}

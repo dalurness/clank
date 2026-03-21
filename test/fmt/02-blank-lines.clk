@@ -1,0 +1,13 @@
+# Test: blank lines between top-level definitions
+
+type Color = Red | Green | Blue
+
+describe : (c: Color) -> <> Str =
+  match c {
+    Red   => "red"
+    Green => "green"
+    Blue  => "blue"
+  }
+
+main : () -> <io> () =
+  print(describe(Red))

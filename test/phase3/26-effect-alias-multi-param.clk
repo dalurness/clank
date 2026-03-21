@@ -1,0 +1,30 @@
+# Test: parameterized effect alias with multiple params
+# effect alias Pair<A, B> = <A, B> substitutes both params at usage site.
+
+effect counter {
+  inc : () -> Int
+}
+
+effect logger {
+  log-msg : Str -> ()
+}
+
+effect alias Pair<A, B> = <A, B, io>
+
+run : () -> <Pair<counter, logger>> Int =
+  perform log-msg("counting")
+  let x = perform inc()
+  print(show(x))
+  x
+
+main : () -> <io> () =
+  let result = handle run() {
+    return v -> v,
+    inc resume k -> k(99),
+    log-msg msg resume k -> k(())
+  }
+  print(show(result))
+
+# Expected output:
+# 99
+# 99

@@ -1,0 +1,20 @@
+# Test: mutual recursion (is-even / is-odd)
+# Expected output:
+# true
+# false
+# true
+# false
+# true
+
+is-even : (n: Int) -> <> Bool =
+  if n == 0 then true else is-odd(n - 1)
+
+is-odd : (n: Int) -> <> Bool =
+  if n == 0 then false else is-even(n - 1)
+
+main : () -> <io> () =
+  print(show(is-even(0)))
+  print(show(is-even(1)))
+  print(show(is-even(4)))
+  print(show(is-odd(4)))
+  print(show(is-odd(7)))

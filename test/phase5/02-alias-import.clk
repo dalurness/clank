@@ -1,0 +1,12 @@
+# Test aliased imports
+# Expected output:
+# 10
+# 15
+
+use mathlib (double as dbl, triple as trpl)
+
+main : () -> <io> () =
+  let d = dbl(5)
+  let t = trpl(5)
+  let _ = print(show(d))
+  print(show(t))

@@ -1,0 +1,19 @@
+# Test: handle effect with resume (one-shot continuation)
+# The handler provides a value to resume the computation with.
+# Expected output:
+# 142
+
+effect ask {
+  get-value : () -> Int
+}
+
+compute : () -> <ask> Int =
+  let x = get-value()
+  x + 42
+
+main : () -> <io> () =
+  let result = handle compute() {
+    return x -> x,
+    get-value _ resume k -> k(100)
+  }
+  print(show(result))

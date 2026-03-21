@@ -1,0 +1,7 @@
+# Module that imports from mathlib
+mod enhanced-math
+
+use mathlib (double)
+
+pub quadruple : (n: Int) -> <> Int =
+  double(double(n))

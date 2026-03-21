@@ -1,0 +1,29 @@
+# Test: flat-map builtin and nested for/in with flat-map
+# Expected output:
+# [1, 2, 2, 3, 3, 3]
+# [1, 2, 3, 4, 5, 6]
+# [2, 4, 6]
+# [(1, 3), (1, 4), (2, 3), (2, 4)]
+# [(1, 2), (1, 3), (2, 3)]
+
+main : () -> <io> () =
+  # basic flat-map: replicate each element x times
+  print(show(flat-map([1, 2, 3], fn(x) => for i in range(1, x) do x)))
+
+  # flat-map to flatten nested lists
+  let nested = [[1, 2], [3, 4], [5, 6]]
+  print(show(flat-map(nested, fn(xs) => xs)))
+
+  # flat-map with filter: even numbers doubled
+  print(show(flat-map([1, 2, 3, 4, 5, 6], fn(x) =>
+    if x % 2 == 0 then [x] else [])))
+
+  # nested for/in producing pairs, flattened with flat-map
+  let xs = [1, 2]
+  let ys = [3, 4]
+  print(show(flat-map(xs, fn(x) => for y in ys do (x, y))))
+
+  # nested for/in: all pairs (i, j) where i < j from [1, 2, 3]
+  let nums = [1, 2, 3]
+  print(show(flat-map(nums, fn(i) =>
+    for j in nums if j > i do (i, j))))
