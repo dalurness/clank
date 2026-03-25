@@ -1,0 +1,18 @@
+# Test: clone creates an independent copy
+# Verifies that clone + borrow allows duplication
+
+affine type Handle = Handle(Int)
+  deriving (Clone)
+
+consume : (h: Handle) -> <> () = discard h
+
+# Clone creates a copy, both must be consumed
+clone-test : (h: Handle) -> <> () =
+  let h2 = clone &h
+  consume(h2)
+  consume(h)
+
+main : () -> <io> () = print("clone ok")
+
+# Expected output:
+# clone ok

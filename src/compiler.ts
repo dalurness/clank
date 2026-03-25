@@ -532,6 +532,15 @@ export class Compiler {
         this.compilePerform(expr, e, scope);
         break;
 
+      // Affine nodes — compile as pass-through (checker enforces rules)
+      case "borrow":
+        return this.compileExpr(expr.expr);
+      case "clone":
+        return this.compileExpr(expr.expr);
+      case "discard":
+        this.compileExpr(expr.expr);
+        return this.emit("PUSH_UNIT");
+
       // These should have been desugared
       case "pipeline":
       case "infix":

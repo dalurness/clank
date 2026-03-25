@@ -1,0 +1,26 @@
+# Test: Into via blanket impl with multiple From sources
+# Expected output:
+# str-into: hello
+# int-into: 42
+
+type Box = BoxStr(Str) | BoxInt(Int)
+
+impl From<Str> for Box {
+  from = fn(s) => BoxStr(s)
+}
+
+impl From<Int> for Box {
+  from = fn(n) => BoxInt(n)
+}
+
+main : () -> <io> () =
+  let a = into("hello")
+  let b = into(42)
+  match a {
+    BoxStr(s) => print("str-into: " ++ s)
+    BoxInt(_) => print("error")
+  }
+  match b {
+    BoxInt(n) => print("int-into: " ++ show(n))
+    BoxStr(_) => print("error")
+  }

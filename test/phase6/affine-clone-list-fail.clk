@@ -1,0 +1,13 @@
+# Test: clone on list of non-cloneable type (E602)
+# Verifies that [Handle] is not Clone when Handle lacks Clone
+
+affine type Handle = Handle(Int)
+
+bad-clone : (xs: [Handle]) -> <> () =
+  let ys = clone &xs
+  discard ys
+  discard xs
+
+main : () -> <io> () = print("should not reach")
+
+# Expected: error

@@ -1,0 +1,9 @@
+# Test: deriving Default generates default returning first nullary variant
+# Expected output:
+# None
+
+type Option = None | Some(Int)
+  deriving (Show, Default)
+
+main : () -> <io> () =
+  print(show(default(None)))

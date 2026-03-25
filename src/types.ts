@@ -12,7 +12,7 @@ export type Type =
   | { tag: "t-fn"; param: Type; effects: Effect[]; result: Type }
   | { tag: "t-list"; element: Type }
   | { tag: "t-tuple"; elements: Type[] }
-  | { tag: "t-record"; fields: { name: string; type: Type }[] }
+  | { tag: "t-record"; fields: { name: string; type: Type }[]; rowVar: number | null }
   | { tag: "t-variant"; variants: VariantCase[] }
   | { tag: "t-var"; id: number }
   | { tag: "t-generic"; name: string; args: Type[] };
@@ -48,8 +48,14 @@ export const tFn = (param: Type, result: Type, effects: Effect[] = []): Type =>
 export const tList = (element: Type): Type => ({ tag: "t-list", element });
 export const tTuple = (elements: Type[]): Type => ({ tag: "t-tuple", elements });
 
-export const tRecord = (fields: { name: string; type: Type }[]): Type =>
-  ({ tag: "t-record", fields });
+export const tRecord = (fields: { name: string; type: Type }[], rowVar: number | null = null): Type =>
+  ({ tag: "t-record", fields, rowVar });
+
+// ── Fresh variable counter (shared between type vars and row vars) ──
+
+let _nextVarId = 1000;
+export function freshVar(): number { return _nextVarId++; }
+export function resetVarCounter(): void { _nextVarId = 1000; }
 
 export const tVariant = (variants: VariantCase[]): Type =>
   ({ tag: "t-variant", variants });

@@ -111,6 +111,10 @@ function formatTopLevel(tl: TopLevel): string {
       return formatEffectAlias(tl);
     case "test-decl":
       return formatTestDecl(tl);
+    case "interface-decl":
+      return formatInterfaceDecl(tl);
+    case "impl-block":
+      return formatImplBlock(tl);
   }
 }
 
@@ -151,6 +155,27 @@ function formatTestDecl(tl: Extract<TopLevel, { tag: "test-decl" }>): string {
   const header = `test "${tl.name}" =`;
   const body = formatExprBody(tl.body, 2, true);
   return `${header}\n${body}`;
+}
+
+function formatInterfaceDecl(tl: Extract<TopLevel, { tag: "interface-decl" }>): string {
+  const pub = tl.pub ? "pub " : "";
+  const typeParams = tl.typeParams.length > 0 ? `<${tl.typeParams.join(", ")}>` : "";
+  const supers = tl.supers.length > 0 ? ` : ${tl.supers.join(" + ")}` : "";
+  const methods = tl.methods.map(m => `  ${m.name} : ${formatTypeSig(m.sig)}`).join(",\n");
+  return `${pub}interface ${tl.name}${typeParams}${supers} {\n${methods}\n}`;
+}
+
+function formatImplBlock(tl: Extract<TopLevel, { tag: "impl-block" }>): string {
+  const typeArgs = tl.typeArgs.length > 0 ? `<${tl.typeArgs.map(formatTypeExpr).join(", ")}>` : "";
+  const forType = formatTypeExpr(tl.forType);
+  const constraints = tl.constraints.length > 0
+    ? ` where ${tl.constraints.map(c => `${c.interface_} ${c.typeParam}`).join(", ")}`
+    : "";
+  const methods = tl.methods.map(m => {
+    const body = formatExprBody(m.body, 2, false);
+    return `  ${m.name} = ${body.trim()}`;
+  }).join("\n");
+  return `impl ${tl.interface_}${typeArgs} for ${forType}${constraints} {\n${methods}\n}`;
 }
 
 function formatTypeDecl(tl: Extract<TopLevel, { tag: "type-decl" }>): string {
@@ -254,8 +279,13 @@ function formatTypeExpr(t: TypeExpr): string {
     case "t-tuple":
       if (t.elements.length === 0) return "()";
       return `(${t.elements.map(formatTypeExpr).join(", ")})`;
-    case "t-record":
-      return `{${t.fields.map(f => `${f.name}: ${formatTypeExpr(f.type)}`).join(", ")}}`;
+    case "t-record": {
+      const fieldStr = t.fields.map(f => `${f.name}: ${formatTypeExpr(f.type)}`).join(", ");
+      if (t.rowVar !== null) {
+        return fieldStr ? `{${fieldStr} | ${t.rowVar}}` : `{${t.rowVar}}`;
+      }
+      return `{${fieldStr}}`;
+    }
     case "t-union":
       return `${formatTypeExpr(t.left)} | ${formatTypeExpr(t.right)}`;
     case "t-fn": {
@@ -322,6 +352,12 @@ function formatExpr(expr: Expr, indent: number): string {
       return pad + `${formatExprInline(expr.object)}.${expr.field}`;
     case "range":
       return pad + `${formatExprInline(expr.start)}${expr.inclusive ? "..=" : ".."}${formatExprInline(expr.end)}`;
+    case "borrow":
+      return pad + `&${formatExprInline(expr.expr)}`;
+    case "clone":
+      return pad + `clone ${formatExprInline(expr.expr)}`;
+    case "discard":
+      return pad + `discard ${formatExprInline(expr.expr)}`;
   }
 }
 

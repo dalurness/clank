@@ -1,0 +1,14 @@
+# Test: clone on list of cloneable type
+# Verifies that [Int] is Clone since Int is Clone
+
+affine type Box = Box(Int)
+  deriving (Clone)
+
+clone-list : () -> <> [Int] =
+  let xs = [1, 2, 3]
+  clone &xs
+
+main : () -> <io> () = print("clone list ok")
+
+# Expected output:
+# clone list ok

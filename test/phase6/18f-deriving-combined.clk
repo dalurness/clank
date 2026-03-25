@@ -1,0 +1,19 @@
+# Test: multiple deriving clauses work together on a single type
+# Expected output:
+# Red
+# true
+# false
+# less
+
+type Color = Red | Green | Blue
+  deriving (Show, Eq, Ord)
+
+main : () -> <io> () =
+  print(show(Red))
+  print(show(eq(Green, Green)))
+  print(show(eq(Red, Blue)))
+  match cmp(Red, Green) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }

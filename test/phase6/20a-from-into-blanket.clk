@@ -1,0 +1,16 @@
+# Test: From/Into blanket impl (impl From<A> for B auto-generates Into<B> for A)
+# Expected output:
+# hello-world
+
+type Wrapper = Wrap(Str)
+
+impl From<Str> for Wrapper {
+  from = fn(s) => Wrap(s)
+}
+
+# into should work via blanket impl
+main : () -> <io> () =
+  let w = into("hello-world")
+  match w {
+    Wrap(s) => print(s)
+  }

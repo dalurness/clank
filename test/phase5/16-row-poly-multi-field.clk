@@ -1,0 +1,13 @@
+# Test: row polymorphism with multiple required fields
+# Expected output:
+# Ada is 36
+# Acme is 1920
+
+describe : (rec: {name: Str, age: Int | r}) -> <> Str =
+  rec.name ++ " is " ++ show(rec.age)
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36, title: "Countess"}
+  let company = {name: "Acme", age: 1920, public: true}
+  print(describe(person))
+  print(describe(company))

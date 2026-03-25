@@ -1,0 +1,14 @@
+# Test: Duplicate From<Str> for same type is a coherence violation
+# Expected: error
+
+type Box = Box(Str)
+
+impl From<Str> for Box {
+  from = fn(s) => Box(s)
+}
+
+impl From<Str> for Box {
+  from = fn(s) => Box(s)
+}
+
+main : () -> <io> () = print("should not reach")

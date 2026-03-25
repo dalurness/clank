@@ -1,0 +1,12 @@
+# Test: built-in show impl for primitives
+# Expected output:
+# 42
+# 3.14
+# true
+# hello
+
+main : () -> <io> () =
+  print(show(42))
+  print(show(3.14))
+  print(show(true))
+  print(show("hello"))

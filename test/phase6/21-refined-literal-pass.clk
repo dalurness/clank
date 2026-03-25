@@ -1,0 +1,7 @@
+# Test: literal satisfying refinement predicate passes type check
+# Expected output:
+# 2
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+main : () -> <io> () = print(show(positive(2)))

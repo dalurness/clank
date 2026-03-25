@@ -1,0 +1,11 @@
+# Test: clone on record of cloneable types
+# Verifies that {x: Int, y: Int} is Clone since Int is Clone
+
+clone-record : () -> <> {x: Int, y: Int} =
+  let pt = {x: 1, y: 2}
+  clone &pt
+
+main : () -> <io> () = print("clone record ok")
+
+# Expected output:
+# clone record ok

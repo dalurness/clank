@@ -1,0 +1,6 @@
+# Test: negative literal correctly fails > 0 refinement
+# Expected: error
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+main : () -> <io> () = print(show(positive(-3)))

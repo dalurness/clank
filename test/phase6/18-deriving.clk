@@ -1,0 +1,13 @@
+# Test: deriving clause on type declaration (parse-only — just verifies it parses)
+# Expected output:
+# Red
+
+type Color = Red | Green | Blue
+  deriving (Eq, Show, Clone)
+
+main : () -> <io> () =
+  match Red {
+    Red => print("Red")
+    Green => print("Green")
+    Blue => print("Blue")
+  }

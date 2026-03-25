@@ -1,0 +1,22 @@
+# Test: let binding moves affine value
+# Verifies that rebinding transfers ownership
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = discard h
+
+# Moving via let — original becomes dead
+let-move : (h: Handle) -> <> () =
+  let g = h
+  consume(g)
+
+# Using original after move — should emit E600
+let-move-bad : (h: Handle) -> <> () =
+  let g = h
+  consume(g)
+  consume(h)
+
+main : () -> <io> () = print("let move test")
+
+# Expected: error
+# E600 — affine variable 'h' used after move

@@ -4,7 +4,7 @@
 
 import type { Token } from "./lexer.js";
 import type {
-  DoStep, EffectRef, Expr, HandlerArm, ImportItem, Loc, MatchArm, OpSig, Param, Pattern, Program, TopLevel,
+  Constraint, DoStep, EffectRef, Expr, HandlerArm, ImportItem, Loc, MatchArm, MethodSig, OpSig, Param, Pattern, Program, TopLevel,
   TypeExpr, TypeSig, Variant,
 } from "./ast.js";
 
@@ -109,10 +109,16 @@ class Parser {
         topLevels.push(this.parseUseDecl());
       } else if (this.at("keyword", "pub")) {
         topLevels.push(this.parsePubDecl());
+      } else if (this.at("keyword", "affine")) {
+        topLevels.push(this.parseAffineTypeDecl(false));
       } else if (this.at("keyword", "type")) {
         topLevels.push(this.parseTypeDecl(false));
       } else if (this.at("keyword", "effect")) {
         topLevels.push(this.parseEffectDecl(false));
+      } else if (this.at("keyword", "interface")) {
+        topLevels.push(this.parseInterfaceDecl(false));
+      } else if (this.at("keyword", "impl")) {
+        topLevels.push(this.parseImplBlock(false));
       } else if (this.at("keyword", "test")) {
         topLevels.push(this.parseTestDecl());
       } else {
@@ -159,10 +165,16 @@ class Parser {
 
   private parsePubDecl(): TopLevel {
     this.expect("keyword", "pub");
-    if (this.at("keyword", "type")) {
+    if (this.at("keyword", "affine")) {
+      return this.parseAffineTypeDecl(true);
+    } else if (this.at("keyword", "type")) {
       return this.parseTypeDecl(true);
     } else if (this.at("keyword", "effect")) {
       return this.parseEffectDecl(true);
+    } else if (this.at("keyword", "interface")) {
+      return this.parseInterfaceDecl(true);
+    } else if (this.at("keyword", "impl")) {
+      return this.parseImplBlock(true);
     } else {
       return this.parseDefinition(true);
     }
@@ -196,9 +208,11 @@ class Parser {
     const nameTok = this.expect("ident");
     this.expect("delim", ":");
     const sig = this.parseTypeSig();
+    // Optional where constraints
+    const constraints = this.tryParseConstraints();
     this.expect("op", "=");
     const body = this.parseBody();
-    return { tag: "definition", name: nameTok.value, sig, body, pub, loc: nameTok.loc };
+    return { tag: "definition", name: nameTok.value, sig, body, pub, constraints, loc: nameTok.loc };
   }
 
   // ── Test declaration ──
@@ -210,6 +224,47 @@ class Parser {
     this.expect("op", "=");
     const body = this.parseBody();
     return { tag: "test-decl", name: nameTok.value, body, loc };
+  }
+
+  // ── Affine type declaration ──
+  // affine type Name = Variant1(T) | Variant2(T, U)
+
+  private parseAffineTypeDecl(pub: boolean): TopLevel {
+    const loc = this.expect("keyword", "affine").loc;
+    this.expect("keyword", "type");
+    const name = this.expect("ident").value;
+
+    const typeParams: string[] = [];
+    if (this.at("op", "<")) {
+      this.advance();
+      do {
+        typeParams.push(this.expect("ident").value);
+      } while (this.at("delim", ",") && this.advance());
+      this.expect("op", ">");
+    }
+
+    this.expect("op", "=");
+
+    const variants: Variant[] = [];
+    variants.push(this.parseVariant());
+    while (this.at("delim", "|")) {
+      this.advance();
+      variants.push(this.parseVariant());
+    }
+
+    const deriving: string[] = [];
+    if (this.at("keyword", "deriving")) {
+      this.advance();
+      this.expect("delim", "(");
+      if (!this.at("delim", ")")) {
+        do {
+          deriving.push(this.expect("ident").value);
+        } while (this.at("delim", ",") && this.advance());
+      }
+      this.expect("delim", ")");
+    }
+
+    return { tag: "type-decl", name, typeParams, variants, affine: true, deriving, pub, loc };
   }
 
   // ── Type declaration ──
@@ -240,7 +295,20 @@ class Parser {
       variants.push(this.parseVariant());
     }
 
-    return { tag: "type-decl", name, typeParams, variants, pub, loc };
+    // Optional deriving clause: deriving (Eq, Show, Clone)
+    const deriving: string[] = [];
+    if (this.at("keyword", "deriving")) {
+      this.advance();
+      this.expect("delim", "(");
+      if (!this.at("delim", ")")) {
+        do {
+          deriving.push(this.expect("ident").value);
+        } while (this.at("delim", ",") && this.advance());
+      }
+      this.expect("delim", ")");
+    }
+
+    return { tag: "type-decl", name, typeParams, variants, affine: false, deriving, pub, loc };
   }
 
   private parseVariant(): Variant {
@@ -389,11 +457,18 @@ class Parser {
   private parseTypeExpr(): TypeExpr {
     const base = this.parseBaseTypeExpr();
 
-    // Function type: T -> U (right-associative)
+    // Function type: T -> <effects> U (right-associative)
     if (this.at("op", "->")) {
       this.advance();
+      let effects: EffectRef[] = [];
+      let subtracted: EffectRef[] = [];
+      if (this.at("op", "<")) {
+        const ann = this.parseEffectAnn();
+        effects = ann.effects;
+        subtracted = ann.subtracted;
+      }
       const result = this.parseTypeExpr();
-      return { tag: "t-fn", param: base, effects: [], subtracted: [], result, loc: base.loc };
+      return { tag: "t-fn", param: base, effects, subtracted, result, loc: base.loc };
     }
 
     return base;
@@ -431,25 +506,51 @@ class Parser {
       return { tag: "t-list", element, loc };
     }
 
-    // {field: Type, ...} — record type
+    // {field: Type, ...} or {field: Type, ... | r} — record type with optional row variable
     if (this.at("delim", "{")) {
       this.advance();
       const fields: { name: string; type: TypeExpr }[] = [];
+      let rowVar: string | null = null;
       if (!this.at("delim", "}")) {
+        // Check for bare row variable: {r}
+        if (this.at("ident") && this.pos + 1 < this.tokens.length &&
+            this.tokens[this.pos + 1].tag === "delim" && this.tokens[this.pos + 1].value === "}") {
+          // Could be bare row variable {r} — check if next token is }
+          // Ambiguity: {ident} could be {r} (bare row var) or {name: Type} missing colon
+          // Heuristic: if the ident starts lowercase and no colon follows, treat as row var
+          const peeked = this.tokens[this.pos];
+          if (peeked.value[0] === peeked.value[0].toLowerCase() && peeked.value[0] !== peeked.value[0].toUpperCase()) {
+            rowVar = this.advance().value;
+            this.expect("delim", "}");
+            return { tag: "t-record", fields, rowVar, loc };
+          }
+        }
         do {
           const name = this.expect("ident").value;
           this.expect("delim", ":");
           const type = this.parseTypeExpr();
           fields.push({ name, type });
         } while (this.at("delim", ",") && this.advance());
+        // Check for row variable tail: | r
+        if (this.at("delim", "|")) {
+          this.advance();
+          rowVar = this.expect("ident").value;
+        }
       }
       this.expect("delim", "}");
-      return { tag: "t-record", fields, loc };
+      return { tag: "t-record", fields, rowVar, loc };
+    }
+
+    // Self type (inside interface/impl blocks)
+    if (this.at("keyword", "Self")) {
+      const selfLoc = this.advance().loc;
+      return { tag: "t-name", name: "Self", loc: selfLoc };
     }
 
     // Named type (may have generic args)
     if (this.at("ident")) {
       const name = this.advance().value;
+      let base: TypeExpr;
       if (this.at("op", "<")) {
         this.advance();
         const args: TypeExpr[] = [this.parseTypeExpr()];
@@ -458,12 +559,191 @@ class Parser {
           args.push(this.parseTypeExpr());
         }
         this.expect("op", ">");
+        base = { tag: "t-generic", name, args, loc };
+      } else {
+        base = { tag: "t-name", name, loc };
+      }
+
+      // Refinement type: Type{predicate}
+      if (this.at("delim", "{")) {
+        this.advance();
+        let predicate = "";
+        let depth = 1;
+        while (depth > 0 && !this.at("eof")) {
+          if (this.at("delim", "{")) depth++;
+          if (this.at("delim", "}")) { depth--; if (depth === 0) break; }
+          if (predicate) predicate += " ";
+          predicate += this.advance().value;
+        }
+        this.expect("delim", "}");
+        return { tag: "t-refined", base, predicate: predicate.trim(), loc };
+      }
+
+      return base;
+    }
+
+    this.fail("expected type expression");
+  }
+
+  // ── Constraint parsing ──
+
+  private tryParseConstraints(): Constraint[] {
+    if (!this.at("keyword", "where")) return [];
+    this.advance();
+    const constraints: Constraint[] = [];
+    do {
+      constraints.push(this.parseConstraint());
+    } while (this.at("delim", ",") && this.advance());
+    return constraints;
+  }
+
+  private parseConstraint(): Constraint {
+    const loc = this.peek().loc;
+    const interface_ = this.expect("ident").value;
+    const typeArgs: TypeExpr[] = [];
+    if (this.at("op", "<")) {
+      this.advance();
+      do {
+        typeArgs.push(this.parseTypeExpr());
+      } while (this.at("delim", ",") && this.advance());
+      this.expect("op", ">");
+    }
+    const typeParam = this.expect("ident").value;
+    return { interface_, typeArgs, typeParam, loc };
+  }
+
+  // Convert a type expression to a TypeSig (for interface method signatures)
+  private typeExprToSig(te: TypeExpr): TypeSig {
+    if (te.tag === "t-fn") {
+      // Extract params from the left side
+      const params: { name: string; type: TypeExpr }[] = [];
+      if (te.param.tag === "t-tuple" && te.param.elements.length === 0) {
+        // () -> T: no params
+      } else if (te.param.tag === "t-tuple") {
+        for (let i = 0; i < te.param.elements.length; i++) {
+          params.push({ name: `_${i}`, type: te.param.elements[i] });
+        }
+      } else {
+        params.push({ name: "_0", type: te.param });
+      }
+      return { params, effects: te.effects, subtracted: te.subtracted, returnType: te.result };
+    }
+    // Non-function type — treat as a constant
+    return { params: [], effects: [], subtracted: [], returnType: te };
+  }
+
+  // ── Interface declaration ──
+
+  private parseInterfaceDecl(pub: boolean): TopLevel {
+    const loc = this.expect("keyword", "interface").loc;
+    const name = this.expect("ident").value;
+    const typeParams: string[] = [];
+    if (this.at("op", "<")) {
+      this.advance();
+      do {
+        typeParams.push(this.expect("ident").value);
+      } while (this.at("delim", ",") && this.advance());
+      this.expect("op", ">");
+    }
+    const supers: string[] = [];
+    if (this.at("delim", ":")) {
+      this.advance();
+      supers.push(this.expect("ident").value);
+      while (this.at("op", "+")) {
+        this.advance();
+        supers.push(this.expect("ident").value);
+      }
+    }
+    this.expect("delim", "{");
+    const methods: MethodSig[] = [];
+    while (!this.at("delim", "}")) {
+      const methodName = this.expect("ident").value;
+      this.expect("delim", ":");
+      // Parse method signature as a type expression (not parseTypeSig, which expects named params)
+      const typeExpr = this.parseTypeExpr();
+      const sig = this.typeExprToSig(typeExpr);
+      methods.push({ name: methodName, sig });
+      if (this.at("delim", ",")) this.advance();
+    }
+    this.expect("delim", "}");
+    return { tag: "interface-decl", name, typeParams, supers, methods, pub, loc };
+  }
+
+  // Parse a type expression for impl 'for' clause (no refinement types — { starts the impl body)
+  private parseImplTypeExpr(): TypeExpr {
+    const loc = this.peek().loc;
+
+    // () or (T, U) or (T)
+    if (this.at("delim", "(")) {
+      this.advance();
+      if (this.at("delim", ")")) { this.advance(); return { tag: "t-tuple", elements: [], loc }; }
+      const first = this.parseTypeExpr();
+      if (this.at("delim", ",")) {
+        const elements = [first];
+        while (this.at("delim", ",")) { this.advance(); elements.push(this.parseTypeExpr()); }
+        this.expect("delim", ")");
+        return { tag: "t-tuple", elements, loc };
+      }
+      this.expect("delim", ")");
+      return first;
+    }
+
+    // [T]
+    if (this.at("delim", "[")) {
+      this.advance();
+      const element = this.parseTypeExpr();
+      this.expect("delim", "]");
+      return { tag: "t-list", element, loc };
+    }
+
+    // Self
+    if (this.at("keyword", "Self")) {
+      this.advance();
+      return { tag: "t-name", name: "Self", loc };
+    }
+
+    // Named type with optional generic args (no refinement!)
+    if (this.at("ident")) {
+      const name = this.advance().value;
+      if (this.at("op", "<")) {
+        this.advance();
+        const args: TypeExpr[] = [this.parseTypeExpr()];
+        while (this.at("delim", ",")) { this.advance(); args.push(this.parseTypeExpr()); }
+        this.expect("op", ">");
         return { tag: "t-generic", name, args, loc };
       }
       return { tag: "t-name", name, loc };
     }
 
-    this.fail("expected type expression");
+    this.fail("expected type expression in impl");
+  }
+
+  // ── Impl block ──
+
+  private parseImplBlock(pub: boolean): TopLevel {
+    const loc = this.expect("keyword", "impl").loc;
+    const interface_ = this.expect("ident").value;
+    const typeArgs: TypeExpr[] = [];
+    if (this.at("op", "<")) {
+      this.advance();
+      do {
+        typeArgs.push(this.parseTypeExpr());
+      } while (this.at("delim", ",") && this.advance());
+      this.expect("op", ">");
+    }
+    this.expect("keyword", "for");
+    const forType = this.parseImplTypeExpr();
+    const constraints = this.tryParseConstraints();
+    this.expect("delim", "{");
+    const methods: { name: string; body: Expr }[] = [];
+    while (!this.at("delim", "}")) {
+      const methodName = this.expect("ident").value;
+      this.expect("op", "=");
+      const body = this.parseExpr();
+      methods.push({ name: methodName, body });
+    }
+    this.expect("delim", "}");
+    return { tag: "impl-block", interface_, typeArgs, forType, constraints, methods, pub: true, loc };
   }
 
   // ── Body (implicit sequencing in definition bodies) ──
@@ -493,6 +773,9 @@ class Parser {
     if (this.at("keyword", "use")) return true;
     if (this.at("keyword", "pub")) return true;
     if (this.at("keyword", "test")) return true;
+    if (this.at("keyword", "affine")) return true;
+    if (this.at("keyword", "interface")) return true;
+    if (this.at("keyword", "impl")) return true;
     // New definition: ident followed by ':'
     if (
       this.at("ident") &&
@@ -515,7 +798,27 @@ class Parser {
     if (this.at("keyword", "do")) return this.parseDo();
     if (this.at("keyword", "perform")) return this.parsePerform();
     if (this.at("keyword", "handle")) return this.parseHandle();
+    if (this.at("keyword", "clone")) return this.parseClone();
+    if (this.at("keyword", "discard")) return this.parseDiscard();
     return this.parsePipeExpr();
+  }
+
+  // ── Clone expression ──
+  // clone expr
+
+  private parseClone(): Expr {
+    const loc = this.expect("keyword", "clone").loc;
+    const expr = this.parsePipeExpr();
+    return { tag: "clone", expr, loc };
+  }
+
+  // ── Discard expression ──
+  // discard expr
+
+  private parseDiscard(): Expr {
+    const loc = this.expect("keyword", "discard").loc;
+    const expr = this.parsePipeExpr();
+    return { tag: "discard", expr, loc };
   }
 
   // Level 1: |> (left-assoc, lowest precedence)
@@ -861,12 +1164,18 @@ class Parser {
     return left;
   }
 
-  // Level 8: - ! (prefix unary)
+  // Level 8: - ! & (prefix unary)
   private parseUnaryExpr(): Expr {
     if (this.at("op", "-") || this.at("op", "!")) {
       const op = this.advance();
       const operand = this.parseUnaryExpr();
       return { tag: "unary", op: op.value, operand, loc: op.loc };
+    }
+    // & prefix — borrow expression
+    if (this.at("delim", "&")) {
+      const loc = this.advance().loc;
+      const operand = this.parseUnaryExpr();
+      return { tag: "borrow", expr: operand, loc };
     }
     return this.parsePostfixExpr();
   }

@@ -1,0 +1,18 @@
+# Test: deriving Eq generates working eq impl
+# Expected output:
+# true
+# false
+# true
+# false
+
+type Color = Red | Green | Blue
+  deriving (Eq)
+
+type Option = Some(Int) | None
+  deriving (Eq)
+
+main : () -> <io> () =
+  print(show(eq(Red, Red)))
+  print(show(eq(Red, Blue)))
+  print(show(eq(Some(42), Some(42))))
+  print(show(eq(Some(1), Some(2))))

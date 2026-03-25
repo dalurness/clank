@@ -1,0 +1,22 @@
+# Test: deriving Clone allows checker to accept clone on derived types
+# Expected output:
+# clone ok
+
+affine type Color = Red | Green | Blue
+  deriving (Clone)
+
+affine type Wrapper = Wrap(Int)
+  deriving (Clone)
+
+consume-color : (c: Color) -> <> () = discard c
+consume-wrap : (w: Wrapper) -> <> () = discard w
+
+use-clone : (c: Color, w: Wrapper) -> <> () =
+  let c2 = clone &c
+  let w2 = clone &w
+  consume-color(c2)
+  consume-color(c)
+  consume-wrap(w2)
+  consume-wrap(w)
+
+main : () -> <io> () = print("clone ok")

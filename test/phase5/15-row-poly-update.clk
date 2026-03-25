@@ -1,0 +1,13 @@
+# Test: row polymorphism with record update preserving extra fields
+# Expected output:
+# 37
+# Ada
+
+birthday : (rec: {age: Int | r}) -> <> {age: Int | r} =
+  {rec | age: rec.age + 1}
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  let older = birthday(person)
+  print(show(older.age))
+  print(older.name)

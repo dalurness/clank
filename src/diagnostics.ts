@@ -48,7 +48,7 @@ function phaseFromCode(code: string): Phase {
   if (code.startsWith("E")) {
     if (num < 100) return "lex";       // E001: lexer errors
     if (num < 200) return "parse";     // E100: parse errors
-    if (num < 300) return "eval";      // E200-E223: runtime/module errors
+    if (num < 300) return "check";     // E200-E299: check errors
     if (num < 400) return "check";     // E300-E307: type errors
     if (num < 500) return "check";     // E400-E499: effect errors
     if (num < 600) return "link";      // E500-E599: module/import errors

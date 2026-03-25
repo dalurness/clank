@@ -1,0 +1,25 @@
+# Test: deriving Ord generates working cmp impl
+# Expected output:
+# equal
+# less
+# greater
+
+type Priority = Low | Medium | High
+  deriving (Ord)
+
+main : () -> <io> () =
+  match cmp(Low, Low) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  match cmp(Low, High) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  match cmp(High, Medium) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }

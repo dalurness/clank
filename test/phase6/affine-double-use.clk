@@ -1,0 +1,16 @@
+# Test: double use of affine variable (E600)
+# Verifies that using an affine variable twice is a compile error
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = discard h
+
+# Double use — should emit E600
+bad-double : (h: Handle) -> <> () =
+  consume(h)
+  consume(h)
+
+main : () -> <io> () = print("should not reach")
+
+# Expected: error
+# E600 — affine variable 'h' used after move

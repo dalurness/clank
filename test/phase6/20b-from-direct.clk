@@ -1,0 +1,15 @@
+# Test: From interface direct usage
+# Expected output:
+# wrapped: hi
+
+type Box = Box(Str)
+
+impl From<Str> for Box {
+  from = fn(s) => Box(s)
+}
+
+main : () -> <io> () =
+  let b = from("hi")
+  match b {
+    Box(s) => print("wrapped: " ++ s)
+  }

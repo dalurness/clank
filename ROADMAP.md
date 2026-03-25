@@ -10,7 +10,7 @@ Current state of the implementation and what's next.
 - **Lexer** (`src/lexer.ts`) — Full tokenization of all Clank syntax, all keywords including `affine`, `handle`, `resume`, `perform`, `effect`
 - **Parser** (`src/parser.ts`) — Recursive descent parser producing full AST: definitions, type declarations, effect declarations, expressions, pattern matching, do-blocks, handle expressions, modules, imports
 - **Desugarer** (`src/desugar.ts`) — Pipeline operator (`|>`), operator-to-function desugaring (`++` → `str.cat`), do-block expansion
-- **Type Checker** (`src/checker.ts`) — Type inference, function signature checking, exhaustiveness checking for pattern matches, variant registry
+- **Type Checker** (`src/checker.ts`) — Type inference, function signature checking, exhaustiveness checking for pattern matches, variant registry, affine enforcement, interface/impl dispatch, refinement micro-solving, where-constraint propagation, borrow checking
 - **Tree-Walking Interpreter** (`src/eval.ts`) — Complete AST-level evaluator with closures, recursion, effects, handlers, pattern matching, records, tuples, lists
 - **Bytecode Compiler** (`src/compiler.ts`) — AST to 87-opcode bytecode compilation, jump patching, closure capture, effect handler compilation
 - **Stack VM** (`src/vm.ts`) — Full 87-opcode execution engine with call stack, data stack, closures, effect handler stack, continuations, structured trap errors
@@ -29,24 +29,53 @@ Current state of the implementation and what's next.
 - Tuples, lists, and collection operations
 - Higher-order functions (`map`, `filter`, `flatmap`, etc.)
 - String operations, concatenation (`++`)
+- Range literals (`1..10`, `1..=10`) desugaring to `range()` calls
+- `for`/`in` loops (4 forms: map, filter, fold, flatmap)
+- Effect aliases (`alias IO = <io, exn>`) with parameterized substitution
+- Effect subtraction (`<io, exn> \ io`) with alias expansion
+- Affine type enforcement (`affine` keyword, move/clone/borrow/discard tracking, E600/E601/W600)
+- Interface/impl system (7 built-in interfaces: Clone, Show, Eq, Ord, Default, Into, From; `where` constraints, `deriving` auto-generation)
+- Refinement type micro-solver (`Int{> 0}`, QF_LIA Fourier-Motzkin, ~480-line solver) with path condition tracking, arithmetic expression inference, and match-arm propagation
+- Row polymorphism inference (Rémy-style row unification, row variables in checker)
+- From/Into interface with blanket impls and typeArgs dispatch
+- Async runtime — `<async>` effect, `spawn`/`await`/`cancel`, structured task groups, cooperative cancellation (tree-walker + VM)
+- Borrow `&T` semantic type with scope enforcement (lambda returns, compound types — E603)
+- Where-constraint propagation through function parameters, return values, and pipelines
+- Compiler/VM interface dispatch with derived impl codegen (Show/Eq/Clone/Ord for records)
+- STM runtime — atomic transactions, retry/or-else, global version clock (26 tests)
+- FFI extern — `CALL_EXTERN` opcode, extern table in BytecodeModule, value conversion helpers, `extern mod` block syntax (parser desugaring to individual extern-decl nodes)
+- Tier-2 stdlib builtins — `std.http`, `std.srv`, `std.csv`, `std.proc`, `std.dt` (52 builtins, 32 tests)
+- Streaming I/O — iterator heap object, 3 VM opcodes (ITER_NEW/NEXT/CLOSE), 38 iterator combinator builtins (word IDs 70-112), list-backed fast path and generator-backed general path (35 tests)
+- Workspace orchestration — `clank.workspace` manifest parsing, workspace root discovery, member discovery with glob expansion, dependency graph with topological sort and cycle detection, cross-member resolution (34 tests)
 
 ### CLI Tooling
 - **`clank <file>`** — Run a program (tree-walker)
 - **`clank --vm <file>`** — Run via bytecode compiler + VM
 - **`clank eval`** — Expression evaluation with persistent sessions (`--session`)
 - **`clank check`** — Type-check without execution
-- **`clank lint`** — Linting with selective rule enable/disable
+- **`clank lint`** — Linting with selective rule enable/disable (W100-W106)
 - **`clank fmt`** — Canonical formatting with `--check`, `--diff`, `--stdin` modes
 - **`clank doc search|show`** — Documentation extraction and search
 - **`clank test`** — Test runner with `--filter` pattern support
+- **`clank pretty`** — Terse-to-verbose pretty-print expansion
+- **`clank terse`** — Verbose-to-terse compression
+- **`clank pkg add|verify|remove`** — Package manager with `clank.lock` lockfile (SHA-256 integrity), stale lockfile warning on run
+- **`clank pkg workspace init|list|add|remove`** — Workspace management CLI
+- **`clank.pkg`** — Package manifest parsing with local dependency resolution
+- **`clank.workspace`** — Workspace manifest parsing with glob-based member discovery
 - Structured JSON output by default (agent-native)
 - Structured diagnostic envelopes with error codes, source locations, and phase tagging
 
 ### Testing
 - 9 canonical spec examples (`test/examples/`)
-- 50+ test files across 5 implementation phases
-- Phase-organized test suites (phase1–phase5, fmt, examples)
+- 230+ test files across 7 implementation phases
+- Phase-organized test suites (phase1–phase7, fmt, examples, pkg, streaming, workspace)
+- Phase6 type system tests (affine, interface, refinement, row polymorphism, derived impls)
+- Phase7 async runtime tests (spawn/await, task groups, cancellation, nested groups)
+- Streaming I/O tests (35 tests — iterator creation, combinators, close semantics)
+- Workspace tests (34 tests — manifest parsing, discovery, topo-sort, cycle detection, CLI)
 - TypeScript test suites for compiler, checker, linter, doc, arg-parsing
+- Package manager tests (57 tests) integrated into main test runner
 
 ---
 
@@ -54,50 +83,11 @@ Current state of the implementation and what's next.
 
 Each of these has a complete specification document in `docs/`. They are designed but no source code exists for them yet.
 
-### Refinement Types — `docs/refinement-types.md`
-SMT solver integration for compile-time verification of value predicates (`Int{> 0}`, `[Rat]{len > 0}`). Includes liquid type inference for unannotated bindings, user-defined measures, and QF_UFLIRA decidable predicates. The parser accepts refinement syntax; the checker does not verify predicates against an SMT backend.
-
-### Affine Type Enforcement — `docs/affine-types.md`
-Move semantics, borrow checking (`&x`), explicit clone, and discard tracking. The lexer recognizes `affine` and `clone` keywords; the runtime does not enforce use-at-most-once or track resource consumption.
-
-### Async Runtime — `docs/async-runtime.md`
-The `<async>` effect, task spawning, structured concurrency, and cancellation. Fully specced with integration into the effect system. Not wired into the VM or interpreter.
-
-### Software Transactional Memory — `docs/stm-runtime.md`
-Runtime support for the `<state[S]>` effect via STM: atomic transactions, retry/conflict resolution, composable state. Specced at 30K words. Not implemented in the VM.
-
-### Shared Mutable State & Iterators — `docs/shared-mutable-state.md`, `docs/vm-shared-state-iterators.md`
-VM opcodes and runtime semantics for mutable state and lazy iterators. Specced but not wired into the VM execution loop.
-
-### Streaming I/O — `docs/streaming-io.md`
-Backpressure-aware streaming with pull-based and push-based models, integration with the effect system. Specced at 28K words.
-
-### FFI / Interop — `docs/ffi-interop.md`
-`extern` declarations for calling C, JavaScript, and Python from Clank, and embedding the Clank interpreter in host programs. Multi-host support with safety-preserving type mapping. No `extern` handling in parser or runtime.
-
-### Package Manager — `docs/package-management.md`
-`clank.pkg` manifest format, `clank.lock` lockfile, `clank pkg` CLI subcommands, registry protocol with type-signature search. Uses Minimal Version Selection (no SAT solving). Not implemented.
-
-### Pretty-Print Layer — `docs/pretty-print-layer.md`
-Bidirectional terse/verbose conversion (`clank pretty` / `clank terse`). Lexical substitution via static expansion table (e.g., `str.slc` ↔ `string.slice`). The formatter (`src/formatter.ts`) handles canonical formatting but not terse/verbose transformation.
-
-### Workspace Orchestration — `docs/workspace-orchestration.md`, `docs/local-deps-workspace.md`
-Multi-package workspaces, local dependency resolution, coordinated builds. Specced but depends on the package manager.
-
-### Interface / Impl System (Typeclasses)
-Interface declarations, impl blocks, `where` constraints, `deriving` clauses, `Self` type, and `pub opaque type`. Keywords are reserved in the lexer but have no parser rules, type checker logic, or runtime dispatch. Planned features: `Clone`, `Show`, `Eq`, `Ord`, `Default`, `Into`/`From` built-in interfaces; monomorphization; coherence checking; orphan impl warnings.
-
-### Row Polymorphism Inference — `docs/row-polymorphism.md`
-Rémy-style row unification for records and effect rows. The parser and checker handle records, but full row-polymorphic unification (open records, row variables, principal types) is not implemented in the type checker.
+### Shared Mutable State (Ref opcodes) — `docs/shared-mutable-state.md`, `docs/vm-shared-state-iterators.md`
+VM opcodes for Ref mutable state primitives. STM runtime and iterator opcodes are now implemented; remaining Ref opcodes (REF_NEW/GET/SET) not yet wired into the VM execution loop.
 
 ### Queryable Records — `docs/queryable-records.md`
 SQL-like record querying syntax. Specced but not implemented.
-
-### Range Literals and For-In — `docs/range-literal-syntax.md`, `docs/for-in-syntax.md`
-Syntactic sugar for ranges (`1..10`) and for-in loops. Specced but not in the parser.
-
-### Effect Aliases — `docs/effect-aliases.md`
-Named aliases for common effect combinations. Specced but not in the checker.
 
 ### WASM Backend — referenced in `docs/compilation-target.md`
 Compilation to WebAssembly as a secondary production target. Depends on WASM 3.0 GC support. Not started.
@@ -106,43 +96,43 @@ Compilation to WebAssembly as a secondary production target. Depends on WASM 3.0
 
 ## What's Partially Implemented
 
-### Effect Subtraction — `docs/effect-subtraction.md`
-The effect system supports handlers that interpret effects, and the test suite includes effect subtraction tests (`test/phase3/`). Full row-polymorphic effect subtraction with open tails may have edge cases not yet covered.
-
 ### Type Checker Coverage
-The checker (`src/checker.ts`) handles inference, signature checking, and exhaustiveness, but does not yet enforce:
-- Refinement predicates (accepts syntax, doesn't verify)
-- Affine use-at-most-once rules
-- Full effect row unification with row variables
-- Interface constraint solving (`where Ord a`)
+The checker (`src/checker.ts`) handles inference, signature checking, exhaustiveness, affine enforcement (E600/E601/W600), interface/impl dispatch with `where` constraints, refinement type micro-solving (QF_LIA with path conditions and arithmetic expression tracking), row polymorphism inference, effect alias/subtraction, borrow scope enforcement, and where-constraint propagation through pipelines/params/returns. Remaining gaps:
+- Composite literal type inference falls through to tAny — Clone checking only works on annotated types
+- Parameterized interface constraint type arg not validated at call sites
+- Full HM let-polymorphism not implemented (type vars are module-scoped, no generalization/instantiation)
+- Row variable subtraction detection in effect rows
+- Builtin interface method types (clone, into, from) use tAny — need per-call-site instantiation
+- typeEqual overly permissive for t-generic types
+- No List/Tuple cmp (Ord) VM dispatch
 
-### Standard Library
-Built-in functions are registered in `src/builtin-registry.ts` and `src/builtins.ts`. Core operations (arithmetic, string, list, I/O) are implemented. The full Tier 1/Tier 2 stdlib catalog from the spec (`docs/stdlib-catalog.md`) is not fully wired — notably `std.http`, `std.srv`, `std.csv`, `std.proc` subprocess operations, and `std.dt` datetime functions.
+### Package Manager
+`clank.pkg` manifest parsing, local dependency resolution, `clank.lock` lockfile (SHA-256 integrity), and `clank pkg add|verify|remove` CLI subcommands are implemented. Registry protocol and `clank pkg publish` are not yet implemented.
+
+### FFI / Interop
+`CALL_EXTERN` opcode implemented for VM path with extern table and value conversion. `extern mod` block syntax implemented (parser desugars to individual extern-decl nodes with shared library and per-member where attributes). Embedding API not started.
 
 ---
 
 ## Suggested Next Priorities
 
-### 1. Refinement Types (High Impact)
-The defining feature of Clank's type system. Integrating an SMT solver (or a lightweight decision procedure for QF_UFLIRA) would enable compile-time verification of `Int{> 0}`, `[T]{len > 0}`, and relational predicates. This is the single feature most differentiating Clank from existing languages.
+### 1. Type Checker Hardening (High Impact)
+Remaining gaps: composite literal type inference (falls through to tAny), full HM let-polymorphism (generalization/instantiation), parameterized interface constraint validation at call sites, List/Tuple Ord dispatch, builtin interface method type instantiation, zero-param lambda inference.
 
-### 2. Affine Type Enforcement (High Impact)
-Move/borrow/clone tracking in the checker. The syntax and semantics are fully specced. Enforcement would catch resource leaks (unclosed files, unreleased connections) at compile time — a core promise of the language.
+### 2. Record Pattern Matching & Spread Operator (High Impact)
+`{field, field | rest}` destructuring in match/let and `{field: val, ..base}` spread syntax for records. Row polymorphism infrastructure is in place; this completes the record ergonomics story.
 
-### 3. Package Manager — Minimal Viable (Medium Impact)
-`clank.pkg` manifest parsing, local dependency resolution, and `clank pkg init|add|resolve`. Even without a registry, local/workspace package management would enable multi-file projects beyond the module system.
+### 3. Registry Protocol & `pkg publish` (Medium Impact)
+Complete the package ecosystem with remote registry support. Local package management and workspace orchestration are fully functional.
 
-### 4. Pretty-Print Layer (Medium Impact)
-Terse/verbose conversion is a key agent UX feature — agents write terse, humans review verbose. The transformation is purely lexical (static expansion table), making it straightforward to implement.
+### 4. Ref Mutable State Opcodes (Medium Impact)
+Wire remaining REF_NEW/GET/SET opcodes into VM execution loop. STM and iterator opcodes are implemented; this completes the mutable state story.
 
-### 5. Async Runtime (Medium Impact)
-Wiring the `<async>` effect into the VM with task spawning and structured concurrency. Required for real-world agent programs that make concurrent HTTP requests or run background tasks.
+### 5. Embedding API (Medium Impact)
+Host language embedding for FFI. `CALL_EXTERN` opcode and `extern mod` block syntax are both implemented; this adds the host-side API for embedding Clank in other runtimes.
 
-### 6. FFI (Lower Priority for v1)
-`extern` declarations and host function calling. Important for ecosystem integration but not blocking for self-contained Clank programs.
+### 6. WASM Backend (Future)
+Secondary compilation target for deployment. Depends on WASM 3.0 GC. Lower priority than getting the ecosystem features working end-to-end.
 
-### 7. WASM Backend (Future)
-Secondary compilation target for deployment. Depends on WASM 3.0 GC. Lower priority than getting the type system features working end-to-end.
-
-### 8. Stdlib Expansion
-Filling in the specced Tier 1 and Tier 2 modules — particularly `std.http`, `std.proc`, `std.srv`, and `std.dt` — to match the stdlib catalog in `docs/stdlib-catalog.md`.
+### 7. Queryable Records (Future)
+SQL-like record querying. Specced but lower priority than type system hardening and package ecosystem.

@@ -1,0 +1,16 @@
+# Test: clone on type that does not implement Clone (E602)
+# Verifies that clone expr emits error when type lacks Clone impl
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = discard h
+
+# Clone without Clone impl — should emit E602
+bad-clone : (h: Handle) -> <> () =
+  let h2 = clone &h
+  consume(h2)
+  consume(h)
+
+main : () -> <io> () = print("should not reach")
+
+# Expected: error

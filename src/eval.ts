@@ -4,7 +4,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
-import type { Expr, HandlerArm, ImportItem, Loc, Param, Pattern, Program, TopLevel } from "./ast.js";
+import type { Expr, HandlerArm, ImportItem, Loc, MethodSig, Param, Pattern, Program, TopLevel, TypeExpr } from "./ast.js";
 import { builtins, setApplyFn } from "./builtins.js";
 import { lex } from "./lexer.js";
 import { parse } from "./parser.js";
@@ -83,6 +83,81 @@ export class Env {
   extend(): Env {
     return new Env(this);
   }
+}
+
+// ── Interface/impl dispatch table ──
+// Key: "methodName" → Map<runtimeTag, Value (closure/builtin)>
+
+type ImplTable = Map<string, Map<string, Value>>;
+const implTable: ImplTable = new Map();
+
+function registerImpl(methodName: string, typeTag: string, impl: Value): void {
+  if (!implTable.has(methodName)) implTable.set(methodName, new Map());
+  implTable.get(methodName)!.set(typeTag, impl);
+}
+
+function runtimeTypeTag(v: Value): string {
+  switch (v.tag) {
+    case "int": return "Int";
+    case "rat": return "Rat";
+    case "bool": return "Bool";
+    case "str": return "Str";
+    case "unit": return "Unit";
+    case "list": return "List";
+    case "tuple": return "Tuple";
+    case "record": return "Record";
+    case "variant": return v.name;
+    case "closure": return "Fn";
+    case "builtin": return "Fn";
+    case "effect-def": return "Effect";
+  }
+}
+
+function typeExprToTag(te: TypeExpr): string {
+  switch (te.tag) {
+    case "t-name": return te.name;
+    case "t-list": return "List";
+    case "t-tuple": return "Tuple";
+    case "t-record": return "Record";
+    case "t-generic": return te.name;
+    default: return "?";
+  }
+}
+
+// Interface method names → interface name (for tracking)
+const interfaceMethodNames: Map<string, string> = new Map();
+
+function makeInterfaceDispatcher(methodName: string, paramCount: number): Value {
+  return {
+    tag: "builtin",
+    name: methodName,
+    fn: (args: Value[], loc: Loc): Value => {
+      // Dispatch on the runtime type of the first argument
+      const dispatchArg = args[0];
+      if (!dispatchArg) {
+        throw { code: "E212", message: `interface method '${methodName}' called with no arguments`, location: loc } as RuntimeError;
+      }
+
+      // For variant types, check both the variant name and the type name
+      const tag = runtimeTypeTag(dispatchArg);
+      const methodImpls = implTable.get(methodName);
+      if (methodImpls) {
+        const impl = methodImpls.get(tag);
+        if (impl) {
+          if (impl.tag === "builtin") return impl.fn(args, loc);
+          if (impl.tag === "closure") {
+            const callEnv = impl.env.extend();
+            for (let i = 0; i < impl.params.length; i++) {
+              callEnv.set(impl.params[i].name, args[i] ?? { tag: "unit" });
+            }
+            return evaluate(impl.body, callEnv);
+          }
+        }
+      }
+
+      throw { code: "E212", message: `no impl of method '${methodName}' for type '${tag}'`, location: loc } as RuntimeError;
+    },
+  };
 }
 
 // ── Evaluator ──
@@ -235,6 +310,15 @@ function evaluate(expr: Expr, env: Env): Value {
       }
       throw { code: "E206", message: `cannot access field '${expr.field}' on ${obj.tag}`, location: expr.loc } as RuntimeError;
     }
+
+    // Affine nodes — at runtime, borrow/clone just pass through the value
+    case "borrow":
+      return evaluate(expr.expr, env);
+    case "clone":
+      return evaluate(expr.expr, env);
+    case "discard":
+      evaluate(expr.expr, env);
+      return { tag: "unit" } as Value;
 
     default: {
       const _: never = expr;
@@ -450,7 +534,14 @@ const moduleCache = new Map<string, Map<string, Value>>();
  * relative to the given base directory.
  * Tries: baseDir/math/stats.clk, then baseDir/math.stats.clk (flat).
  */
-function resolveModulePath(modPath: string[], baseDir: string): string {
+function resolveModulePath(modPath: string[], baseDir: string, packageModuleMap?: Map<string, string>): string {
+  // Check package module map first (for cross-package imports)
+  if (packageModuleMap) {
+    const qualifiedName = modPath.join(".");
+    const pkgPath = packageModuleMap.get(qualifiedName);
+    if (pkgPath) return resolve(pkgPath);
+  }
+
   // Primary: directory-based — math/stats.clk
   const dirBased = join(baseDir, ...modPath.slice(0, -1), modPath[modPath.length - 1] + ".clk");
   if (existsSync(dirBased)) return resolve(dirBased);
@@ -471,7 +562,7 @@ function resolveModulePath(modPath: string[], baseDir: string): string {
  * Load a module: read, lex, parse, desugar, evaluate.
  * Returns a map of pub-exported names → values.
  */
-function loadModule(absPath: string, baseDir: string): Map<string, Value> {
+function loadModule(absPath: string, baseDir: string, packageModuleMap?: Map<string, string>): Map<string, Value> {
   // Check cache
   if (moduleCache.has(absPath)) return moduleCache.get(absPath)!;
 
@@ -493,6 +584,9 @@ function loadModule(absPath: string, baseDir: string): Map<string, Value> {
     topLevels: (ast as Program).topLevels.map(tl => {
       if (tl.tag === "definition") {
         return { ...tl, body: desugar(tl.body) };
+      }
+      if (tl.tag === "impl-block") {
+        return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
       }
       return tl;
     }),
@@ -518,8 +612,8 @@ function loadModule(absPath: string, baseDir: string): Map<string, Value> {
 
     if (tl.tag === "use-decl") {
       // Load imported module
-      const importPath = resolveModulePath(tl.path, modDir);
-      const exports = loadModule(importPath, modDir);
+      const importPath = resolveModulePath(tl.path, modDir, packageModuleMap);
+      const exports = loadModule(importPath, modDir, packageModuleMap);
       for (const imp of tl.imports) {
         const name = imp.name;
         const localName = imp.alias ?? name;
@@ -542,6 +636,10 @@ function loadModule(absPath: string, baseDir: string): Map<string, Value> {
         modEnv.set(variant.name, val);
         if (tl.pub) pubNames.add(variant.name);
       }
+      // Generate impls for deriving clauses
+      if (tl.deriving && tl.deriving.length > 0) {
+        registerDerivedImpls(tl.variants, tl.deriving, modEnv);
+      }
       continue;
     }
 
@@ -559,6 +657,25 @@ function loadModule(absPath: string, baseDir: string): Map<string, Value> {
       for (const op of tl.ops) {
         modEnv.set(op.name, makeEffectOp(op.name, tl.name));
         if (tl.pub) pubNames.add(op.name);
+      }
+      continue;
+    }
+
+    if (tl.tag === "interface-decl") {
+      for (const m of tl.methods) {
+        interfaceMethodNames.set(m.name, tl.name);
+        const dispatcher = makeInterfaceDispatcher(m.name, m.sig.params.length);
+        modEnv.set(m.name, dispatcher);
+        if (tl.pub) pubNames.add(m.name);
+      }
+      continue;
+    }
+
+    if (tl.tag === "impl-block") {
+      const typeTag = typeExprToTag(tl.forType);
+      for (const m of tl.methods) {
+        const bodyValue = evaluate(m.body, modEnv);
+        registerImpl(m.name, typeTag, bodyValue);
       }
       continue;
     }
@@ -609,11 +726,70 @@ function initGlobalEnv(): Env {
   handlerStack.length = 0;
   performCounter = 0;
   moduleCache.clear();
+  implTable.clear();
+  interfaceMethodNames.clear();
+  registerBuiltinImpls();
 
   const global = new Env();
   for (const [name, fn] of Object.entries(builtins)) {
     global.set(name, { tag: "builtin", name, fn });
   }
+
+  // Built-in Ordering type for Ord interface
+  global.set("Lt", { tag: "variant", name: "Lt", fields: [] });
+  global.set("Gt", { tag: "variant", name: "Gt", fields: [] });
+  global.set("Eq_", { tag: "variant", name: "Eq_", fields: [] });
+
+  // Built-in interface method dispatchers
+  // Override show/eq with dispatchers that check the impl table first, then fall back to builtins
+  const builtinShow = global.get("show", { line: 0, col: 0 });
+  global.set("show", {
+    tag: "builtin",
+    name: "show",
+    fn: (args: Value[], loc: Loc): Value => {
+      const tag = runtimeTypeTag(args[0]);
+      const methodImpls = implTable.get("show");
+      if (methodImpls) {
+        const impl = methodImpls.get(tag);
+        if (impl) {
+          if (impl.tag === "builtin") return impl.fn(args, loc);
+          if (impl.tag === "closure") {
+            const callEnv = impl.env.extend();
+            for (let i = 0; i < impl.params.length; i++) callEnv.set(impl.params[i].name, args[i] ?? { tag: "unit" });
+            return evaluate(impl.body, callEnv);
+          }
+        }
+      }
+      return builtinShow.tag === "builtin" ? builtinShow.fn(args, loc) : { tag: "str", value: "?" };
+    },
+  });
+  const builtinEq = global.get("eq", { line: 0, col: 0 });
+  global.set("eq", {
+    tag: "builtin",
+    name: "eq",
+    fn: (args: Value[], loc: Loc): Value => {
+      const tag = runtimeTypeTag(args[0]);
+      const methodImpls = implTable.get("eq");
+      if (methodImpls) {
+        const impl = methodImpls.get(tag);
+        if (impl) {
+          if (impl.tag === "builtin") return impl.fn(args, loc);
+          if (impl.tag === "closure") {
+            const callEnv = impl.env.extend();
+            for (let i = 0; i < impl.params.length; i++) callEnv.set(impl.params[i].name, args[i] ?? { tag: "unit" });
+            return evaluate(impl.body, callEnv);
+          }
+        }
+      }
+      return builtinEq.tag === "builtin" ? builtinEq.fn(args, loc) : { tag: "bool", value: false };
+    },
+  });
+  // Register cmp, clone, default, into, from as dispatchers
+  global.set("cmp", makeInterfaceDispatcher("cmp", 2));
+  global.set("clone", makeInterfaceDispatcher("clone", 1));
+  global.set("default", makeInterfaceDispatcher("default", 0));
+  global.set("into", makeInterfaceDispatcher("into", 1));
+  global.set("from", makeInterfaceDispatcher("from", 1));
 
   // Built-in effects
   global.set("exn", { tag: "effect-def", name: "exn", ops: ["raise"] });
@@ -666,13 +842,13 @@ function initGlobalEnv(): Env {
   return global;
 }
 
-function loadTopLevels(env: Env, program: Program, baseDir: string): void {
+function loadTopLevels(env: Env, program: Program, baseDir: string, packageModuleMap?: Map<string, string>): void {
   for (const tl of program.topLevels) {
     if (tl.tag === "mod-decl") continue;
 
     if (tl.tag === "use-decl") {
-      const importPath = resolveModulePath(tl.path, baseDir);
-      const exports = loadModule(importPath, baseDir);
+      const importPath = resolveModulePath(tl.path, baseDir, packageModuleMap);
+      const exports = loadModule(importPath, baseDir, packageModuleMap);
       for (const imp of tl.imports) {
         const name = imp.name;
         const localName = imp.alias ?? name;
@@ -693,6 +869,10 @@ function loadTopLevels(env: Env, program: Program, baseDir: string): void {
       for (const variant of tl.variants) {
         env.set(variant.name, makeVariantConstructor(variant.name, variant.fields.length));
       }
+      // Generate impls for deriving clauses
+      if (tl.deriving && tl.deriving.length > 0) {
+        registerDerivedImpls(tl.variants, tl.deriving, env);
+      }
       continue;
     }
 
@@ -707,6 +887,67 @@ function loadTopLevels(env: Env, program: Program, baseDir: string): void {
       env.set(tl.name, { tag: "effect-def", name: tl.name, ops: opNames });
       for (const op of tl.ops) {
         env.set(op.name, makeEffectOp(op.name, tl.name));
+      }
+      continue;
+    }
+
+    if (tl.tag === "interface-decl") {
+      // Register dispatcher functions for each interface method
+      for (const m of tl.methods) {
+        interfaceMethodNames.set(m.name, tl.name);
+        const dispatcher = makeInterfaceDispatcher(m.name, m.sig.params.length);
+        env.set(m.name, dispatcher);
+      }
+      continue;
+    }
+
+    if (tl.tag === "impl-block") {
+      const typeTag = typeExprToTag(tl.forType);
+      for (const m of tl.methods) {
+        // Create closure in the current environment
+        const implEnv = env.extend();
+        // Determine arity from the interface method signature if available
+        const ifaceName = tl.interface_;
+        let paramCount = 1;
+        // Try to get the interface's method sig to know the param names
+        for (const otherTl of program.topLevels) {
+          if (otherTl.tag === "interface-decl" && otherTl.name === ifaceName) {
+            const methodSig = otherTl.methods.find(ms => ms.name === m.name);
+            if (methodSig) paramCount = methodSig.sig.params.length;
+            break;
+          }
+        }
+        // If the body is already a closure/function, register it directly
+        const bodyValue = evaluate(m.body, implEnv);
+        // For From<T>, dispatch `from` on the source type (T), not Self
+        if (tl.interface_ === "From" && m.name === "from" && tl.typeArgs.length > 0) {
+          const sourceTypeTag = typeExprToTag(tl.typeArgs[0]);
+          registerImpl(m.name, sourceTypeTag, bodyValue);
+        } else {
+          registerImpl(m.name, typeTag, bodyValue);
+        }
+      }
+      // Blanket rule: impl From<A> for B  →  register into for type A
+      if (tl.interface_ === "From" && tl.typeArgs.length > 0) {
+        const sourceTypeTag = typeExprToTag(tl.typeArgs[0]);
+        const fromImpl = implTable.get("from")?.get(sourceTypeTag);
+        if (fromImpl) {
+          registerImpl("into", sourceTypeTag, {
+            tag: "builtin",
+            name: `into:${sourceTypeTag}->${typeTag}`,
+            fn: (args: Value[], loc: Loc): Value => {
+              if (fromImpl.tag === "builtin") return fromImpl.fn(args, loc);
+              if (fromImpl.tag === "closure") {
+                const callEnv = fromImpl.env.extend();
+                for (let i = 0; i < fromImpl.params.length; i++) {
+                  callEnv.set(fromImpl.params[i].name, args[i] ?? { tag: "unit" as const });
+                }
+                return evaluate(fromImpl.body, callEnv);
+              }
+              throw { code: "E212", message: `no impl of method 'into' for type '${sourceTypeTag}'`, location: loc } as RuntimeError;
+            },
+          });
+        }
       }
       continue;
     }
@@ -727,13 +968,158 @@ function loadTopLevels(env: Env, program: Program, baseDir: string): void {
   }
 }
 
+// ── Auto-derive impl generation ──
+
+function registerDerivedImpls(variants: { name: string; fields: { tag: string }[] }[], deriving: string[], env: Env): void {
+  const noLoc: Loc = { line: 0, col: 0 };
+
+  // Helper: call an interface method on a value by looking it up from the env
+  function callMethod(methodName: string, args: Value[]): Value {
+    const fn = env.get(methodName, noLoc);
+    return applyValue(fn, args, noLoc);
+  }
+
+  for (const ifaceName of deriving) {
+    if (ifaceName === "Show") {
+      for (const v of variants) {
+        registerImpl("show", v.name, {
+          tag: "builtin",
+          name: `show:${v.name}`,
+          fn: (args, _loc) => {
+            const val = args[0] as Value & { tag: "variant" };
+            if (val.fields.length === 0) {
+              return { tag: "str", value: val.name };
+            }
+            const fieldStrs = val.fields.map(f => {
+              const shown = callMethod("show", [f]);
+              return (shown as any).value as string;
+            });
+            return { tag: "str", value: `${val.name}(${fieldStrs.join(", ")})` };
+          },
+        });
+      }
+    }
+
+    if (ifaceName === "Eq") {
+      for (const v of variants) {
+        registerImpl("eq", v.name, {
+          tag: "builtin",
+          name: `eq:${v.name}`,
+          fn: (args, _loc) => {
+            const a = args[0] as Value & { tag: "variant" };
+            const b = args[1] as Value & { tag: "variant" };
+            if (b.tag !== "variant" || a.name !== b.name) return { tag: "bool", value: false };
+            for (let i = 0; i < a.fields.length; i++) {
+              const result = callMethod("eq", [a.fields[i], b.fields[i]]);
+              if (result.tag === "bool" && !result.value) return { tag: "bool", value: false };
+            }
+            return { tag: "bool", value: true };
+          },
+        });
+      }
+    }
+
+    if (ifaceName === "Clone") {
+      for (const v of variants) {
+        registerImpl("clone", v.name, {
+          tag: "builtin",
+          name: `clone:${v.name}`,
+          fn: (args, _loc) => {
+            const val = args[0] as Value & { tag: "variant" };
+            if (val.fields.length === 0) return val;
+            const clonedFields = val.fields.map(f => callMethod("clone", [f]));
+            return { tag: "variant", name: val.name, fields: clonedFields };
+          },
+        });
+      }
+    }
+
+    if (ifaceName === "Ord") {
+      for (let vi = 0; vi < variants.length; vi++) {
+        const v = variants[vi];
+        registerImpl("cmp", v.name, {
+          tag: "builtin",
+          name: `cmp:${v.name}`,
+          fn: (args, _loc) => {
+            const a = args[0] as Value & { tag: "variant" };
+            const b = args[1] as Value & { tag: "variant" };
+            // Compare by variant ordinal first
+            const ai = variants.findIndex(vv => vv.name === a.name);
+            const bi = variants.findIndex(vv => vv.name === b.name);
+            if (ai < bi) return { tag: "variant", name: "Lt", fields: [] };
+            if (ai > bi) return { tag: "variant", name: "Gt", fields: [] };
+            // Same variant: compare fields lexicographically
+            for (let i = 0; i < a.fields.length; i++) {
+              const result = callMethod("cmp", [a.fields[i], b.fields[i]]);
+              if (result.tag === "variant" && result.name !== "Eq_") return result;
+            }
+            return { tag: "variant", name: "Eq_", fields: [] };
+          },
+        });
+      }
+    }
+
+    if (ifaceName === "Default") {
+      // Default uses the first nullary variant, or the first variant with default fields
+      const nullary = variants.find(v => v.fields.length === 0);
+      if (nullary) {
+        registerImpl("default", nullary.name, {
+          tag: "builtin",
+          name: `default:${nullary.name}`,
+          fn: (_args, _loc) => ({ tag: "variant", name: nullary.name, fields: [] }),
+        });
+        // Also register under the type name for when default is called without a value to dispatch on
+      }
+    }
+  }
+}
+
+// ── Register built-in interface impls ──
+
+function registerBuiltinImpls(): void {
+  // show for primitives
+  registerImpl("show", "Int", { tag: "builtin", name: "show:Int", fn: (args, _loc) => ({ tag: "str", value: String((args[0] as any).value) }) });
+  registerImpl("show", "Rat", { tag: "builtin", name: "show:Rat", fn: (args, _loc) => ({ tag: "str", value: String((args[0] as any).value) }) });
+  registerImpl("show", "Bool", { tag: "builtin", name: "show:Bool", fn: (args, _loc) => ({ tag: "str", value: (args[0] as any).value ? "true" : "false" }) });
+  registerImpl("show", "Str", { tag: "builtin", name: "show:Str", fn: (args, _loc) => args[0] });
+  registerImpl("show", "Unit", { tag: "builtin", name: "show:Unit", fn: (_args, _loc) => ({ tag: "str", value: "()" }) });
+
+  // eq for primitives
+  registerImpl("eq", "Int", { tag: "builtin", name: "eq:Int", fn: (args, _loc) => ({ tag: "bool", value: (args[0] as any).value === (args[1] as any).value }) });
+  registerImpl("eq", "Rat", { tag: "builtin", name: "eq:Rat", fn: (args, _loc) => ({ tag: "bool", value: (args[0] as any).value === (args[1] as any).value }) });
+  registerImpl("eq", "Bool", { tag: "builtin", name: "eq:Bool", fn: (args, _loc) => ({ tag: "bool", value: (args[0] as any).value === (args[1] as any).value }) });
+  registerImpl("eq", "Str", { tag: "builtin", name: "eq:Str", fn: (args, _loc) => ({ tag: "bool", value: (args[0] as any).value === (args[1] as any).value }) });
+
+  // clone for primitives (identity — primitives are value types)
+  for (const prim of ["Int", "Rat", "Bool", "Str", "Unit"]) {
+    registerImpl("clone", prim, { tag: "builtin", name: `clone:${prim}`, fn: (args, _loc) => args[0] });
+  }
+
+  // default for primitives
+  registerImpl("default", "Int", { tag: "builtin", name: "default:Int", fn: (_args, _loc) => ({ tag: "int", value: 0 }) });
+  registerImpl("default", "Rat", { tag: "builtin", name: "default:Rat", fn: (_args, _loc) => ({ tag: "rat", value: 0.0 }) });
+  registerImpl("default", "Bool", { tag: "builtin", name: "default:Bool", fn: (_args, _loc) => ({ tag: "bool", value: false }) });
+  registerImpl("default", "Str", { tag: "builtin", name: "default:Str", fn: (_args, _loc) => ({ tag: "str", value: "" }) });
+  registerImpl("default", "Unit", { tag: "builtin", name: "default:Unit", fn: (_args, _loc) => ({ tag: "unit" }) });
+
+  // cmp for Int, Rat, Str
+  const cmpFn = (a: number | string, b: number | string): Value => {
+    if (a < b) return { tag: "variant", name: "Lt", fields: [] };
+    if (a > b) return { tag: "variant", name: "Gt", fields: [] };
+    return { tag: "variant", name: "Eq_", fields: [] };
+  };
+  registerImpl("cmp", "Int", { tag: "builtin", name: "cmp:Int", fn: (args, _loc) => cmpFn((args[0] as any).value, (args[1] as any).value) });
+  registerImpl("cmp", "Rat", { tag: "builtin", name: "cmp:Rat", fn: (args, _loc) => cmpFn((args[0] as any).value, (args[1] as any).value) });
+  registerImpl("cmp", "Str", { tag: "builtin", name: "cmp:Str", fn: (args, _loc) => cmpFn((args[0] as any).value, (args[1] as any).value) });
+}
+
 // ── Program runner ──
 
-export function run(program: Program, baseDir?: string): Value | RuntimeError {
+export function run(program: Program, baseDir?: string, packageModuleMap?: Map<string, string>): Value | RuntimeError {
   try {
     const global = initGlobalEnv();
     const resolveDir = baseDir ?? ".";
-    loadTopLevels(global, program, resolveDir);
+    loadTopLevels(global, program, resolveDir, packageModuleMap);
 
     // Find and call main()
     const main = global.get("main", { line: 0, col: 0 });

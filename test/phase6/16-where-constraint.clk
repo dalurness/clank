@@ -1,0 +1,9 @@
+# Test: where constraints parse correctly on function definitions
+# Expected output:
+# 42
+
+print-int : (x: Int) -> <io> () where Show Int
+  = print(show(x))
+
+main : () -> <io> () =
+  print-int(42)

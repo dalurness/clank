@@ -1,0 +1,16 @@
+# Test: affine propagation through compound types
+# Verifies that a tuple containing an affine type is itself affine
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = ()
+
+# Tuple containing affine value should be affine
+tuple-affine : (h: Handle) -> <> Int =
+  let pair = (h, 42)
+  42
+
+main : () -> <io> () = print("propagation test")
+
+# Expected check warning:
+# W600 — affine variable 'pair' is never consumed

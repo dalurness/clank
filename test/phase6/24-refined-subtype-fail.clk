@@ -1,0 +1,6 @@
+# Test: weaker refinement does not imply stronger refinement
+# Expected: error
+
+needs-big : (x: Int{v > 100}) -> <> Int = x
+
+nope : (y: Int{v > 0}) -> <> Int = needs-big(y)

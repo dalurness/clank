@@ -1,0 +1,7 @@
+# Test: implicit v syntax (predicate starts with comparison)
+# Expected output:
+# 5
+
+positive : (x: Int{> 0}) -> <> Int = x
+
+main : () -> <io> () = print(show(positive(5)))

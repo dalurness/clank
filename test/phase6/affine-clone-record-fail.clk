@@ -1,0 +1,13 @@
+# Test: clone on record containing non-cloneable type (E602)
+# Verifies that {val: Handle} is not Clone when Handle lacks Clone
+
+affine type Handle = Handle(Int)
+
+bad-clone : (r: {val: Handle}) -> <> () =
+  let r2 = clone &r
+  discard r2
+  discard r
+
+main : () -> <io> () = print("should not reach")
+
+# Expected: error

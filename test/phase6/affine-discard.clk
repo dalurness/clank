@@ -1,0 +1,14 @@
+# Test: discard explicitly abandons an affine value
+# Verifies that discard consumes the value, suppressing W600
+
+affine type Handle = Handle(Int)
+
+# Discard should suppress unused warning
+discard-test : (h: Handle) -> <> Int =
+  discard h
+  42
+
+main : () -> <io> () = print("discard ok")
+
+# Expected output:
+# discard ok

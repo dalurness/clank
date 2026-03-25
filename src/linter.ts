@@ -106,6 +106,11 @@ function collectRefs(expr: Expr, refs: Set<string>): void {
     case "field-access":
       collectRefs(expr.object, refs);
       break;
+    case "borrow":
+    case "clone":
+    case "discard":
+      collectRefs(expr.expr, refs);
+      break;
   }
 }
 

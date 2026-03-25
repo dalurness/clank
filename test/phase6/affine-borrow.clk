@@ -1,0 +1,20 @@
+# Test: borrow syntax (&) does not consume affine variable
+# Verifies that borrowing an affine value keeps it live
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = discard h
+inspect : (h: Handle) -> <> Int =
+  discard h
+  42
+
+# Multiple borrows followed by consumption — should pass
+borrow-then-use : (h: Handle) -> <> () =
+  let x = inspect(&h)
+  let y = inspect(&h)
+  consume(h)
+
+main : () -> <io> () = print("borrow ok")
+
+# Expected output:
+# borrow ok

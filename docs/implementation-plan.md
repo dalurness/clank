@@ -26,11 +26,11 @@ The hard constraint from TASK-006 is that the toolchain must fit in agent contex
 | Fits in 1500 lines? | Yes, comfortably | Tight | Tight |
 | Prototype speed | Fast | Slow (fighting borrow checker) | Medium |
 
-**Why not Rust for Phase 1?** Rust would be ideal for the production VM (Phase 3b), but for the reference interpreter whose purpose is to validate the spec and run example programs, TypeScript's conciseness is decisive. A Rust struct definition + impl block for a single AST node takes ~15 lines; the equivalent TypeScript discriminated union variant takes ~3.
+**Why not Rust for Phase 1?** Rust is more verbose for AST-heavy code — a struct definition + impl block for a single AST node takes ~15 lines vs ~3 in TypeScript. For the reference interpreter whose purpose is to validate the language design and run example programs, TypeScript's conciseness is decisive.
 
 **Why not write Clank in Clank?** Self-hosting is a Phase 5+ goal. The language doesn't exist yet.
 
-**Migration path:** TypeScript reference interpreter (Phase 3a) → Rust VM + compiler (Phase 3b) → self-hosted compiler (future).
+**Migration path:** TypeScript reference interpreter → [research required: static binary target] → self-hosted compiler (future). When the reference implementation is stable, a dedicated research task should evaluate the best path to a distributable static binary. That decision should be driven by Clank's own design goals — toolchain context-fit, agent writability of the toolchain source, execution performance where it matters, and deployment simplicity. The answer should not be assumed in advance.
 
 ---
 
@@ -377,4 +377,4 @@ The implementation plan follows a "working software at every phase" principle. P
 
 **Critical path to all examples running:** Add IMPL-006 through IMPL-013 (8 more tasks, 13 total).
 
-**Implementation language:** TypeScript, with a migration path to Rust for the production VM.
+**Implementation language:** TypeScript for the reference interpreter. The static binary strategy is a future research task — see migration path note above.

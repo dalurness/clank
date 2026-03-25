@@ -1,0 +1,22 @@
+# Test: superinterface declaration with custom interfaces
+# Expected output:
+# matched!
+
+interface Printable {
+  to-text : (Self) -> <> Str
+}
+
+interface Pretty : Printable {
+  pretty : (Self) -> <> Str
+}
+
+impl Printable for Int {
+  to-text = fn(x) => show(x)
+}
+
+impl Pretty for Int {
+  pretty = fn(x) => "pretty(" ++ show(x) ++ ")"
+}
+
+main : () -> <io> () =
+  print("matched!")

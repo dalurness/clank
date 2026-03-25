@@ -1,0 +1,18 @@
+# Test: deriving Show generates working show impl
+# Expected output:
+# Red
+# Green
+# Some(42)
+# None
+
+type Color = Red | Green | Blue
+  deriving (Show)
+
+type Option = Some(Int) | None
+  deriving (Show)
+
+main : () -> <io> () =
+  print(show(Red))
+  print(show(Green))
+  print(show(Some(42)))
+  print(show(None))

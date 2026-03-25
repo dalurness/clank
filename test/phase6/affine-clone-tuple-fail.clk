@@ -1,0 +1,13 @@
+# Test: clone on tuple containing non-cloneable type (E602)
+# Verifies that (Int, Handle) is not Clone when Handle lacks Clone
+
+affine type Handle = Handle(Int)
+
+bad-clone : (pair: (Int, Handle)) -> <> () =
+  let pair2 = clone &pair
+  discard pair2
+  discard pair
+
+main : () -> <io> () = print("should not reach")
+
+# Expected: error

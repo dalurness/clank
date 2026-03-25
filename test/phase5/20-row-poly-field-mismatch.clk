@@ -1,0 +1,9 @@
+# Test: row polymorphism detects field type mismatch
+# Expected: error
+
+get-name : (rec: {name: Str | r}) -> <> Str =
+  rec.name
+
+main : () -> <io> () =
+  let thing = {name: 42, age: 36}
+  print(get-name(thing))

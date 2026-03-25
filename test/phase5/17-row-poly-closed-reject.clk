@@ -1,0 +1,9 @@
+# Test: closed record type rejects extra fields
+# Expected: error
+
+get-name : (rec: {name: Str}) -> <> Str =
+  rec.name
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  print(get-name(person))

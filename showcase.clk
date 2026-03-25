@@ -1,0 +1,29 @@
+type Shape = Circle(Rat) | Rect(Rat, Rat)
+
+effect Config { scale-factor : () -> Rat }
+
+area : (s: Shape) -> <> Rat =
+  match s {
+    Circle(r) => r * r * 3.14159
+    Rect(w, h) => w * h
+  }
+
+summarize : (vals: [Rat], fmt: (Rat -> Str)) -> <> Str =
+  vals |> map(fmt) |> join(", ")
+
+scaled-areas : (shapes: [Shape]) -> <Config> [Rat] =
+  let factor = scale-factor()
+  shapes |> map(fn(s) => area(s) * factor)
+
+tag : (rec: {label: Str, val: Str}) -> <> Str =
+  "[" ++ rec.label ++ "] " ++ rec.val
+
+main : () -> <io> () = do {
+  areas <- handle scaled-areas([Circle(3.0), Rect(4.0, 5.0), Circle(1.0)]) {
+    return xs -> xs,
+    scale-factor _ resume k -> k(2.0)
+  }
+  large <- areas |> filter(fn(x) => x > 20.0)
+  summary <- summarize(large, fn(x) => show(x))
+  print(tag({label: "large areas", val: summary}))
+}

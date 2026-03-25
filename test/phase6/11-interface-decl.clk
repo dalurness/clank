@@ -1,0 +1,20 @@
+# Test: interface declaration and impl with method dispatch
+# Expected output:
+# Int: 42
+# Str: hello
+
+interface Describe {
+  describe : (Self) -> <> Str
+}
+
+impl Describe for Int {
+  describe = fn(x) => "Int: " ++ show(x)
+}
+
+impl Describe for Str {
+  describe = fn(s) => "Str: " ++ s
+}
+
+main : () -> <io> () =
+  print(describe(42))
+  print(describe("hello"))

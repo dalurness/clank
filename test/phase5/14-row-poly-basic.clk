@@ -1,0 +1,13 @@
+# Test: row polymorphism — function accepts record with extra fields
+# Expected output:
+# Ada
+# Acme
+
+get-name : (rec: {name: Str | r}) -> <> Str =
+  rec.name
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  let company = {name: "Acme", founded: 1920}
+  print(get-name(person))
+  print(get-name(company))

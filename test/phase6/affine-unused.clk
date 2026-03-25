@@ -1,0 +1,13 @@
+# Test: unused affine variable warning (W600)
+# Verifies that an affine variable that is never consumed emits a warning
+
+affine type Handle = Handle(Int)
+
+# f is never consumed — should emit W600
+leak : (h: Handle) -> <> Int =
+  42
+
+main : () -> <io> () = print("leak test")
+
+# Expected check warning:
+# W600 — affine variable 'h' is never consumed

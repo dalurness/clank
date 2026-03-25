@@ -108,7 +108,7 @@ function resolveTypeExprToType(te: TypeExpr): Type {
       te.effects.map(e => ({ tag: "e-named" as const, name: e })),
     );
     case "t-generic": return { tag: "t-generic", name: te.name, args: te.args.map(resolveTypeExprToType) };
-    case "t-record": return { tag: "t-record", fields: te.fields.map(f => ({ name: f.name, type: resolveTypeExprToType(f.type) })) };
+    case "t-record": return { tag: "t-record", fields: te.fields.map(f => ({ name: f.name, type: resolveTypeExprToType(f.type) })), rowVar: null };
     default: return tAny;
   }
 }

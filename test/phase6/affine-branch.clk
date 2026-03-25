@@ -1,0 +1,15 @@
+# Test: branch consistency for affine variables (E601)
+# Verifies that if branches must agree on which affine vars are consumed
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = discard h
+
+# f consumed in then but not else — should emit E601
+branch-bad : (h: Handle, b: Bool) -> <> () =
+  if b then consume(h) else ()
+
+main : () -> <io> () = print("should not reach")
+
+# Expected: error
+# E601 — affine variable 'h' consumed in some branches but not others

@@ -1,0 +1,8 @@
+# Test: built-in eq interface
+# Expected output:
+# true
+# false
+
+main : () -> <io> () =
+  print(show(eq(42, 42)))
+  print(show(eq(1, 2)))

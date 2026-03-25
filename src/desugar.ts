@@ -241,6 +241,13 @@ export function desugar(expr: Expr): Expr {
         loc: expr.loc,
       };
 
+    case "borrow":
+      return { tag: "borrow", expr: desugar(expr.expr), loc: expr.loc };
+    case "clone":
+      return { tag: "clone", expr: desugar(expr.expr), loc: expr.loc };
+    case "discard":
+      return { tag: "discard", expr: desugar(expr.expr), loc: expr.loc };
+
     default: {
       const _exhaustive: never = expr;
       throw new Error(`Unknown AST node: ${(expr as any).tag}`);

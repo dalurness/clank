@@ -241,6 +241,410 @@ test("without --json, errors go to stderr", () => {
   cleanTmp("stderr-err.clk");
 });
 
+// ── Where-constraint enforcement at call sites (TASK-112) ──
+
+test("where constraint satisfied (Ord Int) passes", () => {
+  const src = `
+max-val : (a: T, b: T) -> <> T where Ord T =
+  if gt(a, b) then a else b
+
+main : () -> <io> () = print(show(max-val(3, 5)))
+`;
+  const f = writeTmp("constraint-ok.clk", src);
+  const { exitCode } = runCLI(`check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  cleanTmp("constraint-ok.clk");
+});
+
+test("where constraint violated emits E205", () => {
+  const src = `
+interface Sortable {
+  sort-key : (Self) -> <> Int
+}
+
+max-by : (a: T, b: T) -> <> T where Sortable T =
+  if gt(sort-key(a), sort-key(b)) then a else b
+
+main : () -> <io> () = print(show(max-by(3, 5)))
+`;
+  const f = writeTmp("constraint-fail.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.length >= 1, "at least one diagnostic");
+  assertEqual(env.diagnostics[0].code, "E205", "constraint error code");
+  assert(env.diagnostics[0].message.includes("Sortable"), "message mentions interface");
+  assert(env.diagnostics[0].message.includes("Int"), "message mentions concrete type");
+  cleanTmp("constraint-fail.clk");
+});
+
+test("where constraint satisfied with custom impl passes", () => {
+  const src = `
+interface Sortable {
+  sort-key : (Self) -> <> Int
+}
+
+impl Sortable for Int {
+  sort-key = fn(n) => n
+}
+
+max-by : (a: T, b: T) -> <> T where Sortable T =
+  if gt(sort-key(a), sort-key(b)) then a else b
+
+main : () -> <io> () = print(show(max-by(3, 5)))
+`;
+  const f = writeTmp("constraint-impl-ok.clk", src);
+  const { exitCode } = runCLI(`check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  cleanTmp("constraint-impl-ok.clk");
+});
+
+test("where constraint on list element type is checked", () => {
+  const src = `
+type Color = Red | Green | Blue
+
+sort-list : (xs: [T]) -> <> [T] where Ord T =
+  xs
+
+main : () -> <io> () = print(show(len(sort-list([Red, Green]))))
+`;
+  const f = writeTmp("constraint-list.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E205"), "E205 diagnostic present");
+  assert(env.diagnostics.some((d: any) => d.message.includes("Color")), "message mentions Color");
+  cleanTmp("constraint-list.clk");
+});
+
+// ── Where-constraint enforcement for higher-order / indirect calls (TASK-117) ──
+
+test("where constraint via let-bound alias emits E205", () => {
+  const src = `
+interface Sortable {
+  sort-key : (Self) -> <> Int
+}
+
+max-by : (a: T, b: T) -> <> T where Sortable T =
+  if gt(sort-key(a), sort-key(b)) then a else b
+
+main : () -> <io> () =
+  let f = max-by
+  print(show(f(3, 5)))
+`;
+  const f = writeTmp("constraint-alias-fail.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E205"), "E205 diagnostic present");
+  assert(env.diagnostics.some((d: any) => d.message.includes("Int")), "message mentions Int");
+  cleanTmp("constraint-alias-fail.clk");
+});
+
+test("where constraint via let-bound alias passes when satisfied", () => {
+  const src = `
+max-val : (a: T, b: T) -> <> T where Ord T =
+  if gt(a, b) then a else b
+
+main : () -> <io> () =
+  let f = max-val
+  print(show(f(3, 5)))
+`;
+  const f = writeTmp("constraint-alias-ok.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assert(!env.diagnostics || env.diagnostics.length === 0, "no diagnostics");
+  cleanTmp("constraint-alias-ok.clk");
+});
+
+test("where constraint via chained let aliases emits E205", () => {
+  const src = `
+interface Sortable {
+  sort-key : (Self) -> <> Int
+}
+
+max-by : (a: T, b: T) -> <> T where Sortable T =
+  if gt(sort-key(a), sort-key(b)) then a else b
+
+main : () -> <io> () =
+  let f = max-by
+  let g = f
+  print(show(g(3, 5)))
+`;
+  const f = writeTmp("constraint-chain-fail.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E205"), "E205 diagnostic present");
+  cleanTmp("constraint-chain-fail.clk");
+});
+
+// ── Row polymorphism (TASK-120) ──
+
+test("record literal infers closed record type", () => {
+  const src = `
+greet : (name: Str) -> <> Str = name
+
+main : () -> <io> () =
+  let rec = {name: "Ada", age: 36}
+  print(greet(rec.name))
+`;
+  const f = writeTmp("record-lit.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("record-lit.clk");
+});
+
+test("field access on record literal succeeds", () => {
+  const src = `
+main : () -> <io> () =
+  let rec = {name: "Ada", age: 36}
+  print(rec.name)
+`;
+  const f = writeTmp("field-access-ok.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("field-access-ok.clk");
+});
+
+test("field access on missing field emits error", () => {
+  const src = `
+main : () -> <io> () =
+  let rec = {name: "Ada"}
+  print(rec.age)
+`;
+  const f = writeTmp("field-access-missing.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E301"), "E301 diagnostic for missing field");
+  assert(env.diagnostics.some((d: any) => d.message.includes("age")), "message mentions missing field name");
+  cleanTmp("field-access-missing.clk");
+});
+
+test("field access infers correct type for type checking", () => {
+  const src = `
+add-one : (x: Int) -> <> Int = add(x, 1)
+
+main : () -> <io> () =
+  let rec = {name: "Ada", age: 36}
+  print(show(add-one(rec.age)))
+`;
+  const f = writeTmp("field-type-infer.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("field-type-infer.clk");
+});
+
+test("field access type mismatch emits error", () => {
+  const src = `
+add-one : (x: Int) -> <> Int = add(x, 1)
+
+main : () -> <io> () =
+  let rec = {name: "Ada", age: 36}
+  print(show(add-one(rec.name)))
+`;
+  const f = writeTmp("field-type-mismatch.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E304"), "E304 type mismatch");
+  cleanTmp("field-type-mismatch.clk");
+});
+
+test("record update type checks correctly", () => {
+  const src = `
+main : () -> <io> () =
+  let rec = {name: "Ada", age: 36}
+  let updated = {rec | age: 37}
+  print(updated.name)
+`;
+  const f = writeTmp("record-update-ok.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("record-update-ok.clk");
+});
+
+test("record update field type mismatch emits error", () => {
+  const src = `
+main : () -> <io> () =
+  let rec = {name: "Ada", age: 36}
+  let updated = {rec | age: "old"}
+  print(updated.name)
+`;
+  const f = writeTmp("record-update-mismatch.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E302"), "E302 field type mismatch");
+  cleanTmp("record-update-mismatch.clk");
+});
+
+test("record update nonexistent field emits error on closed record", () => {
+  const src = `
+main : () -> <io> () =
+  let rec = {name: "Ada"}
+  let updated = {rec | age: 37}
+  print(updated.name)
+`;
+  const f = writeTmp("record-update-nofield.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E301"), "E301 missing field");
+  cleanTmp("record-update-nofield.clk");
+});
+
+test("duplicate field in record literal emits error", () => {
+  const src = `
+main : () -> <io> () =
+  let rec = {name: "Ada", name: "Grace"}
+  print(rec.name)
+`;
+  const f = writeTmp("record-dup-field.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E304"), "E304 duplicate field");
+  cleanTmp("record-dup-field.clk");
+});
+
+test("empty record literal type checks", () => {
+  const src = `
+main : () -> <io> () =
+  let rec = {}
+  print("ok")
+`;
+  const f = writeTmp("record-empty.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("record-empty.clk");
+});
+
+test("nested field access works", () => {
+  const src = `
+main : () -> <io> () =
+  let inner = {x: 1}
+  let outer = {child: inner}
+  print(show(outer.child.x))
+`;
+  const f = writeTmp("nested-field.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("nested-field.clk");
+});
+
+test("record update preserves all fields for further access", () => {
+  const src = `
+add-one : (x: Int) -> <> Int = add(x, 1)
+
+main : () -> <io> () =
+  let rec = {name: "Ada", age: 36}
+  let updated = {rec | age: 37}
+  print(show(add-one(updated.age)))
+`;
+  const f = writeTmp("record-update-access.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("record-update-access.clk");
+});
+
+// ── From/Into interface and blanket impl checking (TASK-121) ──
+
+test("From impl passes checker", () => {
+  const src = `
+type Box = Box(Str)
+
+impl From<Str> for Box {
+  from = fn(s) => Box(s)
+}
+
+main : () -> <io> () = print("ok")
+`;
+  const f = writeTmp("from-ok.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("from-ok.clk");
+});
+
+test("multiple From impls with different type args pass coherence", () => {
+  const src = `
+type Box = BoxStr(Str) | BoxInt(Int)
+
+impl From<Str> for Box {
+  from = fn(s) => BoxStr(s)
+}
+
+impl From<Int> for Box {
+  from = fn(n) => BoxInt(n)
+}
+
+main : () -> <io> () = print("ok")
+`;
+  const f = writeTmp("from-multi-ok.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 0, "exit code");
+  const env = JSON.parse(stdout);
+  assertEqual(env.diagnostics.length, 0, "no diagnostics");
+  cleanTmp("from-multi-ok.clk");
+});
+
+test("duplicate From<same type> for same target emits E202", () => {
+  const src = `
+type Box = Box(Str)
+
+impl From<Str> for Box {
+  from = fn(s) => Box(s)
+}
+
+impl From<Str> for Box {
+  from = fn(s) => Box(s)
+}
+
+main : () -> <io> () = print("ok")
+`;
+  const f = writeTmp("from-dup.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E202"), "E202 coherence violation");
+  cleanTmp("from-dup.clk");
+});
+
+test("From impl missing method emits E203", () => {
+  const src = `
+type Box = Box(Str)
+
+impl From<Str> for Box {
+}
+
+main : () -> <io> () = print("ok")
+`;
+  const f = writeTmp("from-missing.clk", src);
+  const { stdout, exitCode } = runCLI(`--json check ${f}`);
+  assertEqual(exitCode, 1, "exit code");
+  const env = JSON.parse(stdout);
+  assert(env.diagnostics.some((d: any) => d.code === "E203"), "E203 missing method");
+  cleanTmp("from-missing.clk");
+});
+
 // ── Summary ──
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed`);

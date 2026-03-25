@@ -19,6 +19,9 @@ import { format } from "./formatter.js";
 import { lint, LINT_RULES } from "./linter.js";
 import type { LintOptions } from "./linter.js";
 import { getAllBuiltinEntries, extractProgramEntries, searchEntries, findEntry, formatEntryShort, formatEntryDetailed, entryToJSON } from "./doc.js";
+import { pkgInit, pkgResolve, findManifest, resolvePackages } from "./pkg.js";
+import { transform } from "./pretty.js";
+import type { Direction } from "./expansion.js";
 
 // Parse CLI flags
 const args = process.argv.slice(2);
@@ -50,6 +53,12 @@ if (nonFlagArgs[0] === "fmt") {
   runDoc();
 } else if (nonFlagArgs[0] === "test") {
   runTest();
+} else if (nonFlagArgs[0] === "pkg") {
+  runPkg();
+} else if (nonFlagArgs[0] === "pretty") {
+  runPrettyTerse("pretty");
+} else if (nonFlagArgs[0] === "terse") {
+  runPrettyTerse("terse");
 } else {
   runFile();
 }
@@ -252,6 +261,96 @@ function emitFmtResult(
   process.exit(ok ? 0 : 1);
 }
 
+// ── Pretty / Terse subcommand ──
+
+function runPrettyTerse(direction: Direction): void {
+  const startTime = Date.now();
+  const phaseTiming: Record<string, number> = {};
+  const diagnostics: Diagnostic[] = [];
+
+  const writeMode = args.includes("--write");
+  const diffMode = args.includes("--diff");
+  const stdinMode = args.includes("--stdin");
+
+  const targets = nonFlagArgs.slice(1); // after "pretty" or "terse"
+
+  if (stdinMode) {
+    const source = readFileSync("/dev/stdin", "utf-8");
+    const phaseStart = Date.now();
+    const result = transform(source, direction);
+    phaseTiming.transform = Date.now() - phaseStart;
+
+    if (jsonMode) {
+      const totalMs = Date.now() - startTime;
+      console.log(JSON.stringify(makeEnvelope(true, {
+        source: result.source,
+        transformations: result.transformations,
+        direction: result.direction,
+      }, diagnostics, { total_ms: totalMs, phases: phaseTiming })));
+    } else {
+      process.stdout.write(result.source);
+    }
+    process.exit(0);
+    return;
+  }
+
+  if (targets.length === 0) {
+    diagnostics.push({
+      severity: "error",
+      code: "E001",
+      phase: "lex",
+      message: "no input file specified",
+      location: { file: "", line: 0, col: 0 },
+    });
+    const totalMs = Date.now() - startTime;
+    if (jsonMode) {
+      console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, { total_ms: totalMs, phases: phaseTiming })));
+    } else {
+      for (const d of diagnostics) console.error(`${d.code}: ${d.message}`);
+    }
+    process.exit(1);
+    return;
+  }
+
+  const files = collectClkFiles(targets);
+  const results: { file: string; transformations: number }[] = [];
+  let totalTransformations = 0;
+
+  for (const file of files) {
+    const absFile = resolve(file);
+    const source = readFileSync(absFile, "utf-8");
+
+    const phaseStart = Date.now();
+    const result = transform(source, direction);
+    phaseTiming.transform = (phaseTiming.transform ?? 0) + (Date.now() - phaseStart);
+
+    totalTransformations += result.transformations;
+    results.push({ file, transformations: result.transformations });
+
+    if (writeMode) {
+      if (source !== result.source) {
+        writeFileSync(absFile, result.source);
+      }
+    } else if (diffMode) {
+      if (source !== result.source) {
+        process.stdout.write(simpleDiff(source, result.source, file));
+      }
+    } else {
+      process.stdout.write(result.source);
+    }
+  }
+
+  if (jsonMode) {
+    const totalMs = Date.now() - startTime;
+    console.log(JSON.stringify(makeEnvelope(true, {
+      files: results,
+      transformations: totalTransformations,
+      direction,
+    }, diagnostics, { total_ms: totalMs, phases: phaseTiming })));
+  }
+  process.exit(0);
+}
+
 // ── Check subcommand ──
 
 function runCheck(): void {
@@ -321,6 +420,7 @@ function runCheck(): void {
     const program: Program = {
       topLevels: (ast as Program).topLevels.map(tl => {
         if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+        if (tl.tag === "impl-block") return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
         return tl;
       }),
     };
@@ -465,6 +565,7 @@ function runLint(): void {
     const program: Program = {
       topLevels: (ast as Program).topLevels.map(tl => {
         if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+        if (tl.tag === "impl-block") return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
         return tl;
       }),
     };
@@ -595,6 +696,7 @@ function runEval(): void {
     fileProgram = {
       topLevels: (fileAst as Program).topLevels.map(tl => {
         if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+        if (tl.tag === "impl-block") return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
         return tl;
       }),
     };
@@ -823,6 +925,7 @@ function runDoc(): void {
       const program: Program = {
         topLevels: (ast as Program).topLevels.map(tl => {
           if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+          if (tl.tag === "impl-block") return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
           return tl;
         }),
       };
@@ -1151,6 +1254,107 @@ function emitTestResult(
 
 // ── File execution (original mode) ──
 
+// ── Pkg subcommand ──
+
+function runPkg(): void {
+  const startTime = Date.now();
+  const phaseTiming: Record<string, number> = {};
+  const diagnostics: Diagnostic[] = [];
+
+  const subcommand = nonFlagArgs[1]; // "init" or "resolve"
+
+  if (subcommand === "init") {
+    const nameIdx = args.indexOf("--name");
+    const name = nameIdx >= 0 ? args[nameIdx + 1] : undefined;
+    const entryIdx = args.indexOf("--entry");
+    const entry = entryIdx >= 0 ? args[entryIdx + 1] : undefined;
+
+    const resolveStart = Date.now();
+    const result = pkgInit({ name, entry });
+    phaseTiming["init"] = Date.now() - resolveStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E508", phase: "link",
+          message: result.error!, location: { file: "clank.pkg", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        console.log(`Initialized package '${result.data!.package}'`);
+        for (const f of result.data!.created_files) {
+          console.log(`  created ${f}`);
+        }
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else if (subcommand === "resolve") {
+    const resolveStart = Date.now();
+    const result = pkgResolve();
+    phaseTiming["resolve"] = Date.now() - resolveStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E502", phase: "link",
+          message: result.error!, location: { file: "clank.pkg", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        const data = result.data!;
+        if (data.packages.length === 0) {
+          console.log("No local dependencies to resolve.");
+        } else {
+          console.log(`Resolved ${data.packages.length} package(s):`);
+          for (const pkg of data.packages) {
+            console.log(`  ${pkg.name}@${pkg.version} (${pkg.path})`);
+            for (const mod of pkg.modules) {
+              console.log(`    ${mod}`);
+            }
+          }
+        }
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else {
+    const msg = subcommand
+      ? `Unknown pkg subcommand: ${subcommand}`
+      : "Usage: clank pkg <init|resolve>";
+    if (jsonMode) {
+      diagnostics.push({
+        severity: "error", code: "E508", phase: "link",
+        message: msg, location: { file: "<cli>", line: 1, col: 1 },
+      });
+      console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+        total_ms: Date.now() - startTime, phases: phaseTiming,
+      })));
+    } else {
+      console.error(msg);
+      process.exit(1);
+    }
+  }
+}
+
 function runFile(): void {
   const file = nonFlagArgs[0];
 
@@ -1213,6 +1417,9 @@ function runFile(): void {
       if (tl.tag === "definition") {
         return { ...tl, body: desugar(tl.body) };
       }
+      if (tl.tag === "impl-block") {
+        return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
+      }
       return tl;
     }),
   };
@@ -1258,11 +1465,25 @@ function runFile(): void {
     };
   }
 
+  // Resolve package dependencies if a clank.pkg exists
+  let packageModuleMap: Map<string, string> | undefined;
+  const manifestPath = findManifest(dirname(absFile));
+  if (manifestPath) {
+    try {
+      const resolution = resolvePackages(manifestPath);
+      if (resolution.moduleMap.size > 0) {
+        packageModuleMap = resolution.moduleMap;
+      }
+    } catch {
+      // Package resolution failure is non-fatal for file execution
+    }
+  }
+
   // Execute
   phaseStart = Date.now();
   if (useVM) {
     try {
-      const resolved = resolveModulesForVM(program, dirname(absFile));
+      const resolved = resolveModulesForVM(program, dirname(absFile), packageModuleMap);
       const mod = compileProgram(resolved);
       const { stdout } = execute(mod);
       phaseTiming.eval = Date.now() - phaseStart;
@@ -1289,7 +1510,7 @@ function runFile(): void {
       throw e;
     }
   } else {
-    const result = run(program, dirname(absFile));
+    const result = run(program, dirname(absFile), packageModuleMap);
     phaseTiming.eval = Date.now() - phaseStart;
     console.log = origLog;
     if (result && typeof result === "object" && "code" in result && "message" in result) {
@@ -1315,14 +1536,14 @@ function runFile(): void {
     process.exit(ok ? 0 : 1);
   }
 
-  function resolveModulesForVM(program: Program, baseDir: string): Program {
+  function resolveModulesForVM(program: Program, baseDir: string, packageModuleMap?: Map<string, string>): Program {
     const loaded = new Set<string>();
     const moduleTopLevels: TopLevel[] = [];
 
     function processUseDecls(prog: Program, dir: string): void {
       for (const tl of prog.topLevels) {
         if (tl.tag !== "use-decl") continue;
-        const absPath = resolveModulePath(tl.path, dir);
+        const absPath = resolveModulePath(tl.path, dir, packageModuleMap);
         if (loaded.has(absPath)) continue;
         loaded.add(absPath);
         const modProg = loadModuleAST(absPath);
@@ -1380,7 +1601,14 @@ function isRuntimeError(e: unknown): e is { code: string; message: string; locat
   return typeof e === "object" && e !== null && "code" in e && "message" in e && "location" in e;
 }
 
-function resolveModulePath(modPath: string[], baseDir: string): string {
+function resolveModulePath(modPath: string[], baseDir: string, packageModuleMap?: Map<string, string>): string {
+  // Check package module map first (for cross-package imports)
+  if (packageModuleMap) {
+    const qualifiedName = modPath.join(".");
+    const pkgPath = packageModuleMap.get(qualifiedName);
+    if (pkgPath) return resolve(pkgPath);
+  }
+
   const dirBased = join(baseDir, ...modPath.slice(0, -1), modPath[modPath.length - 1] + ".clk");
   if (existsSync(dirBased)) return resolve(dirBased);
   const flatBased = join(baseDir, modPath.join("-") + ".clk");
@@ -1397,6 +1625,7 @@ function loadModuleAST(absPath: string): Program {
   return {
     topLevels: (modAst as Program).topLevels.map(tl => {
       if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+      if (tl.tag === "impl-block") return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
       return tl;
     }),
   };

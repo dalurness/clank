@@ -1,0 +1,15 @@
+# Test: parameterized interface (Into)
+# Expected output:
+# 42
+
+interface Stringify<T> {
+  stringify : (Self) -> <> T
+}
+
+impl Stringify<Str> for Int {
+  stringify = fn(n) => show(n)
+}
+
+main : () -> <io> () =
+  let s = stringify(42)
+  print(s)

@@ -1,0 +1,25 @@
+# Test: built-in Ord/cmp interface
+# Expected output:
+# less
+# greater
+# equal
+
+main : () -> <io> () =
+  let r1 = cmp(1, 2)
+  match r1 {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  let r2 = cmp(5, 3)
+  match r2 {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  let r3 = cmp(4, 4)
+  match r3 {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }

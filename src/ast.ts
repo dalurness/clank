@@ -33,7 +33,7 @@ export type TypeExpr =
   | { tag: "t-name"; name: string; loc: Loc }
   | { tag: "t-list"; element: TypeExpr; loc: Loc }
   | { tag: "t-tuple"; elements: TypeExpr[]; loc: Loc }
-  | { tag: "t-record"; fields: { name: string; type: TypeExpr }[]; loc: Loc }
+  | { tag: "t-record"; fields: { name: string; type: TypeExpr }[]; rowVar: string | null; loc: Loc }
   | { tag: "t-union"; left: TypeExpr; right: TypeExpr; loc: Loc }
   | { tag: "t-fn"; param: TypeExpr; effects: EffectRef[]; subtracted: EffectRef[]; result: TypeExpr; loc: Loc }
   | { tag: "t-generic"; name: string; args: TypeExpr[]; loc: Loc }
@@ -61,7 +61,10 @@ export type Expr =
   | { tag: "record-update"; base: Expr; fields: { name: string; value: Expr }[]; loc: Loc }
   | { tag: "field-access"; object: Expr; field: string; loc: Loc }
   | { tag: "for"; bind: Pattern; collection: Expr; guard: Expr | null; fold: { acc: string; init: Expr } | null; body: Expr; loc: Loc }
-  | { tag: "range"; start: Expr; end: Expr; inclusive: boolean; loc: Loc };
+  | { tag: "range"; start: Expr; end: Expr; inclusive: boolean; loc: Loc }
+  | { tag: "borrow"; expr: Expr; loc: Loc }
+  | { tag: "clone"; expr: Expr; loc: Loc }
+  | { tag: "discard"; expr: Expr; loc: Loc };
 
 export type MatchArm = { pattern: Pattern; body: Expr };
 export type HandlerArm = { name: string; params: Param[]; resumeName: string | null; body: Expr };
@@ -77,6 +80,11 @@ export type TypeSig = {
   returnType: TypeExpr;
 };
 
+// ── Interface constraints (where clauses) ──
+
+export type Constraint = { interface_: string; typeArgs: TypeExpr[]; typeParam: string; loc: Loc };
+export type MethodSig = { name: string; sig: TypeSig };
+
 // ── Import item (for use declarations) ──
 
 export type ImportItem = { name: string; alias: string | null };
@@ -84,13 +92,15 @@ export type ImportItem = { name: string; alias: string | null };
 // ── Top-level forms ──
 
 export type TopLevel =
-  | { tag: "definition"; name: string; sig: TypeSig; body: Expr; pub: boolean; loc: Loc }
-  | { tag: "type-decl"; name: string; typeParams: string[]; variants: Variant[]; pub: boolean; loc: Loc }
+  | { tag: "definition"; name: string; sig: TypeSig; body: Expr; pub: boolean; constraints: Constraint[]; loc: Loc }
+  | { tag: "type-decl"; name: string; typeParams: string[]; variants: Variant[]; affine: boolean; deriving: string[]; pub: boolean; loc: Loc }
   | { tag: "effect-decl"; name: string; ops: OpSig[]; pub: boolean; loc: Loc }
   | { tag: "effect-alias"; name: string; params: string[]; effects: EffectRef[]; subtracted: EffectRef[]; pub: boolean; loc: Loc }
   | { tag: "mod-decl"; path: string[]; loc: Loc }
   | { tag: "use-decl"; path: string[]; imports: ImportItem[]; loc: Loc }
-  | { tag: "test-decl"; name: string; body: Expr; loc: Loc };
+  | { tag: "test-decl"; name: string; body: Expr; loc: Loc }
+  | { tag: "interface-decl"; name: string; typeParams: string[]; supers: string[]; methods: MethodSig[]; pub: boolean; loc: Loc }
+  | { tag: "impl-block"; interface_: string; typeArgs: TypeExpr[]; forType: TypeExpr; constraints: Constraint[]; methods: { name: string; body: Expr }[]; pub: boolean; loc: Loc };
 
 export type Variant = { name: string; fields: TypeExpr[] };
 export type OpSig = { name: string; sig: TypeSig };

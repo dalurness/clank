@@ -120,7 +120,9 @@ Each mechanism handles a distinct class of contract. Together, they cover the va
 
 5. **Platform portability.** TypeScript/Node.js runs on every platform agents operate on. No cross-compilation required.
 
-**What TypeScript is NOT for:** TypeScript is the implementation language for the reference toolchain, not a compilation target. Clank programs are compiled to custom bytecode (Phase 1) and eventually WASM (Phase 2). TypeScript's runtime performance is adequate for a tree-walking interpreter and bytecode compiler; production execution will use the VM or WASM.
+**What TypeScript is NOT for:** TypeScript is the implementation language for the reference toolchain, not a compilation target. Clank programs are compiled to custom bytecode (Phase 1) and eventually WASM (Phase 2).
+
+**Static binary strategy (open research question):** When the reference implementation is stable, a dedicated research task should determine the best path to a distributable static binary. The evaluation criteria should follow Clank's own design goals: does the toolchain source still fit in agent context? Does the implementation language remain one agents can read and modify reliably? Is there a meaningful performance gain, and does that gain matter for the actual workloads Clank targets? Performance improvement is not a reason to avoid a rewrite — but it should be weighed against the real costs. The answer should be derived, not assumed.
 
 ---
 

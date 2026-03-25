@@ -1,0 +1,16 @@
+# Test: composing row-polymorphic functions accumulates field requirements
+# Expected output:
+# Ada is 36
+
+get-name : (rec: {name: Str | r}) -> <> Str =
+  rec.name
+
+get-age : (rec: {age: Int | r}) -> <> Int =
+  rec.age
+
+greet : (rec: {name: Str, age: Int | r}) -> <> Str =
+  get-name(rec) ++ " is " ++ show(get-age(rec))
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36, title: "Countess"}
+  print(greet(person))

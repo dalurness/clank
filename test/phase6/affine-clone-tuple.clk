@@ -1,0 +1,11 @@
+# Test: clone on tuple of cloneable types
+# Verifies that (Int, Bool) is Clone since both are Clone
+
+clone-tuple : () -> <> (Int, Bool) =
+  let pair = (1, true)
+  clone &pair
+
+main : () -> <io> () = print("clone tuple ok")
+
+# Expected output:
+# clone tuple ok

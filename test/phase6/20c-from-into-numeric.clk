@@ -1,0 +1,15 @@
+# Test: From/Into with numeric conversion
+# Expected output:
+# 42
+
+type MyNum = MyNum(Int)
+
+impl From<Int> for MyNum {
+  from = fn(n) => MyNum(n)
+}
+
+main : () -> <io> () =
+  let x = into(42)
+  match x {
+    MyNum(n) => print(show(n))
+  }

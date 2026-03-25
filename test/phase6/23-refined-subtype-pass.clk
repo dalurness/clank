@@ -1,0 +1,9 @@
+# Test: stronger refinement implies weaker refinement
+# Expected output:
+# 10
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+big : (y: Int{v > 5}) -> <> Int = positive(y)
+
+main : () -> <io> () = print(show(big(10)))

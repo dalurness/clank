@@ -1,0 +1,26 @@
+# Test: Multiple From impls for same target with different source types
+# Expected output:
+# from-str: hello
+# from-int: 42
+
+type Box = BoxStr(Str) | BoxInt(Int)
+
+impl From<Str> for Box {
+  from = fn(s) => BoxStr(s)
+}
+
+impl From<Int> for Box {
+  from = fn(n) => BoxInt(n)
+}
+
+main : () -> <io> () =
+  let a = from("hello")
+  let b = from(42)
+  match a {
+    BoxStr(s) => print("from-str: " ++ s)
+    BoxInt(_) => print("error")
+  }
+  match b {
+    BoxInt(n) => print("from-int: " ++ show(n))
+    BoxStr(_) => print("error")
+  }

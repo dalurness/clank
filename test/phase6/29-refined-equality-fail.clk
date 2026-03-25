@@ -1,0 +1,6 @@
+# Test: equality refinement fails with non-matching literal
+# Expected: error
+
+exactly : (x: Int{v == 42}) -> <> Int = x
+
+main : () -> <io> () = print(show(exactly(43)))

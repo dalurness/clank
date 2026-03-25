@@ -1,0 +1,7 @@
+# Test: compound refinement with && (range check)
+# Expected output:
+# 50
+
+in-range : (x: Int{v >= 1 && v <= 100}) -> <> Int = x
+
+main : () -> <io> () = print(show(in-range(50)))

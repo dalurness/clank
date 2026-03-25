@@ -1,0 +1,9 @@
+# Test: row polymorphism still rejects records missing required fields
+# Expected: error
+
+get-name : (rec: {name: Str | r}) -> <> Str =
+  rec.name
+
+main : () -> <io> () =
+  let thing = {age: 36}
+  print(get-name(thing))

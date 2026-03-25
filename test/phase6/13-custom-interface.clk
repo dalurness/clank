@@ -1,0 +1,14 @@
+# Test: custom interface with impl
+# Expected output:
+# 7
+
+interface Hash {
+  hash : (Self) -> <> Int
+}
+
+impl Hash for Int {
+  hash = fn(n) => n
+}
+
+main : () -> <io> () =
+  print(show(hash(7)))

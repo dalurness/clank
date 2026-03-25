@@ -1,0 +1,15 @@
+# Test: consistent branches pass affine check
+# Both branches consume the same affine vars — should pass
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = discard h
+
+# f consumed in both branches — OK
+branch-ok : (h: Handle, b: Bool) -> <> () =
+  if b then consume(h) else consume(h)
+
+main : () -> <io> () = print("branch ok")
+
+# Expected output:
+# branch ok

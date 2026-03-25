@@ -1,0 +1,6 @@
+# Test: literal out of range fails compound refinement
+# Expected: error
+
+in-range : (x: Int{v >= 1 && v <= 100}) -> <> Int = x
+
+main : () -> <io> () = print(show(in-range(200)))

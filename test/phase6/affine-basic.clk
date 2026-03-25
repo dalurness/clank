@@ -1,0 +1,15 @@
+# Test: basic affine type declaration and move semantics
+# Verifies that affine types are parsed and that single use is allowed
+
+affine type Handle = Handle(Int)
+
+consume : (h: Handle) -> <> () = discard h
+
+# Single use of affine value — should pass
+use-once : (h: Handle) -> <> () =
+  consume(h)
+
+main : () -> <io> () = print("affine basic ok")
+
+# Expected output:
+# affine basic ok
