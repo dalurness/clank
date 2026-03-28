@@ -1,0 +1,22 @@
+# Test: cmp dispatch on record type
+# Expected output:
+# equal
+# less
+# greater
+
+main : () -> <io> () =
+  match cmp({x: 1, y: 2}, {x: 1, y: 2}) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  match cmp({x: 1, y: 2}, {x: 1, y: 3}) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  match cmp({x: 2, y: 1}, {x: 1, y: 9}) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }

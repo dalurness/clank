@@ -1,0 +1,11 @@
+# Test: sleep is a cancellation checkpoint (no-op in sync mode)
+
+do-sleep : () -> <async, io> () =
+  let x = sleep(0)
+  print("sleep ok")
+
+main : () -> <io, async> () =
+  do-sleep()
+
+# Expected output:
+# sleep ok

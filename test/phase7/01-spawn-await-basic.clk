@@ -1,0 +1,10 @@
+# Test: basic spawn and await
+# Spawns a task that returns a value, then awaits the result
+
+main : () -> <io, async> () =
+  let f = spawn(fn() => 42)
+  let result = await(f)
+  print(show(result))
+
+# Expected output:
+# 42

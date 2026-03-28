@@ -1,0 +1,24 @@
+# Test: channel preserves FIFO order
+
+main : () -> <io, async> () =
+  let pair = channel(10)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  send(tx, 1)
+  send(tx, 2)
+  send(tx, 3)
+  send(tx, 4)
+  let a = recv(rx)
+  let b = recv(rx)
+  let c = recv(rx)
+  let d = recv(rx)
+  print(show(a))
+  print(show(b))
+  print(show(c))
+  print(show(d))
+
+# Expected output:
+# 1
+# 2
+# 3
+# 4

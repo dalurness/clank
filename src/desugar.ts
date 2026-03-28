@@ -53,6 +53,18 @@ export function desugar(expr: Expr): Expr {
         loc: expr.loc,
       };
 
+    case "let-pattern": {
+      // Desugar: let {pattern} = value in body → match value { pattern => body }
+      const desugaredValue = desugar(expr.value);
+      const desugaredBody = expr.body ? desugar(expr.body) : { tag: "literal" as const, value: { tag: "unit" as const }, loc: expr.loc };
+      return {
+        tag: "match",
+        subject: desugaredValue,
+        arms: [{ pattern: expr.pattern, body: desugaredBody }],
+        loc: expr.loc,
+      };
+    }
+
     case "if":
       return {
         tag: "if",
@@ -215,10 +227,12 @@ export function desugar(expr: Expr): Expr {
     case "record":
       return {
         tag: "record",
-        fields: expr.fields.map((f: { name: string; value: Expr }) => ({
+        fields: expr.fields.map((f: { name: string; tags: string[]; value: Expr }) => ({
           name: f.name,
+          tags: f.tags,
           value: desugar(f.value),
         })),
+        spread: expr.spread ? desugar(expr.spread) : null,
         loc: expr.loc,
       };
 
@@ -312,11 +326,17 @@ function wrapBodyWithPattern(pat: Pattern, body: Expr, loc: Loc): Expr {
 }
 
 /**
- * Desugar for-expressions:
- *   for P in E do B            → map(E, fn(P) => B)
- *   for P in E if G do B       → map(filter(E, fn(P) => G), fn(P) => B)
- *   for P in E fold A = I do B → fold(E, I, fn(A, P) => B)
- *   for P in E if G fold A = I do B → fold(filter(E, fn(P) => G), I, fn(A, P) => B)
+ * Desugar for-expressions using runtime-dispatched builtins that handle
+ * both List and Iter[a] collections:
+ *
+ *   for P in E do B            → __for_each(E, fn(P) => B)
+ *   for P in E if G do B       → __for_each(__for_filter(E, fn(P) => G), fn(P) => B)
+ *   for P in E fold A = I do B → __for_fold(E, I, fn(A, P) => B)
+ *   for P in E if G fold A = I do B → __for_fold(__for_filter(E, fn(P) => G), I, fn(A, P) => B)
+ *
+ * Runtime dispatch:
+ *   List  → map/filter/fold (returns list/value)
+ *   Iter  → iter.each/iter.filter/iter.fold (consumes iterator)
  */
 function desugarFor(expr: Extract<Expr, { tag: "for" }>): Expr {
   const loc = expr.loc;
@@ -328,7 +348,7 @@ function desugarFor(expr: Extract<Expr, { tag: "for" }>): Expr {
   const wrappedBody = wrapBodyWithPattern(expr.bind, body, loc);
   const wrappedGuard = guard ? wrapBodyWithPattern(expr.bind, guard, loc) : null;
 
-  // Build filter(collection, fn(P) => G) if there's a guard
+  // Build __for_filter(collection, fn(P) => G) if there's a guard
   let source = collection;
   if (wrappedGuard) {
     const filterFn: Expr = {
@@ -339,14 +359,14 @@ function desugarFor(expr: Extract<Expr, { tag: "for" }>): Expr {
     };
     source = {
       tag: "apply",
-      fn: { tag: "var", name: "filter", loc },
+      fn: { tag: "var", name: "__for_filter", loc },
       args: [source, filterFn],
       loc,
     };
   }
 
   if (expr.fold) {
-    // fold form: fold(source, init, fn(acc, P) => B)
+    // fold form: __for_fold(source, init, fn(acc, P) => B)
     const init = desugar(expr.fold.init);
     const foldFn: Expr = {
       tag: "lambda",
@@ -356,13 +376,13 @@ function desugarFor(expr: Extract<Expr, { tag: "for" }>): Expr {
     };
     return {
       tag: "apply",
-      fn: { tag: "var", name: "fold", loc },
+      fn: { tag: "var", name: "__for_fold", loc },
       args: [source, init, foldFn],
       loc,
     };
   }
 
-  // map form: map(source, fn(P) => B)
+  // each/map form: __for_each(source, fn(P) => B)
   const mapFn: Expr = {
     tag: "lambda",
     params: elemParams,
@@ -371,7 +391,7 @@ function desugarFor(expr: Extract<Expr, { tag: "for" }>): Expr {
   };
   return {
     tag: "apply",
-    fn: { tag: "var", name: "map", loc },
+    fn: { tag: "var", name: "__for_each", loc },
     args: [source, mapFn],
     loc,
   };

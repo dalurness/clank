@@ -1,0 +1,7 @@
+# Test: show dispatch on tuple type
+# Expected output:
+# (1, hello)
+
+main : () -> <io> () =
+  let t = (1, "hello")
+  print(show(t))

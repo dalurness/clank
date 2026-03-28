@@ -1,0 +1,13 @@
+# Test: using extern result in Clank function
+# Chains extern call with Clank logic
+
+extern "node:path" extname : (path: Str) -> <io> Str
+
+check-clk : (path: Str) -> <io> Str =
+  if eq(extname(path), ".clk") then "yes" else "no"
+
+main : () -> <io> () =
+  print(check-clk("test.clk"))
+
+# Expected output:
+# yes

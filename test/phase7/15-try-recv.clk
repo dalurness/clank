@@ -1,0 +1,23 @@
+# Test: try-recv returns None on empty channel, Some on non-empty
+
+type Option = Some(Int) | None
+
+unwrap-or : (opt: Option, fallback: Int) -> <> Int =
+  match opt {
+    Some(x) => x
+    None => fallback
+  }
+
+main : () -> <io, async> () =
+  let pair = channel(10)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  let empty = try-recv(rx)
+  print(show(unwrap-or(empty, 0)))
+  send(tx, 55)
+  let full = try-recv(rx)
+  print(show(unwrap-or(full, 0)))
+
+# Expected output:
+# 0
+# 55

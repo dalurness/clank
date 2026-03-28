@@ -43,6 +43,10 @@ function collectRefs(expr: Expr, refs: Set<string>): void {
       collectRefs(expr.value, refs);
       if (expr.body) collectRefs(expr.body, refs);
       break;
+    case "let-pattern":
+      collectRefs(expr.value, refs);
+      if (expr.body) collectRefs(expr.body, refs);
+      break;
     case "if":
       collectRefs(expr.cond, refs);
       collectRefs(expr.then, refs);
@@ -150,6 +154,11 @@ function checkUnusedVars(expr: Expr, diags: LintDiagnostic[]): void {
           }
         }
       }
+      break;
+    }
+    case "let-pattern": {
+      checkUnusedVars(expr.value, diags);
+      if (expr.body) checkUnusedVars(expr.body, diags);
       break;
     }
     case "if":
@@ -344,6 +353,9 @@ function collectTypeRefs(te: import("./ast.js").TypeExpr | null, refs: Set<strin
     case "t-refined":
       collectTypeRefs(te.base, refs);
       break;
+    case "t-borrow":
+      collectTypeRefs(te.inner, refs);
+      break;
   }
 }
 
@@ -365,6 +377,11 @@ function checkShadowedBindings(expr: Expr, scope: Set<string>, diags: LintDiagno
         if (expr.name !== "_") inner.add(expr.name);
         checkShadowedBindings(expr.body, inner, diags);
       }
+      break;
+    }
+    case "let-pattern": {
+      checkShadowedBindings(expr.value, scope, diags);
+      if (expr.body) checkShadowedBindings(expr.body, scope, diags);
       break;
     }
     case "if":
@@ -534,6 +551,10 @@ function checkUnreachableArms(expr: Expr, diags: LintDiagnostic[]): void {
       checkUnreachableArms(expr.value, diags);
       if (expr.body) checkUnreachableArms(expr.body, diags);
       break;
+    case "let-pattern":
+      checkUnreachableArms(expr.value, diags);
+      if (expr.body) checkUnreachableArms(expr.body, diags);
+      break;
     case "if":
       checkUnreachableArms(expr.cond, diags);
       checkUnreachableArms(expr.then, diags);
@@ -612,6 +633,10 @@ function checkEmptyHandlers(expr: Expr, diags: LintDiagnostic[]): void {
       break;
     }
     case "let":
+      checkEmptyHandlers(expr.value, diags);
+      if (expr.body) checkEmptyHandlers(expr.body, diags);
+      break;
+    case "let-pattern":
       checkEmptyHandlers(expr.value, diags);
       if (expr.body) checkEmptyHandlers(expr.body, diags);
       break;

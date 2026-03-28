@@ -12,10 +12,11 @@ export type Type =
   | { tag: "t-fn"; param: Type; effects: Effect[]; result: Type }
   | { tag: "t-list"; element: Type }
   | { tag: "t-tuple"; elements: Type[] }
-  | { tag: "t-record"; fields: { name: string; type: Type }[]; rowVar: number | null }
+  | { tag: "t-record"; fields: { name: string; tags: string[]; type: Type }[]; rowVar: number | null }
   | { tag: "t-variant"; variants: VariantCase[] }
   | { tag: "t-var"; id: number }
-  | { tag: "t-generic"; name: string; args: Type[] };
+  | { tag: "t-generic"; name: string; args: Type[] }
+  | { tag: "t-borrow"; inner: Type };
 
 export type VariantCase = { name: string; fields: Type[] };
 
@@ -48,8 +49,8 @@ export const tFn = (param: Type, result: Type, effects: Effect[] = []): Type =>
 export const tList = (element: Type): Type => ({ tag: "t-list", element });
 export const tTuple = (elements: Type[]): Type => ({ tag: "t-tuple", elements });
 
-export const tRecord = (fields: { name: string; type: Type }[], rowVar: number | null = null): Type =>
-  ({ tag: "t-record", fields, rowVar });
+export const tRecord = (fields: { name: string; tags?: string[]; type: Type }[], rowVar: number | null = null): Type =>
+  ({ tag: "t-record", fields: fields.map(f => ({ name: f.name, tags: f.tags ?? [], type: f.type })), rowVar });
 
 // ── Fresh variable counter (shared between type vars and row vars) ──
 
@@ -64,6 +65,8 @@ export const tVar = (id: number): Type => ({ tag: "t-var", id });
 
 export const tGeneric = (name: string, args: Type[]): Type =>
   ({ tag: "t-generic", name, args });
+
+export const tBorrow = (inner: Type): Type => ({ tag: "t-borrow", inner });
 
 export const eNamed = (name: string): Effect => ({ tag: "e-named", name });
 export const eVar = (id: number): Effect => ({ tag: "e-var", id });

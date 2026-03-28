@@ -1,0 +1,10 @@
+# Test: lambda cannot return a borrow type (spec 4.4)
+# Expected: error
+
+affine type Token = Token
+
+leak : (t: Token) -> <> () =
+  let f = fn(x: &Token) => x
+  discard t
+
+main : () -> <io> () = print("unreachable")

@@ -1,0 +1,14 @@
+# Test: basic task group with structured concurrency
+# Task group waits for all children before returning
+
+group-body : () -> <async> Int =
+  let f1 = spawn(fn() => 5)
+  let f2 = spawn(fn() => 7)
+  add(await(f1), await(f2))
+
+main : () -> <io, async> () =
+  let result = task-group(fn() => group-body())
+  print(show(result))
+
+# Expected output:
+# 12

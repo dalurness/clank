@@ -25,7 +25,7 @@ export type LexError = {
 const KEYWORDS = new Set([
   "let", "in", "for", "fn", "if", "then", "else", "match", "do", "type", "effect",
   "affine", "handle", "resume", "perform", "mod", "use", "pub", "clone", "true", "false",
-  "interface", "impl", "Self", "deriving", "where", "opaque", "return", "test", "alias", "discard",
+  "interface", "impl", "Self", "deriving", "where", "opaque", "return", "test", "alias", "discard", "extern",
 ]);
 
 // ── Multi-char operators (longest-match order) ──
@@ -39,7 +39,7 @@ const SINGLE_OPS = new Set([
 ]);
 
 const DELIMITERS = new Set([
-  "{", "}", "(", ")", "[", "]", ",", ":", ".", "|", "&",
+  "{", "}", "(", ")", "[", "]", ",", ":", ".", "|", "&", "@",
 ]);
 
 // ── Helpers ──

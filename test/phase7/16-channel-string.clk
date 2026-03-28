@@ -1,0 +1,16 @@
+# Test: channels can carry string values
+
+main : () -> <io, async> () =
+  let pair = channel(5)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  send(tx, "hello")
+  send(tx, "world")
+  let a = recv(rx)
+  let b = recv(rx)
+  print(a)
+  print(b)
+
+# Expected output:
+# hello
+# world

@@ -1,0 +1,6 @@
+# Test: calling refined function outside branch guard should fail
+# Expected: error
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+bad : (x: Int) -> <> Int = positive(x)

@@ -1,0 +1,10 @@
+# Test: borrows cannot be stored in list compound types (spec 4.4)
+# Expected: error
+
+affine type Token = Token
+
+store-borrow : (t: Token) -> <> () =
+  let xs = [&t]
+  discard t
+
+main : () -> <io> () = print("unreachable")

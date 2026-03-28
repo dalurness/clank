@@ -1,0 +1,10 @@
+# Test: let binding propagates refinement from refined variable
+# Expected output:
+# 7
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+use-let : (x: Int{v > 0}) -> <> Int =
+  let y = x in positive(y)
+
+main : () -> <io> () = print(show(use-let(7)))

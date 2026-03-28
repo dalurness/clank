@@ -1,0 +1,8 @@
+# Test: clone dispatch on record type
+# Expected output:
+# {x: 1, y: 2}
+
+main : () -> <io> () =
+  let pt = {x: 1, y: 2}
+  let pt2 = clone &pt
+  print(show(pt2))

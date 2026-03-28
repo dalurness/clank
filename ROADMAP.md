@@ -12,8 +12,8 @@ Current state of the implementation and what's next.
 - **Desugarer** (`src/desugar.ts`) — Pipeline operator (`|>`), operator-to-function desugaring (`++` → `str.cat`), do-block expansion
 - **Type Checker** (`src/checker.ts`) — Type inference, function signature checking, exhaustiveness checking for pattern matches, variant registry, affine enforcement, interface/impl dispatch, refinement micro-solving, where-constraint propagation, borrow checking
 - **Tree-Walking Interpreter** (`src/eval.ts`) — Complete AST-level evaluator with closures, recursion, effects, handlers, pattern matching, records, tuples, lists
-- **Bytecode Compiler** (`src/compiler.ts`) — AST to 87-opcode bytecode compilation, jump patching, closure capture, effect handler compilation
-- **Stack VM** (`src/vm.ts`) — Full 87-opcode execution engine with call stack, data stack, closures, effect handler stack, continuations, structured trap errors
+- **Bytecode Compiler** (`src/compiler.ts`) — AST to 122-opcode bytecode compilation, jump patching, closure capture, effect handler compilation, extern calls, iterator/STM opcodes
+- **Stack VM** (`src/vm.ts`) — Full 122-opcode execution engine with call stack, data stack, closures, effect handler stack, continuations, structured trap errors, async scheduling, iterator heap objects, STM runtime
 
 ### Language Features Running End-to-End
 - Arithmetic (Int, Rat), booleans, strings
@@ -42,11 +42,17 @@ Current state of the implementation and what's next.
 - Borrow `&T` semantic type with scope enforcement (lambda returns, compound types — E603)
 - Where-constraint propagation through function parameters, return values, and pipelines
 - Compiler/VM interface dispatch with derived impl codegen (Show/Eq/Clone/Ord for records)
-- STM runtime — atomic transactions, retry/or-else, global version clock (26 tests)
+- STM runtime — atomic transactions, retry/or-else, global version clock, word ID collision fixed (26 tests, all passing)
 - FFI extern — `CALL_EXTERN` opcode, extern table in BytecodeModule, value conversion helpers, `extern mod` block syntax (parser desugaring to individual extern-decl nodes)
 - Tier-2 stdlib builtins — `std.http`, `std.srv`, `std.csv`, `std.proc`, `std.dt` (52 builtins, 32 tests)
-- Streaming I/O — iterator heap object, 3 VM opcodes (ITER_NEW/NEXT/CLOSE), 38 iterator combinator builtins (word IDs 70-112), list-backed fast path and generator-backed general path (35 tests)
-- Workspace orchestration — `clank.workspace` manifest parsing, workspace root discovery, member discovery with glob expansion, dependency graph with topological sort and cycle detection, cross-member resolution (34 tests)
+- Streaming I/O — iterator heap object, 3 VM opcodes (ITER_NEW/NEXT/CLOSE), 38 iterator combinator builtins (word IDs 70-112), list-backed fast path and generator-backed general path, iter-spawn channel bridge, `for`/`in` desugar to `iter.each`/`iter.filter`/`iter.fold` for `Iter[a]` via runtime dispatch (`__for_each`/`__for_filter`/`__for_fold`), demand-driven `fs.stream-lines` (74 tests). All 38 combinators evaluate lazily via `nativeNext` pull-based generators; infinite iterators (`repeat`, `cycle`, `generate`, `unfold`) work without limits; consumer operations (`any`, `all`, `find`, `first`, `nth`) short-circuit correctly.
+- Ref mutable state — REF_NEW (0xD0), REF_READ (0xD1), REF_WRITE (0xD2), REF_CAS (0xD3), REF_MODIFY (0xD4), REF_CLOSE (0xD5) opcodes in VM execution loop and compiler, with heap-allocated ref cells, affine type dispatch on REF_READ (take semantics) and REF_WRITE (put semantics) with empty-cell tracking, REF_MODIFY affine guard (E002 trap for affine values), handle counting with clone builtins for Ref (258) and TVar (259), TVar handle counting and closed-state tracking with closed checks on all TVar operations, TVar dispatch on REF_CLOSE (41 tests)
+- HM type schemes — polymorphic builtin registration with fresh type variable instantiation per call site (replaces `tAny` sentinels for 20+ builtins including eq, head, tail, cons, map, filter, fold, clone, cmp, from, into), plus full let-polymorphism for user-defined functions (TypeScheme generalization with fresh t-var instantiation at call sites) (20 tests)
+- Record pattern matching & spread — `{field, field | rest}` destructuring in match/let and `{field: val, ..base}` spread syntax, verified complete across all layers (parser, checker, eval, compiler/VM) (9 checker unit tests + 10 integration tests)
+- Registry protocol & `pkg publish` — GitHub-backed Go-style registry protocol, `pkg search` and `pkg info` CLI subcommands with JSON output, `publish-entry.json` generation on publish (10 tests)
+- Workspace orchestration — `clank.workspace` manifest parsing, workspace root discovery, member discovery with glob expansion, dependency graph with topological sort and cycle detection, cross-member resolution, parallel build execution with depth-level batching (`--jobs N`, fail-fast), workspace-level lockfile (`clank.lock` at workspace root), `--all`/`--package` flags on build/check/test, CLI subcommands (46 tests)
+- Embedding API — `ClankRuntime` class for host language interop: `loadString`/`loadFile`, `register` host functions with custom library names, `call` exported Clank functions, JS↔Clank value conversion (26 tests)
+- Queryable records — field tags (`@tag` annotations on record fields), tag projection (`T @tag`), `Pick<T, "f1" | "f2">` and `Omit<T, "f1">` type-level queries, all compile-time with zero runtime cost. Row polymorphism interaction verified. (15 tests)
 
 ### CLI Tooling
 - **`clank <file>`** — Run a program (tree-walker)
@@ -59,8 +65,9 @@ Current state of the implementation and what's next.
 - **`clank test`** — Test runner with `--filter` pattern support
 - **`clank pretty`** — Terse-to-verbose pretty-print expansion
 - **`clank terse`** — Verbose-to-terse compression
-- **`clank pkg add|verify|remove`** — Package manager with `clank.lock` lockfile (SHA-256 integrity), stale lockfile warning on run
+- **`clank pkg add|verify|remove|search|info|publish`** — Package manager with `clank.lock` lockfile (SHA-256 integrity), stale lockfile warning on run, GitHub-backed registry protocol
 - **`clank pkg workspace init|list|add|remove`** — Workspace management CLI
+- **`clank build`** — Compile workspace members with `--all`, `--package`, `--jobs` flags
 - **`clank.pkg`** — Package manifest parsing with local dependency resolution
 - **`clank.workspace`** — Workspace manifest parsing with glob-based member discovery
 - Structured JSON output by default (agent-native)
@@ -68,26 +75,22 @@ Current state of the implementation and what's next.
 
 ### Testing
 - 9 canonical spec examples (`test/examples/`)
-- 230+ test files across 7 implementation phases
-- Phase-organized test suites (phase1–phase7, fmt, examples, pkg, streaming, workspace)
+- 300+ test files across implementation phases + tooling suites
+- Phase-organized `.clk` test suites (phase1–phase6, phase8, fmt, examples, pretty)
 - Phase6 type system tests (affine, interface, refinement, row polymorphism, derived impls)
-- Phase7 async runtime tests (spawn/await, task groups, cancellation, nested groups)
-- Streaming I/O tests (35 tests — iterator creation, combinators, close semantics)
-- Workspace tests (34 tests — manifest parsing, discovery, topo-sort, cycle detection, CLI)
-- TypeScript test suites for compiler, checker, linter, doc, arg-parsing
-- Package manager tests (57 tests) integrated into main test runner
+- Phase8 extern tests (extern decl, extern mod blocks)
+- TypeScript test suites: compiler (49), VM (61), checker (14), linter (14), fmt (29), doc (18), arg-parsing (8), test-runner (12)
+- Streaming I/O tests (`streaming-io.test.ts`, 35 tests — iterator creation, combinators, close semantics)
+- Workspace tests (`workspace.test.ts`, 46 tests — manifest parsing, discovery, topo-sort, cycle detection, parallel builds, workspace lockfile, CLI)
+- Embedding tests (`embedding.test.ts`, 26 tests — runtime lifecycle, host function registration, value conversion, loadFile)
+- Package manager tests (`pkg.test.ts`, 57 tests) integrated into main test runner
+- Pretty-print tests (50 tests — terse/verbose expansion, scope handling)
 
 ---
 
 ## What's Specced but Not Implemented
 
 Each of these has a complete specification document in `docs/`. They are designed but no source code exists for them yet.
-
-### Shared Mutable State (Ref opcodes) — `docs/shared-mutable-state.md`, `docs/vm-shared-state-iterators.md`
-VM opcodes for Ref mutable state primitives. STM runtime and iterator opcodes are now implemented; remaining Ref opcodes (REF_NEW/GET/SET) not yet wired into the VM execution loop.
-
-### Queryable Records — `docs/queryable-records.md`
-SQL-like record querying syntax. Specced but not implemented.
 
 ### WASM Backend — referenced in `docs/compilation-target.md`
 Compilation to WebAssembly as a secondary production target. Depends on WASM 3.0 GC support. Not started.
@@ -97,42 +100,56 @@ Compilation to WebAssembly as a secondary production target. Depends on WASM 3.0
 ## What's Partially Implemented
 
 ### Type Checker Coverage
-The checker (`src/checker.ts`) handles inference, signature checking, exhaustiveness, affine enforcement (E600/E601/W600), interface/impl dispatch with `where` constraints, refinement type micro-solving (QF_LIA with path conditions and arithmetic expression tracking), row polymorphism inference, effect alias/subtraction, borrow scope enforcement, and where-constraint propagation through pipelines/params/returns. Remaining gaps:
+The checker (`src/checker.ts`) handles inference, signature checking, exhaustiveness, affine enforcement (E600/E601/W600), interface/impl dispatch with `where` constraints, refinement type micro-solving (QF_LIA with path conditions and arithmetic expression tracking), row polymorphism inference, effect alias/subtraction, borrow scope enforcement, where-constraint propagation through pipelines/params/returns, HM type schemes for builtins (20+ polymorphic builtins with fresh type variable instantiation per call site), and full HM let-polymorphism for user-defined functions (TypeScheme generalization/instantiation). Remaining gaps:
 - Composite literal type inference falls through to tAny — Clone checking only works on annotated types
 - Parameterized interface constraint type arg not validated at call sites
-- Full HM let-polymorphism not implemented (type vars are module-scoped, no generalization/instantiation)
 - Row variable subtraction detection in effect rows
-- Builtin interface method types (clone, into, from) use tAny — need per-call-site instantiation
 - typeEqual overly permissive for t-generic types
-- No List/Tuple cmp (Ord) VM dispatch
 
 ### Package Manager
-`clank.pkg` manifest parsing, local dependency resolution, `clank.lock` lockfile (SHA-256 integrity), and `clank pkg add|verify|remove` CLI subcommands are implemented. Registry protocol and `clank pkg publish` are not yet implemented.
+`clank.pkg` manifest parsing, local dependency resolution, `clank.lock` lockfile (SHA-256 integrity), `clank pkg add|verify|remove` CLI subcommands, GitHub-backed registry protocol (Go-style, no central registry), `pkg search|info|publish` CLI subcommands with JSON output, and `publish-entry.json` generation are all implemented. Remaining gaps: no persistent "known repos" configuration (each search requires `--repo` flags), no `[registries]` section in `clank.pkg` or global config.
 
 ### FFI / Interop
-`CALL_EXTERN` opcode implemented for VM path with extern table and value conversion. `extern mod` block syntax implemented (parser desugars to individual extern-decl nodes with shared library and per-member where attributes). Embedding API not started.
+`CALL_EXTERN` opcode implemented for VM path with extern table and value conversion. `extern mod` block syntax implemented (parser desugars to individual extern-decl nodes with shared library and per-member `where` attributes). Embedding API (`ClankRuntime`) implemented with `loadString`/`loadFile`, `register`, `call`, and value conversion. Remaining gaps: `callAsync()` (requires async/Promise VM support), `ClankResult.effects`/`diagnostics` (needs deeper checker integration), `ClankValue.affine`/`consumed` tracking (requires affine system in VM), `RuntimeOptions.maxSteps` accepted but not enforced.
+
+### Shared Mutable State (Ref)
+All 6 Ref opcodes (REF_NEW/READ/WRITE/CAS/MODIFY/CLOSE) are implemented with affine type dispatch (take/put semantics on REF_READ/REF_WRITE with empty-cell tracking), REF_MODIFY affine guard (E002 trap for affine values), handle counting with clone builtins for Ref and TVar, TVar handle counting and closed-state tracking (closed checks on all TVar operations), and TVar dispatch on REF_CLOSE. Remaining gaps: structured scoping for ref cell lifetimes, `ref-swap` builtin (spec says CAS loop but no builtin entry exists).
+
+### Streaming I/O
+Iterator protocol, 38 combinators, fully lazy evaluation via `nativeNext` pull-based generators, channel-iterator bridge (`iter-spawn`), `for`/`in` desugar to iterator operations via runtime dispatch (`__for_each`/`__for_filter`/`__for_fold`), and demand-driven `fs.stream-lines` are all implemented and verified. All combinators evaluate lazily; infinite iterators (`repeat`, `cycle`, `generate`, `unfold`) work without limits; consumer operations (`any`, `all`, `find`, `first`, `nth`) short-circuit correctly. Remaining gaps:
+- `http.stream-lines`, `proc.stream`, `io.stdin-lines` still read all data upfront — true demand-driven streaming for these requires async I/O integration with VM scheduler
+
+### Workspace Orchestration
+Manifest parsing, member discovery, dependency graph, topo-sort, CLI, parallel build execution (depth-level batching with `--jobs N`, fail-fast), workspace-level lockfile, and `--all`/`--package` flags on build/check/test are all implemented. Remaining gaps:
+- `--keep-going` flag (continue after member failure)
+- `--watch` mode (file-change-triggered rebuilds)
+- Incremental rebuilds with signature stability (spec §5)
+- `[deps.local]` as separate section (spec §2.1) — currently uses inline `{ path = "..." }` in `[deps]`
 
 ---
 
 ## Suggested Next Priorities
 
-### 1. Type Checker Hardening (High Impact)
-Remaining gaps: composite literal type inference (falls through to tAny), full HM let-polymorphism (generalization/instantiation), parameterized interface constraint validation at call sites, List/Tuple Ord dispatch, builtin interface method type instantiation, zero-param lambda inference.
+### Phase 2 Remaining Work
 
-### 2. Record Pattern Matching & Spread Operator (High Impact)
-`{field, field | rest}` destructuring in match/let and `{field: val, ..base}` spread syntax for records. Row polymorphism infrastructure is in place; this completes the record ergonomics story.
+#### 1. Type Checker Hardening (Medium Impact)
+HM type schemes for builtins, HM let-polymorphism for user-defined functions (TypeScheme generalization/instantiation), List/Tuple Ord dispatch, and record pattern matching are all complete. Remaining gaps: composite literal type inference (falls through to tAny), parameterized interface constraint validation at call sites, row variable subtraction detection in effect rows, typeEqual overly permissive for t-generic types. These are edge-case gaps — the checker handles all major type system features end-to-end.
 
-### 3. Registry Protocol & `pkg publish` (Medium Impact)
-Complete the package ecosystem with remote registry support. Local package management and workspace orchestration are fully functional.
+#### 2. Streaming I/O Completion (Low Impact)
+Lazy evaluation, channel-iterator bridge, `for`/`in` iterator desugar, and demand-driven `fs.stream-lines` are all complete. Remaining: `http.stream-lines`, `proc.stream`, `io.stdin-lines` still read all data upfront — true demand-driven streaming for these requires async I/O integration with VM scheduler.
 
-### 4. Ref Mutable State Opcodes (Medium Impact)
-Wire remaining REF_NEW/GET/SET opcodes into VM execution loop. STM and iterator opcodes are implemented; this completes the mutable state story.
+#### 3. Package Registry Configuration (Low Impact)
+Registry protocol, `pkg publish` with `publish-entry.json` generation, and `pkg search|info` with JSON output are all implemented. Remaining: persistent "known repos" configuration (currently requires `--repo` flags per search), potential `[registries]` section in `clank.pkg` or global config.
 
-### 5. Embedding API (Medium Impact)
-Host language embedding for FFI. `CALL_EXTERN` opcode and `extern mod` block syntax are both implemented; this adds the host-side API for embedding Clank in other runtimes.
+#### 4. Embedding API Polish (Low Impact)
+Core embedding API (`ClankRuntime` with `loadString`/`loadFile`/`register`/`call`) is implemented. Remaining: `callAsync()`, `ClankResult.effects`/`diagnostics`, `ClankValue.affine`/`consumed` tracking, `RuntimeOptions.maxSteps` enforcement.
 
-### 6. WASM Backend (Future)
-Secondary compilation target for deployment. Depends on WASM 3.0 GC. Lower priority than getting the ecosystem features working end-to-end.
+### Phase 3 — Static Binary (Ready to Begin Research)
 
-### 7. Queryable Records (Future)
-SQL-like record querying. Specced but lower priority than type system hardening and package ecosystem.
+All specced language features are now implemented. The TypeScript reference implementation covers: full Ref mutable state (6 opcodes with affine dispatch, REF_MODIFY affine guard, handle counting with clone builtins, TVar handle counting/closed-state tracking), queryable records (tags, projection, Pick/Omit — all compile-time), HM let-polymorphism for user-defined functions, streaming I/O with for-iter desugar and demand-driven fs.stream-lines, STM, workspace orchestration, embedding API, and the complete type system. Phase 2 remaining work is limited to checker edge-case hardening and ecosystem polish — none of it blocks Phase 3 research.
+
+#### 5. Static Binary Research (Next Major Milestone)
+Evaluate candidate approaches against Clank design goals: Deno compile (zero rewrite, bundled V8), Go rewrite (GC built-in, good AST ergonomics), Rust rewrite (max performance, no GC), self-hosting (Clank compiling itself). See OVERVIEW.md for evaluation criteria.
+
+#### 6. WASM Backend (Future)
+Secondary compilation target for deployment. Depends on WASM 3.0 GC. Lower priority than getting the static binary story resolved.

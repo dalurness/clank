@@ -1,0 +1,15 @@
+# Test: channel communication between spawned tasks
+# Producer sends value, consumer receives it
+
+main : () -> <io, async> () =
+  let pair = channel(10)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  let producer = spawn(fn() => send(tx, 99))
+  let consumer = spawn(fn() => recv(rx))
+  await(producer)
+  let result = await(consumer)
+  print(show(result))
+
+# Expected output:
+# 99

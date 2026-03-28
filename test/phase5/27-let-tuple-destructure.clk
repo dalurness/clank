@@ -1,0 +1,9 @@
+# Test: let destructuring with tuple patterns
+# Expected output:
+# 1
+# hello
+
+main : () -> <io> () =
+  let (a, b) = (1, "hello")
+  print(show(a))
+  print(b)

@@ -26,4 +26,11 @@ for suite_dir in "$DIR"/phase*/ "$DIR"/examples/; do
   fi
 done
 
+# Run standalone TypeScript test suites
+if [[ -f "$DIR/pkg.test.ts" ]]; then
+  echo "═══ pkg ═══"
+  npx tsx "$DIR/pkg.test.ts" || EXIT=1
+  echo ""
+fi
+
 exit $EXIT

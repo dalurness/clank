@@ -1,0 +1,9 @@
+# Test: arithmetic expression satisfies refinement — add(x, 1) where x >= 0 satisfies v > 0
+# Expected output:
+# 4
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+inc-and-check : (x: Int{v >= 0}) -> <> Int = positive(add(x, 1))
+
+main : () -> <io> () = print(show(inc-and-check(3)))

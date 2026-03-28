@@ -1,0 +1,13 @@
+# Test: nested spawn — child spawns grandchild
+# Verifies that tasks can spawn sub-tasks
+
+double : (x: Int) -> <async> Int =
+  let f = spawn(fn() => mul(x, 2))
+  await(f)
+
+main : () -> <io, async> () =
+  let f = spawn(fn() => double(21))
+  print(show(await(f)))
+
+# Expected output:
+# 42

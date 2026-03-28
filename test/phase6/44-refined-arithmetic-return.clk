@@ -1,0 +1,7 @@
+# Test: per-branch return with arithmetic expression — add(x, 1) satisfies v > 0 when x >= 0
+# Expected output:
+# 4
+
+inc-pos : (x: Int{v >= 0}) -> <> Int{v > 0} = add(x, 1)
+
+main : () -> <io> () = print(show(inc-pos(3)))

@@ -1,0 +1,14 @@
+# Test: closing a channel sender
+# After closing, sender cannot send more
+
+main : () -> <io, async> () =
+  let pair = channel(10)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  send(tx, 7)
+  close-sender(tx)
+  let val = recv(rx)
+  print(show(val))
+
+# Expected output:
+# 7

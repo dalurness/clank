@@ -1,0 +1,7 @@
+# Test: show dispatch on list type
+# Expected output:
+# [1, 2, 3]
+
+main : () -> <io> () =
+  let xs = [1, 2, 3]
+  print(show(xs))

@@ -1,0 +1,17 @@
+# Test: channel pipeline — producer sends, spawned consumer receives and transforms
+
+process : (rx: Any) -> <async> Int =
+  let x = recv(rx)
+  mul(x, 10)
+
+main : () -> <io, async> () =
+  let pair = channel(5)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  send(tx, 5)
+  let worker = spawn(fn() => process(rx))
+  let result = await(worker)
+  print(show(result))
+
+# Expected output:
+# 50

@@ -1,0 +1,12 @@
+# Test: extern function with multiple arguments
+# node:path.resolve joins path segments
+
+extern "node:path" resolve-path : (a: Str, b: Str, c: Str) -> <io> Str
+  where host = "js", symbol = "resolve"
+
+main : () -> <io> () =
+  let result = resolve-path("/home", "user", "file.txt")
+  print(result)
+
+# Expected output:
+# /home/user/file.txt

@@ -19,7 +19,8 @@ import { format } from "./formatter.js";
 import { lint, LINT_RULES } from "./linter.js";
 import type { LintOptions } from "./linter.js";
 import { getAllBuiltinEntries, extractProgramEntries, searchEntries, findEntry, formatEntryShort, formatEntryDetailed, entryToJSON } from "./doc.js";
-import { pkgInit, pkgResolve, findManifest, resolvePackages } from "./pkg.js";
+import { pkgInit, pkgResolve, pkgAdd, pkgRemove, pkgInstall, pkgPublish, pkgSearch, pkgInfo, findManifest, resolvePackages, verifyLockfile, findWorkspaceRoot, resolveWorkspace, workspaceInit, workspaceList, workspaceAddMember, workspaceRemoveMember, buildWorkspaceParallel, computeDepthLevels, writeWorkspaceLockfile } from "./pkg.js";
+import type { WorkspaceMember, WorkspaceResolution, MemberBuildResult } from "./pkg.js";
 import { transform } from "./pretty.js";
 import type { Direction } from "./expansion.js";
 
@@ -29,7 +30,7 @@ const useVM = args.includes("--vm");
 const jsonMode = args.includes("--json");
 
 // Flags that consume the next argument as a value
-const valueFlagSet = new Set(["--file", "--session", "--rule", "--filter"]);
+const valueFlagSet = new Set(["--file", "--session", "--rule", "--filter", "--name", "--entry", "--path", "--version", "--github", "--members", "--package", "--jobs"]);
 
 // Filter positional args, skipping --flag and --flag <value> pairs
 const nonFlagArgs: string[] = [];
@@ -45,6 +46,8 @@ if (nonFlagArgs[0] === "fmt") {
   runFmt();
 } else if (nonFlagArgs[0] === "eval") {
   runEval();
+} else if (nonFlagArgs[0] === "build") {
+  runBuild();
 } else if (nonFlagArgs[0] === "check") {
   runCheck();
 } else if (nonFlagArgs[0] === "lint") {
@@ -351,12 +354,298 @@ function runPrettyTerse(direction: Direction): void {
   process.exit(0);
 }
 
+// ── Build subcommand ──
+
+function runBuild(): void {
+  const startTime = Date.now();
+  const phaseTiming: Record<string, number> = {};
+  const diagnostics: Diagnostic[] = [];
+
+  const allFlag = args.includes("--all");
+  const packageFlag = getFlagValue("--package");
+  const jobsFlag = getFlagValue("--jobs");
+  const maxJobs = jobsFlag ? parseInt(jobsFlag, 10) : 4;
+
+  // Try workspace mode
+  if (allFlag || packageFlag) {
+    runWorkspaceBuild(startTime, phaseTiming, diagnostics, allFlag, packageFlag, maxJobs);
+    return;
+  }
+
+  // Non-workspace: build files specified as args
+  const targets = nonFlagArgs.slice(1);
+  if (targets.length === 0) {
+    // Try workspace detection
+    try {
+      const ctx = findWorkspaceRoot(process.cwd());
+      if (ctx.mode === "workspace" && ctx.nearestMember) {
+        // Build nearest member
+        runWorkspaceBuild(startTime, phaseTiming, diagnostics, false, undefined, maxJobs, ctx.nearestMember);
+        return;
+      } else if (ctx.mode === "workspace") {
+        diagnostics.push({
+          severity: "error", code: "E519", phase: "build",
+          message: "Workspace command requires --package or --all (no nearest member)",
+          location: { file: "", line: 0, col: 0 },
+        });
+        emitBuildResult(startTime, phaseTiming, false, null, diagnostics);
+        return;
+      }
+    } catch {
+      // Not in workspace — fall through to file build
+    }
+
+    diagnostics.push({
+      severity: "error", code: "E001", phase: "build",
+      message: "no input file specified",
+      location: { file: "", line: 0, col: 0 },
+    });
+    emitBuildResult(startTime, phaseTiming, false, null, diagnostics);
+    return;
+  }
+
+  // Single file build
+  const files = collectClkFiles(targets);
+  if (files.length === 0) {
+    diagnostics.push({
+      severity: "error", code: "E001", phase: "build",
+      message: "no .clk files found",
+      location: { file: "", line: 0, col: 0 },
+    });
+    emitBuildResult(startTime, phaseTiming, false, null, diagnostics);
+    return;
+  }
+
+  const memberResults: { file: string; ok: boolean; modules: number }[] = [];
+  for (const file of files) {
+    const absFile = resolve(file);
+    const result = buildSingleFile(absFile, phaseTiming, diagnostics);
+    memberResults.push({ file, ok: result.ok, modules: result.ok ? 1 : 0 });
+  }
+
+  const ok = memberResults.every(r => r.ok);
+  emitBuildResult(startTime, phaseTiming, ok, { files: memberResults }, diagnostics);
+}
+
+function buildSingleFile(
+  absFile: string,
+  phaseTiming: Record<string, number>,
+  diagnostics: Diagnostic[],
+): { ok: boolean } {
+  const source = readFileSync(absFile, "utf-8");
+
+  let phaseStart = Date.now();
+  const tokens = lex(source);
+  phaseTiming.lex = (phaseTiming.lex ?? 0) + (Date.now() - phaseStart);
+
+  if (!Array.isArray(tokens)) {
+    diagnostics.push(toDiagnostic(tokens, absFile));
+    return { ok: false };
+  }
+
+  phaseStart = Date.now();
+  const ast = parse(tokens);
+  phaseTiming.parse = (phaseTiming.parse ?? 0) + (Date.now() - phaseStart);
+
+  if ("code" in ast) {
+    diagnostics.push(toDiagnostic(ast as any, absFile));
+    return { ok: false };
+  }
+
+  phaseStart = Date.now();
+  const program: Program = {
+    topLevels: (ast as Program).topLevels.map(tl => {
+      if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+      if (tl.tag === "impl-block") return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
+      return tl;
+    }),
+  };
+  phaseTiming.desugar = (phaseTiming.desugar ?? 0) + (Date.now() - phaseStart);
+
+  phaseStart = Date.now();
+  const typeErrors = typeCheck(program);
+  phaseTiming.check = (phaseTiming.check ?? 0) + (Date.now() - phaseStart);
+
+  if (typeErrors.length > 0) {
+    for (const err of typeErrors) {
+      diagnostics.push(toDiagnostic(err, absFile));
+    }
+    if (typeErrors.some(e => (e as any).severity === "error" || !("severity" in e))) {
+      return { ok: false };
+    }
+  }
+
+  phaseStart = Date.now();
+  compileProgram(program);
+  phaseTiming.compile = (phaseTiming.compile ?? 0) + (Date.now() - phaseStart);
+
+  return { ok: true };
+}
+
+function runWorkspaceBuild(
+  startTime: number,
+  phaseTiming: Record<string, number>,
+  diagnostics: Diagnostic[],
+  allFlag: boolean,
+  packageFlag: string | undefined,
+  maxJobs: number,
+  nearestMember?: string,
+): void {
+  try {
+    const ctx = findWorkspaceRoot(process.cwd());
+    if (ctx.mode !== "workspace" || !ctx.workspaceRoot) {
+      diagnostics.push({
+        severity: "error", code: "E518", phase: "build",
+        message: "Not inside a workspace (no clank.workspace found)",
+        location: { file: "", line: 0, col: 0 },
+      });
+      emitBuildResult(startTime, phaseTiming, false, null, diagnostics);
+      return;
+    }
+
+    const resolution = resolveWorkspace(ctx.workspaceRoot);
+
+    // Filter members based on flags
+    let targetMembers: Set<string>;
+    if (allFlag) {
+      targetMembers = new Set(resolution.members.map(m => m.name));
+    } else {
+      const targetName = packageFlag ?? nearestMember;
+      if (!targetName) {
+        diagnostics.push({
+          severity: "error", code: "E519", phase: "build",
+          message: "Workspace command requires --package or --all (no nearest member)",
+          location: { file: "", line: 0, col: 0 },
+        });
+        emitBuildResult(startTime, phaseTiming, false, null, diagnostics);
+        return;
+      }
+
+      // Include the target and all its transitive dependencies
+      targetMembers = new Set<string>();
+      const addWithDeps = (name: string) => {
+        if (targetMembers.has(name)) return;
+        targetMembers.add(name);
+        const deps = resolution.graph.edges.get(name) ?? [];
+        for (const dep of deps) addWithDeps(dep);
+      };
+
+      // Find the member by name or relative path
+      const member = resolution.members.find(m => m.name === targetName || m.relativePath === targetName);
+      if (!member) {
+        diagnostics.push({
+          severity: "error", code: "E519", phase: "build",
+          message: `Package '${targetName}' not found in workspace`,
+          location: { file: "", line: 0, col: 0 },
+        });
+        emitBuildResult(startTime, phaseTiming, false, null, diagnostics);
+        return;
+      }
+      addWithDeps(member.name);
+    }
+
+    // Generate workspace lockfile
+    const lockStart = Date.now();
+    writeWorkspaceLockfile(ctx.workspaceRoot);
+    phaseTiming["lockfile"] = Date.now() - lockStart;
+
+    // Build members in parallel
+    const buildMember = async (member: WorkspaceMember): Promise<{ ok: boolean; error?: string }> => {
+      if (!targetMembers.has(member.name)) {
+        return { ok: true }; // skip — not a target
+      }
+      const memberDiags: Diagnostic[] = [];
+      const srcDir = join(member.path, "src");
+      if (!existsSync(srcDir)) {
+        return { ok: true }; // no src dir — nothing to build
+      }
+
+      const files = collectClkFiles([srcDir]);
+      for (const file of files) {
+        const absFile = resolve(file);
+        const result = buildSingleFile(absFile, phaseTiming, memberDiags);
+        if (!result.ok) {
+          diagnostics.push(...memberDiags);
+          return { ok: false, error: `Build failed for ${member.name}` };
+        }
+      }
+      diagnostics.push(...memberDiags);
+      return { ok: true };
+    };
+
+    // Filter the resolution to only include target members
+    const filteredResolution = { ...resolution };
+
+    buildWorkspaceParallel(filteredResolution, buildMember, maxJobs).then(result => {
+      const data = {
+        members_built: result.membersBuilt.filter(m => targetMembers.has(m.name)).map(m => ({
+          name: m.name,
+          path: m.path,
+          status: m.status,
+          ...(m.blockedBy ? { blocked_by: m.blockedBy } : {}),
+          ...(m.error ? { error: m.error } : {}),
+        })),
+        build_order: result.buildOrder,
+        parallelism_achieved: result.parallelismAchieved,
+      };
+      emitBuildResult(startTime, phaseTiming, result.ok, data, diagnostics);
+    });
+  } catch (err) {
+    diagnostics.push({
+      severity: "error", code: "E520", phase: "build",
+      message: err instanceof Error ? err.message : String(err),
+      location: { file: "", line: 0, col: 0 },
+    });
+    emitBuildResult(startTime, phaseTiming, false, null, diagnostics);
+  }
+}
+
+function emitBuildResult(
+  startTime: number,
+  phaseTiming: Record<string, number>,
+  ok: boolean,
+  data: unknown | null,
+  diagnostics: Diagnostic[],
+): void {
+  const totalMs = Date.now() - startTime;
+  if (jsonMode) {
+    console.log(JSON.stringify(makeEnvelope(ok, data, diagnostics, { total_ms: totalMs, phases: phaseTiming })));
+  } else {
+    if (!ok) {
+      for (const d of diagnostics) {
+        if (d.severity === "error") {
+          console.error(`${d.code}: ${d.message}`);
+        }
+      }
+    } else if (data && typeof data === "object" && "members_built" in data) {
+      const bd = data as { members_built: { name: string; status: string }[] };
+      for (const m of bd.members_built) {
+        if (m.status === "success") {
+          console.log(`  ✓ ${m.name}`);
+        } else if (m.status === "skipped_dep_failed") {
+          console.log(`  ⊘ ${m.name} (skipped)`);
+        }
+      }
+    }
+  }
+  process.exit(ok ? 0 : 1);
+}
+
 // ── Check subcommand ──
 
 function runCheck(): void {
   const startTime = Date.now();
   const phaseTiming: Record<string, number> = {};
   const diagnostics: Diagnostic[] = [];
+
+  const allFlag = args.includes("--all");
+  const packageFlag = getFlagValue("--package");
+
+  // Workspace-aware check
+  if (allFlag || packageFlag) {
+    runWorkspaceCheck(startTime, phaseTiming, diagnostics, allFlag, packageFlag);
+    return;
+  }
 
   const targets = nonFlagArgs.slice(1); // after "check"
 
@@ -463,6 +752,132 @@ function emitCheckResult(
     }
   }
   process.exit(ok ? 0 : 1);
+}
+
+function runWorkspaceCheck(
+  startTime: number,
+  phaseTiming: Record<string, number>,
+  diagnostics: Diagnostic[],
+  allFlag: boolean,
+  packageFlag: string | undefined,
+): void {
+  try {
+    const ctx = findWorkspaceRoot(process.cwd());
+    if (ctx.mode !== "workspace" || !ctx.workspaceRoot) {
+      diagnostics.push({
+        severity: "error", code: "E518", phase: "check",
+        message: "Not inside a workspace",
+        location: { file: "", line: 0, col: 0 },
+      });
+      emitCheckResult(startTime, phaseTiming, false, null, diagnostics);
+      return;
+    }
+
+    const resolution = resolveWorkspace(ctx.workspaceRoot);
+    let targetMembers: Set<string>;
+
+    if (allFlag) {
+      targetMembers = new Set(resolution.members.map(m => m.name));
+    } else {
+      const targetName = packageFlag;
+      if (!targetName) {
+        diagnostics.push({
+          severity: "error", code: "E519", phase: "check",
+          message: "Workspace command requires --package or --all",
+          location: { file: "", line: 0, col: 0 },
+        });
+        emitCheckResult(startTime, phaseTiming, false, null, diagnostics);
+        return;
+      }
+      targetMembers = new Set<string>();
+      const addWithDeps = (name: string) => {
+        if (targetMembers.has(name)) return;
+        targetMembers.add(name);
+        for (const dep of resolution.graph.edges.get(name) ?? []) addWithDeps(dep);
+      };
+      const member = resolution.members.find(m => m.name === targetName);
+      if (!member) {
+        diagnostics.push({
+          severity: "error", code: "E519", phase: "check",
+          message: `Package '${targetName}' not found in workspace`,
+          location: { file: "", line: 0, col: 0 },
+        });
+        emitCheckResult(startTime, phaseTiming, false, null, diagnostics);
+        return;
+      }
+      addWithDeps(member.name);
+    }
+
+    const fileResults: { file: string; ok: boolean; errors: number; warnings: number }[] = [];
+
+    for (const memberName of resolution.buildOrder) {
+      if (!targetMembers.has(memberName)) continue;
+      const member = resolution.graph.members.get(memberName)!;
+      const srcDir = join(member.path, "src");
+      if (!existsSync(srcDir)) continue;
+
+      const files = collectClkFiles([srcDir]);
+      for (const file of files) {
+        const absFile = resolve(file);
+        const source = readFileSync(absFile, "utf-8");
+        let fileErrors = 0;
+        let fileWarnings = 0;
+
+        let phaseStart = Date.now();
+        const tokens = lex(source);
+        phaseTiming.lex = (phaseTiming.lex ?? 0) + (Date.now() - phaseStart);
+
+        if (!Array.isArray(tokens)) {
+          diagnostics.push(toDiagnostic(tokens, absFile));
+          fileResults.push({ file, ok: false, errors: 1, warnings: 0 });
+          continue;
+        }
+
+        phaseStart = Date.now();
+        const ast = parse(tokens);
+        phaseTiming.parse = (phaseTiming.parse ?? 0) + (Date.now() - phaseStart);
+
+        if ("code" in ast) {
+          diagnostics.push(toDiagnostic(ast as any, absFile));
+          fileResults.push({ file, ok: false, errors: 1, warnings: 0 });
+          continue;
+        }
+
+        phaseStart = Date.now();
+        const program: Program = {
+          topLevels: (ast as Program).topLevels.map(tl => {
+            if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+            if (tl.tag === "impl-block") return { ...tl, methods: tl.methods.map(m => ({ ...m, body: desugar(m.body) })) };
+            return tl;
+          }),
+        };
+        phaseTiming.desugar = (phaseTiming.desugar ?? 0) + (Date.now() - phaseStart);
+
+        phaseStart = Date.now();
+        const typeErrors = typeCheck(program);
+        phaseTiming.check = (phaseTiming.check ?? 0) + (Date.now() - phaseStart);
+
+        for (const err of typeErrors) {
+          const diag = toDiagnostic(err, absFile);
+          diagnostics.push(diag);
+          if (diag.severity === "error") fileErrors++;
+          else if (diag.severity === "warning") fileWarnings++;
+        }
+
+        fileResults.push({ file, ok: fileErrors === 0, errors: fileErrors, warnings: fileWarnings });
+      }
+    }
+
+    const hasErrors = diagnostics.some(d => d.severity === "error");
+    emitCheckResult(startTime, phaseTiming, !hasErrors, { files: fileResults }, diagnostics);
+  } catch (err) {
+    diagnostics.push({
+      severity: "error", code: "E520", phase: "check",
+      message: err instanceof Error ? err.message : String(err),
+      location: { file: "", line: 0, col: 0 },
+    });
+    emitCheckResult(startTime, phaseTiming, false, null, diagnostics);
+  }
 }
 
 // ── Lint subcommand ──
@@ -1011,6 +1426,15 @@ function runTest(): void {
   const diagnostics: Diagnostic[] = [];
 
   const filterFlag = getFlagValue("--filter");
+  const allFlag = args.includes("--all");
+  const packageFlag = getFlagValue("--package");
+
+  // Workspace-aware test
+  if (allFlag || packageFlag) {
+    runWorkspaceTest(startTime, phaseTiming, diagnostics, allFlag, packageFlag, filterFlag);
+    return;
+  }
+
   const targets = nonFlagArgs.slice(1); // after "test"
 
   // Default: look for test/ directory if no targets given
@@ -1252,6 +1676,214 @@ function emitTestResult(
   process.exit(ok ? 0 : 1);
 }
 
+function runWorkspaceTest(
+  startTime: number,
+  phaseTiming: Record<string, number>,
+  diagnostics: Diagnostic[],
+  allFlag: boolean,
+  packageFlag: string | undefined,
+  filterFlag: string | undefined,
+): void {
+  try {
+    const ctx = findWorkspaceRoot(process.cwd());
+    if (ctx.mode !== "workspace" || !ctx.workspaceRoot) {
+      diagnostics.push({
+        severity: "error", code: "E518", phase: "test",
+        message: "Not inside a workspace",
+        location: { file: "", line: 0, col: 0 },
+      });
+      emitTestResult(startTime, phaseTiming, false, null, diagnostics);
+      return;
+    }
+
+    const resolution = resolveWorkspace(ctx.workspaceRoot);
+    let targetMembers: Set<string>;
+
+    if (allFlag) {
+      targetMembers = new Set(resolution.members.map(m => m.name));
+    } else {
+      const targetName = packageFlag;
+      if (!targetName) {
+        diagnostics.push({
+          severity: "error", code: "E519", phase: "test",
+          message: "Workspace command requires --package or --all",
+          location: { file: "", line: 0, col: 0 },
+        });
+        emitTestResult(startTime, phaseTiming, false, null, diagnostics);
+        return;
+      }
+      const member = resolution.members.find(m => m.name === targetName);
+      if (!member) {
+        diagnostics.push({
+          severity: "error", code: "E519", phase: "test",
+          message: `Package '${targetName}' not found in workspace`,
+          location: { file: "", line: 0, col: 0 },
+        });
+        emitTestResult(startTime, phaseTiming, false, null, diagnostics);
+        return;
+      }
+      targetMembers = new Set([member.name]);
+    }
+
+    const memberResults: {
+      name: string;
+      summary: { total: number; passed: number; failed: number; skipped: number };
+      status: "pass" | "fail" | "no_tests";
+      duration_ms: number;
+    }[] = [];
+
+    // Run tests in dependency order
+    for (const memberName of resolution.buildOrder) {
+      if (!targetMembers.has(memberName)) continue;
+      const member = resolution.graph.members.get(memberName)!;
+      const testDir = join(member.path, "test");
+      const memberStart = Date.now();
+
+      let testFiles: string[];
+      try {
+        testFiles = existsSync(testDir) ? collectClkFiles([testDir]) : [];
+      } catch {
+        testFiles = [];
+      }
+
+      if (testFiles.length === 0) {
+        memberResults.push({
+          name: memberName,
+          summary: { total: 0, passed: 0, failed: 0, skipped: 0 },
+          status: "no_tests",
+          duration_ms: Date.now() - memberStart,
+        });
+        continue;
+      }
+
+      let memberPassed = 0;
+      let memberFailed = 0;
+      let memberTotal = 0;
+
+      for (const file of testFiles) {
+        const absFile = resolve(file);
+        const source = readFileSync(absFile, "utf-8");
+
+        let phaseStart = Date.now();
+        const tokens = lex(source);
+        phaseTiming.lex = (phaseTiming.lex ?? 0) + (Date.now() - phaseStart);
+
+        if (!Array.isArray(tokens)) {
+          diagnostics.push(toDiagnostic(tokens, absFile));
+          continue;
+        }
+
+        phaseStart = Date.now();
+        const ast = parse(tokens);
+        phaseTiming.parse = (phaseTiming.parse ?? 0) + (Date.now() - phaseStart);
+
+        if ("code" in ast) {
+          diagnostics.push(toDiagnostic(ast as any, absFile));
+          continue;
+        }
+
+        phaseStart = Date.now();
+        const program: Program = {
+          topLevels: (ast as Program).topLevels.map(tl => {
+            if (tl.tag === "definition") return { ...tl, body: desugar(tl.body) };
+            if (tl.tag === "test-decl") return { ...tl, body: desugar(tl.body) };
+            return tl;
+          }),
+        };
+        phaseTiming.desugar = (phaseTiming.desugar ?? 0) + (Date.now() - phaseStart);
+
+        const modDecl = program.topLevels.find(tl => tl.tag === "mod-decl");
+        const moduleName = modDecl && modDecl.tag === "mod-decl" ? modDecl.path.join(".") : file;
+
+        const testDecls = program.topLevels.filter(
+          (tl): tl is Extract<typeof tl, { tag: "test-decl" }> => tl.tag === "test-decl"
+        );
+        const testDefs = program.topLevels.filter(
+          (tl): tl is Extract<typeof tl, { tag: "definition" }> =>
+            tl.tag === "definition" && tl.name.startsWith("test_")
+        );
+
+        if (testDecls.length === 0 && testDefs.length === 0) continue;
+
+        phaseStart = Date.now();
+        const env = createEnv(program, dirname(absFile));
+        phaseTiming.eval = (phaseTiming.eval ?? 0) + (Date.now() - phaseStart);
+
+        for (const td of testDecls) {
+          if (filterFlag && !td.name.includes(filterFlag)) continue;
+          memberTotal++;
+          const testStart = Date.now();
+          try {
+            const result = evalExprWithEnv(td.body, env);
+            if (result.ok) {
+              memberPassed++;
+            } else {
+              memberFailed++;
+            }
+          } catch {
+            memberFailed++;
+          }
+        }
+
+        for (const td of testDefs) {
+          if (filterFlag && !td.name.includes(filterFlag)) continue;
+          memberTotal++;
+          try {
+            const result = evalExprWithEnv(td.body, env);
+            if (result.ok) {
+              memberPassed++;
+            } else {
+              memberFailed++;
+            }
+          } catch {
+            memberFailed++;
+          }
+        }
+      }
+
+      memberResults.push({
+        name: memberName,
+        summary: { total: memberTotal, passed: memberPassed, failed: memberFailed, skipped: 0 },
+        status: memberFailed > 0 ? "fail" : "pass",
+        duration_ms: Date.now() - memberStart,
+      });
+    }
+
+    const wsSummary = {
+      total: memberResults.reduce((s, m) => s + m.summary.total, 0),
+      passed: memberResults.reduce((s, m) => s + m.summary.passed, 0),
+      failed: memberResults.reduce((s, m) => s + m.summary.failed, 0),
+      skipped: 0,
+    };
+
+    const ok = wsSummary.failed === 0;
+    const data = {
+      members: memberResults,
+      workspace_summary: wsSummary,
+    };
+
+    if (jsonMode) {
+      const totalMs = Date.now() - startTime;
+      console.log(JSON.stringify(makeEnvelope(ok, data, diagnostics, { total_ms: totalMs, phases: phaseTiming })));
+    } else {
+      for (const m of memberResults) {
+        if (m.status === "no_tests") continue;
+        const icon = m.status === "pass" ? "ok" : "FAIL";
+        console.log(`  ${icon} - ${m.name} (${m.summary.passed}/${m.summary.total} passed)`);
+      }
+      console.log(`\nWorkspace: ${wsSummary.total} tests: ${wsSummary.passed} passed, ${wsSummary.failed} failed`);
+    }
+    process.exit(ok ? 0 : 1);
+  } catch (err) {
+    diagnostics.push({
+      severity: "error", code: "E520", phase: "test",
+      message: err instanceof Error ? err.message : String(err),
+      location: { file: "", line: 0, col: 0 },
+    });
+    emitTestResult(startTime, phaseTiming, false, null, diagnostics);
+  }
+}
+
 // ── File execution (original mode) ──
 
 // ── Pkg subcommand ──
@@ -1298,6 +1930,161 @@ function runPkg(): void {
         process.exit(1);
       }
     }
+  } else if (subcommand === "add") {
+    const nameIdx = args.indexOf("--name");
+    const name = nameIdx >= 0 ? args[nameIdx + 1] : undefined;
+    const pathIdx = args.indexOf("--path");
+    const depPath = pathIdx >= 0 ? args[pathIdx + 1] : undefined;
+    const githubIdx = args.indexOf("--github");
+    const github = githubIdx >= 0 ? args[githubIdx + 1] : undefined;
+    const versionIdx = args.indexOf("--version");
+    const constraint = versionIdx >= 0 ? args[versionIdx + 1] : undefined;
+    const dev = args.includes("--dev");
+
+    if (!name) {
+      const msg = "Missing required --name flag for pkg add";
+      if (jsonMode) {
+        diagnostics.push({
+          severity: "error", code: "E508", phase: "link",
+          message: msg, location: { file: "<cli>", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    const addStart = Date.now();
+    const result = pkgAdd({ name, constraint, path: depPath, github, dev });
+    phaseTiming["add"] = Date.now() - addStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E508", phase: "link",
+          message: result.error!, location: { file: "clank.pkg", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        const d = result.data!;
+        const desc = d.github ? `{ github = "${d.github}"${d.constraint !== "*" ? `, version = "${d.constraint}"` : ""} }` : d.path ? `{ path = "${d.path}" }` : `"${d.constraint}"`;
+        console.log(`Added ${d.name} = ${desc} to [${d.section}]`);
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else if (subcommand === "remove") {
+    const nameIdx = args.indexOf("--name");
+    const name = nameIdx >= 0 ? args[nameIdx + 1] : undefined;
+    const dev = args.includes("--dev");
+
+    if (!name) {
+      const msg = "Missing required --name flag for pkg remove";
+      if (jsonMode) {
+        diagnostics.push({
+          severity: "error", code: "E508", phase: "link",
+          message: msg, location: { file: "<cli>", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    const removeStart = Date.now();
+    const result = pkgRemove({ name, dev });
+    phaseTiming["remove"] = Date.now() - removeStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E508", phase: "link",
+          message: result.error!, location: { file: "clank.pkg", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        console.log(`Removed ${result.data!.name} from [${result.data!.section}]`);
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else if (subcommand === "verify") {
+    const verifyStart = Date.now();
+    const manifestPath = findManifest(".");
+    phaseTiming["verify"] = Date.now() - verifyStart;
+
+    if (!manifestPath) {
+      const msg = "No clank.pkg found in current directory or any parent";
+      if (jsonMode) {
+        diagnostics.push({
+          severity: "error", code: "E508", phase: "link",
+          message: msg, location: { file: "<cli>", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        console.error(`Error: ${msg}`);
+        process.exit(1);
+      }
+      return;
+    }
+
+    const result = verifyLockfile(manifestPath);
+    phaseTiming["verify"] = Date.now() - verifyStart;
+
+    if (jsonMode) {
+      console.log(JSON.stringify(makeEnvelope(result.ok, {
+        ok: result.ok,
+        stale: result.stale,
+        missing: result.missing,
+        extra: result.extra,
+      }, diagnostics, {
+        total_ms: Date.now() - startTime, phases: phaseTiming,
+      })));
+    } else {
+      if (result.ok) {
+        console.log("Lockfile is up to date.");
+      } else {
+        if (result.missing.length > 0) {
+          console.error(`Missing from lockfile: ${result.missing.join(", ")}`);
+        }
+        if (result.stale.length > 0) {
+          console.error(`Stale in lockfile: ${result.stale.join(", ")}`);
+        }
+        if (result.extra.length > 0) {
+          console.error(`Extra in lockfile: ${result.extra.join(", ")}`);
+        }
+        console.error("Run 'clank pkg resolve' to update the lockfile.");
+        process.exit(1);
+      }
+    }
   } else if (subcommand === "resolve") {
     const resolveStart = Date.now();
     const result = pkgResolve();
@@ -1336,10 +2123,302 @@ function runPkg(): void {
         process.exit(1);
       }
     }
+  } else if (subcommand === "install") {
+    const dev = args.includes("--dev");
+
+    const installStart = Date.now();
+    const result = pkgInstall({ dev });
+    phaseTiming["install"] = Date.now() - installStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E509", phase: "link",
+          message: result.error!, location: { file: "clank.pkg", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        const d = result.data!;
+        if (d.installed.length === 0) {
+          console.log("No remote dependencies to install.");
+        } else {
+          console.log(`Installed ${d.installed.length} package(s):`);
+          for (const pkg of d.installed) {
+            console.log(`  ${pkg.name}@${pkg.version} (github.com/${pkg.github})`);
+          }
+          console.log(`Linked to ${d.linked}`);
+        }
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else if (subcommand === "publish") {
+    const dryRun = args.includes("--dry-run");
+
+    const publishStart = Date.now();
+    const result = pkgPublish({ dryRun });
+    phaseTiming["publish"] = Date.now() - publishStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E510", phase: "link",
+          message: result.error!, location: { file: "clank.pkg", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        const d = result.data!;
+        if (dryRun) {
+          console.log(`Dry run — would publish ${d.package}@${d.version}`);
+          console.log(`  tag: ${d.tag}`);
+          console.log(`  repository: ${d.repository}`);
+          console.log(`  integrity: ${d.integrity}`);
+        } else {
+          console.log(`Published ${d.package}@${d.version}`);
+          console.log(`  tag: ${d.tag}`);
+          console.log(`  repository: ${d.repository}`);
+          console.log(`  integrity: ${d.integrity}`);
+        }
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else if (subcommand === "search") {
+    const queryIdx = args.indexOf("--query");
+    const query = queryIdx >= 0 ? args[queryIdx + 1] : nonFlagArgs[2] ?? "";
+    const repos: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--repo" && args[i + 1]) repos.push(args[i + 1]);
+    }
+
+    const searchStart = Date.now();
+    const result = pkgSearch({ repos, query });
+    phaseTiming["search"] = Date.now() - searchStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E510", phase: "link",
+          message: result.error!, location: { file: "<cli>", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        const pkgs = result.data!.packages;
+        if (pkgs.length === 0) {
+          console.log("No packages found.");
+        } else {
+          for (const pkg of pkgs) {
+            console.log(`${pkg.name} (${pkg.repository}) — ${pkg.description}`);
+            if (pkg.keywords.length > 0) console.log(`  keywords: ${pkg.keywords.join(", ")}`);
+            console.log(`  latest: ${pkg.latest}`);
+          }
+        }
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else if (subcommand === "info") {
+    const repoIdx = args.indexOf("--repo");
+    const repo = repoIdx >= 0 ? args[repoIdx + 1] : nonFlagArgs[2] ?? "";
+
+    const infoStart = Date.now();
+    const result = pkgInfo({ repo });
+    phaseTiming["info"] = Date.now() - infoStart;
+
+    if (jsonMode) {
+      if (result.ok) {
+        console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      } else {
+        diagnostics.push({
+          severity: "error", code: "E510", phase: "link",
+          message: result.error!, location: { file: "<cli>", line: 1, col: 1 },
+        });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+          total_ms: Date.now() - startTime, phases: phaseTiming,
+        })));
+      }
+    } else {
+      if (result.ok) {
+        const d = result.data!;
+        console.log(`${d.name} (github.com/${d.repository})`);
+        if (d.description) console.log(`  ${d.description}`);
+        if (d.license) console.log(`  license: ${d.license}`);
+        if (d.authors.length > 0) console.log(`  authors: ${d.authors.join(", ")}`);
+        if (d.keywords.length > 0) console.log(`  keywords: ${d.keywords.join(", ")}`);
+        console.log(`  latest: ${d.latest}`);
+        console.log(`  versions: ${d.versions.join(", ")}`);
+      } else {
+        console.error(`Error: ${result.error}`);
+        process.exit(1);
+      }
+    }
+  } else if (subcommand === "workspace") {
+    const wsSubcommand = nonFlagArgs[2]; // "init", "list", "add", "remove"
+
+    if (wsSubcommand === "init") {
+      const membersIdx = args.indexOf("--members");
+      const membersList = membersIdx >= 0 ? args[membersIdx + 1]?.split(",") : undefined;
+
+      const wsStart = Date.now();
+      const result = workspaceInit({ members: membersList });
+      phaseTiming["workspace-init"] = Date.now() - wsStart;
+
+      if (jsonMode) {
+        if (result.ok) {
+          console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+            total_ms: Date.now() - startTime, phases: phaseTiming,
+          })));
+        } else {
+          diagnostics.push({
+            severity: "error", code: "E508", phase: "link",
+            message: result.error!, location: { file: "clank.workspace", line: 1, col: 1 },
+          });
+          console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+            total_ms: Date.now() - startTime, phases: phaseTiming,
+          })));
+        }
+      } else {
+        if (result.ok) {
+          console.log(`Initialized workspace at ${result.data!.root}`);
+          if (result.data!.members.length > 0) {
+            console.log(`  members: ${result.data!.members.join(", ")}`);
+          }
+        } else {
+          console.error(`Error: ${result.error}`);
+          process.exit(1);
+        }
+      }
+    } else if (wsSubcommand === "list") {
+      const wsStart = Date.now();
+      const result = workspaceList();
+      phaseTiming["workspace-list"] = Date.now() - wsStart;
+
+      if (jsonMode) {
+        if (result.ok) {
+          console.log(JSON.stringify(makeEnvelope(true, result.data, diagnostics, {
+            total_ms: Date.now() - startTime, phases: phaseTiming,
+          })));
+        } else {
+          diagnostics.push({
+            severity: "error", code: "E518", phase: "link",
+            message: result.error!, location: { file: "<cli>", line: 1, col: 1 },
+          });
+          console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, {
+            total_ms: Date.now() - startTime, phases: phaseTiming,
+          })));
+        }
+      } else {
+        if (result.ok) {
+          const d = result.data!;
+          console.log(`Workspace: ${d.root}`);
+          for (const m of d.members) {
+            const deps = m.dependents.length > 0 ? ` (depended by: ${m.dependents.join(", ")})` : "";
+            console.log(`  ${m.name}@${m.version} — ${m.path}${deps}`);
+          }
+        } else {
+          console.error(`Error: ${result.error}`);
+          process.exit(1);
+        }
+      }
+    } else if (wsSubcommand === "add") {
+      const memberPath = nonFlagArgs[3];
+      if (!memberPath) {
+        const msg = "Usage: clank pkg workspace add <path>";
+        if (jsonMode) {
+          diagnostics.push({ severity: "error", code: "E508", phase: "link", message: msg, location: { file: "<cli>", line: 1, col: 1 } });
+          console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, { total_ms: Date.now() - startTime, phases: phaseTiming })));
+        } else {
+          console.error(msg);
+          process.exit(1);
+        }
+        return;
+      }
+      const wsStart = Date.now();
+      const result = workspaceAddMember(memberPath);
+      phaseTiming["workspace-add"] = Date.now() - wsStart;
+
+      if (jsonMode) {
+        console.log(JSON.stringify(makeEnvelope(result.ok, result.data, result.ok ? diagnostics : [...diagnostics, { severity: "error" as const, code: "E515", phase: "link", message: result.error!, location: { file: "clank.workspace", line: 1, col: 1 } }], { total_ms: Date.now() - startTime, phases: phaseTiming })));
+      } else {
+        if (result.ok) {
+          console.log(`Added member '${result.data!.name}' at ${result.data!.member}`);
+        } else {
+          console.error(`Error: ${result.error}`);
+          process.exit(1);
+        }
+      }
+    } else if (wsSubcommand === "remove") {
+      const memberPath = nonFlagArgs[3];
+      if (!memberPath) {
+        const msg = "Usage: clank pkg workspace remove <path>";
+        if (jsonMode) {
+          diagnostics.push({ severity: "error", code: "E508", phase: "link", message: msg, location: { file: "<cli>", line: 1, col: 1 } });
+          console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, { total_ms: Date.now() - startTime, phases: phaseTiming })));
+        } else {
+          console.error(msg);
+          process.exit(1);
+        }
+        return;
+      }
+      const wsStart = Date.now();
+      const result = workspaceRemoveMember(memberPath);
+      phaseTiming["workspace-remove"] = Date.now() - wsStart;
+
+      if (jsonMode) {
+        console.log(JSON.stringify(makeEnvelope(result.ok, result.data, result.ok ? diagnostics : [...diagnostics, { severity: "error" as const, code: "E515", phase: "link", message: result.error!, location: { file: "clank.workspace", line: 1, col: 1 } }], { total_ms: Date.now() - startTime, phases: phaseTiming })));
+      } else {
+        if (result.ok) {
+          console.log(`Removed member '${result.data!.member}' from workspace`);
+        } else {
+          console.error(`Error: ${result.error}`);
+          process.exit(1);
+        }
+      }
+    } else {
+      const msg = wsSubcommand
+        ? `Unknown workspace subcommand: ${wsSubcommand}`
+        : "Usage: clank pkg workspace <init|list|add|remove>";
+      if (jsonMode) {
+        diagnostics.push({ severity: "error", code: "E508", phase: "link", message: msg, location: { file: "<cli>", line: 1, col: 1 } });
+        console.log(JSON.stringify(makeEnvelope(false, null, diagnostics, { total_ms: Date.now() - startTime, phases: phaseTiming })));
+      } else {
+        console.error(msg);
+        process.exit(1);
+      }
+    }
   } else {
     const msg = subcommand
       ? `Unknown pkg subcommand: ${subcommand}`
-      : "Usage: clank pkg <init|resolve>";
+      : "Usage: clank pkg <init|add|remove|install|publish|search|info|verify|resolve|workspace>";
     if (jsonMode) {
       diagnostics.push({
         severity: "error", code: "E508", phase: "link",
@@ -1477,6 +2556,23 @@ function runFile(): void {
     } catch {
       // Package resolution failure is non-fatal for file execution
     }
+
+    // Warn if lockfile exists but is stale
+    const lockPath = join(dirname(manifestPath), "clank.lock");
+    if (existsSync(lockPath)) {
+      try {
+        const verification = verifyLockfile(manifestPath);
+        if (!verification.ok) {
+          const parts: string[] = [];
+          if (verification.stale.length > 0) parts.push(`stale: ${verification.stale.join(", ")}`);
+          if (verification.missing.length > 0) parts.push(`missing: ${verification.missing.join(", ")}`);
+          if (verification.extra.length > 0) parts.push(`extra: ${verification.extra.join(", ")}`);
+          console.error(`Warning: clank.lock is out of date (${parts.join("; ")}). Run 'clank pkg resolve' to update.`);
+        }
+      } catch {
+        // Verification failure is non-fatal
+      }
+    }
   }
 
   // Execute
@@ -1560,6 +2656,7 @@ function runFile(): void {
             pubNames.add(mtl.name);
             for (const op of mtl.ops) pubNames.add(op.name);
           }
+          if (mtl.tag === "effect-alias" && mtl.pub) pubNames.add(mtl.name);
         }
 
         for (const imp of tl.imports) {
@@ -1586,6 +2683,7 @@ function runFile(): void {
           if (mtl.tag === "definition" && mtl.pub) moduleTopLevels.push(mtl);
           else if (mtl.tag === "type-decl" && mtl.pub) moduleTopLevels.push(mtl);
           else if (mtl.tag === "effect-decl" && mtl.pub) moduleTopLevels.push(mtl);
+          else if (mtl.tag === "effect-alias" && mtl.pub) moduleTopLevels.push(mtl);
         }
       }
     }

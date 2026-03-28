@@ -1,0 +1,16 @@
+# Test: extern mod block basic parsing
+# Groups multiple extern declarations under one library
+
+extern mod "node:path" where host = "js" {
+  basename : (path: Str) -> <io> Str
+  dir-name : (path: Str) -> <io> Str
+    where symbol = "dirname"
+}
+
+main : () -> <io> () =
+  print(basename("/home/user/file.txt"))
+  print(dir-name("/home/user/file.txt"))
+
+# Expected output:
+# file.txt
+# /home/user

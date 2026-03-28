@@ -1,0 +1,9 @@
+# Test: closed record pattern matching
+# Expected output:
+# Ada
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  match person {
+    {name, age} => print(name)
+  }

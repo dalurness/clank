@@ -1,0 +1,11 @@
+# Test: eq dispatch on tuple type
+# Expected output:
+# true
+# false
+
+main : () -> <io> () =
+  let a = (1, "hi")
+  let b = (1, "hi")
+  let c = (1, "bye")
+  print(show(eq(a, b)))
+  print(show(eq(a, c)))

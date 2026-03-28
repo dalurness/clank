@@ -1,0 +1,13 @@
+# Test: basic channel send and receive
+# Creates a channel, sends a value, receives it
+
+main : () -> <io, async> () =
+  let pair = channel(10)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  send(tx, 42)
+  let val = recv(rx)
+  print(show(val))
+
+# Expected output:
+# 42

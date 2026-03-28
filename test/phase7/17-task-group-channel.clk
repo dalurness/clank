@@ -1,0 +1,23 @@
+# Test: channel communication within a task group
+# Multiple producers send to same channel, consumer collects
+
+send-val : (tx: Any, v: Int) -> <async> () = send(tx, v)
+
+group-body : (tx: Any, rx: Any) -> <async> Int =
+  let p1 = spawn(fn() => send-val(tx, 10))
+  let p2 = spawn(fn() => send-val(tx, 20))
+  await(p1)
+  await(p2)
+  let a = recv(rx)
+  let b = recv(rx)
+  add(a, b)
+
+main : () -> <io, async> () =
+  let pair = channel(10)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  let result = task-group(fn() => group-body(tx, rx))
+  print(show(result))
+
+# Expected output:
+# 30

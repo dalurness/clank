@@ -1,0 +1,13 @@
+# Test: match arm with literal pattern propagates equality condition to refinement env
+# Expected output:
+# ok
+
+zero-check : (x: Int{v == 0}) -> <> String = "ok"
+
+classify : (x: Int) -> <> String =
+  match x {
+    0 => zero-check(x)
+    _ => "other"
+  }
+
+main : () -> <io> () = print(classify(0))

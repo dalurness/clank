@@ -16,11 +16,14 @@ export type Literal =
 
 // ── Patterns ──
 
+export type PatField = { name: string; pattern: Pattern | null };
+
 export type Pattern =
   | { tag: "p-var"; name: string; loc: Loc }
   | { tag: "p-literal"; value: Literal; loc: Loc }
   | { tag: "p-variant"; name: string; args: Pattern[]; loc: Loc }
   | { tag: "p-tuple"; elements: Pattern[]; loc: Loc }
+  | { tag: "p-record"; fields: PatField[]; rest: string | null; loc: Loc }
   | { tag: "p-wildcard"; loc: Loc };
 
 // ── Effect references (effect name with optional type arguments) ──
@@ -33,11 +36,16 @@ export type TypeExpr =
   | { tag: "t-name"; name: string; loc: Loc }
   | { tag: "t-list"; element: TypeExpr; loc: Loc }
   | { tag: "t-tuple"; elements: TypeExpr[]; loc: Loc }
-  | { tag: "t-record"; fields: { name: string; type: TypeExpr }[]; rowVar: string | null; loc: Loc }
+  | { tag: "t-record"; fields: { name: string; tags: string[]; type: TypeExpr }[]; rowVar: string | null; loc: Loc }
   | { tag: "t-union"; left: TypeExpr; right: TypeExpr; loc: Loc }
   | { tag: "t-fn"; param: TypeExpr; effects: EffectRef[]; subtracted: EffectRef[]; result: TypeExpr; loc: Loc }
   | { tag: "t-generic"; name: string; args: TypeExpr[]; loc: Loc }
-  | { tag: "t-refined"; base: TypeExpr; predicate: string; loc: Loc };
+  | { tag: "t-refined"; base: TypeExpr; predicate: string; loc: Loc }
+  | { tag: "t-borrow"; inner: TypeExpr; loc: Loc }
+  | { tag: "t-tag-project"; base: TypeExpr; tagName: string; loc: Loc }
+  | { tag: "t-type-filter"; base: TypeExpr; filterType: TypeExpr; loc: Loc }
+  | { tag: "t-pick"; base: TypeExpr; fieldNames: string[]; loc: Loc }
+  | { tag: "t-omit"; base: TypeExpr; fieldNames: string[]; loc: Loc };
 
 // ── Expressions ──
 
@@ -45,6 +53,7 @@ export type Expr =
   | { tag: "literal"; value: Literal; loc: Loc }
   | { tag: "var"; name: string; loc: Loc }
   | { tag: "let"; name: string; value: Expr; body: Expr | null; loc: Loc }
+  | { tag: "let-pattern"; pattern: Pattern; value: Expr; body: Expr | null; loc: Loc }
   | { tag: "if"; cond: Expr; then: Expr; else: Expr; loc: Loc }
   | { tag: "match"; subject: Expr; arms: MatchArm[]; loc: Loc }
   | { tag: "lambda"; params: Param[]; body: Expr; loc: Loc }
@@ -57,7 +66,7 @@ export type Expr =
   | { tag: "perform"; expr: Expr; loc: Loc }
   | { tag: "list"; elements: Expr[]; loc: Loc }
   | { tag: "tuple"; elements: Expr[]; loc: Loc }
-  | { tag: "record"; fields: { name: string; value: Expr }[]; loc: Loc }
+  | { tag: "record"; fields: { name: string; tags: string[]; value: Expr }[]; spread: Expr | null; loc: Loc }
   | { tag: "record-update"; base: Expr; fields: { name: string; value: Expr }[]; loc: Loc }
   | { tag: "field-access"; object: Expr; field: string; loc: Loc }
   | { tag: "for"; bind: Pattern; collection: Expr; guard: Expr | null; fold: { acc: string; init: Expr } | null; body: Expr; loc: Loc }
@@ -100,7 +109,8 @@ export type TopLevel =
   | { tag: "use-decl"; path: string[]; imports: ImportItem[]; loc: Loc }
   | { tag: "test-decl"; name: string; body: Expr; loc: Loc }
   | { tag: "interface-decl"; name: string; typeParams: string[]; supers: string[]; methods: MethodSig[]; pub: boolean; loc: Loc }
-  | { tag: "impl-block"; interface_: string; typeArgs: TypeExpr[]; forType: TypeExpr; constraints: Constraint[]; methods: { name: string; body: Expr }[]; pub: boolean; loc: Loc };
+  | { tag: "impl-block"; interface_: string; typeArgs: TypeExpr[]; forType: TypeExpr; constraints: Constraint[]; methods: { name: string; body: Expr }[]; pub: boolean; loc: Loc }
+  | { tag: "extern-decl"; name: string; sig: TypeSig; library: string; host: string | null; symbol: string | null; unsafe: boolean; pub: boolean; loc: Loc };
 
 export type Variant = { name: string; fields: TypeExpr[] };
 export type OpSig = { name: string; sig: TypeSig };

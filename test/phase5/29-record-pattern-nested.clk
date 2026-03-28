@@ -1,0 +1,9 @@
+# Test: nested record pattern matching
+# Expected output:
+# Ada Lovelace age 36
+
+main : () -> <io> () =
+  let person = {name: {first: "Ada", last: "Lovelace"}, age: 36}
+  match person {
+    {name: {first, last}, age} => print(first ++ " " ++ last ++ " age " ++ show(age))
+  }

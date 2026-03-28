@@ -1,0 +1,15 @@
+# Test: record pattern inside variant destructure
+# Expected output:
+# 5
+
+type Shape = Circle({radius: Int}) | Rect({width: Int, height: Int})
+
+area : (s: Shape) -> <> Int =
+  match s {
+    Circle({radius}) => radius * radius
+    Rect({width, height}) => width * height
+  }
+
+main : () -> <io> () =
+  let r = Rect({width: 5, height: 1})
+  print(show(area(r)))

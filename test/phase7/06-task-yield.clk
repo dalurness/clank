@@ -1,0 +1,11 @@
+# Test: task-yield is a cooperative yield point (no-op in sync mode)
+
+do-yield : () -> <async, io> () =
+  let x = task-yield()
+  print("yield ok")
+
+main : () -> <io, async> () =
+  do-yield()
+
+# Expected output:
+# yield ok

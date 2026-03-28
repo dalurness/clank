@@ -1,0 +1,9 @@
+# Test: record pattern with field rename
+# Expected output:
+# Ada
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  match person {
+    {name: n, age: a | _} => print(n)
+  }

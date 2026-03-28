@@ -1,0 +1,10 @@
+# Test: spawn with captured variables
+# Verifies that closures capture variables correctly when spawned
+
+main : () -> <io, async> () =
+  let x = 100
+  let f = spawn(fn() => add(x, 1))
+  print(show(await(f)))
+
+# Expected output:
+# 101

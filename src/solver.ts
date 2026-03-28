@@ -591,6 +591,57 @@ export function checkSubrefinement(
 }
 
 /**
+ * Check if a conclusion predicate (using 'v') holds given multiple string assumptions.
+ * Each assumption is a predicate string that may use arbitrary variable names.
+ * The conclusion uses 'v' to refer to the value being checked.
+ */
+export function checkRefinementWithContext(
+  assumptions: string[],
+  conclusion: string,
+  timeoutMs: number = 5000,
+): "valid" | "invalid" | "unknown" {
+  const assumPreds = assumptions.map(a => parsePredicate(a));
+  const conclPred = parsePredicate(conclusion);
+  return checkImplication(assumPreds, conclPred, timeoutMs);
+}
+
+/**
+ * Build an equality predicate string: `varName == expr`.
+ * Used for let-binding refinements (e.g., `let y = x + 1` → `y == x + 1`).
+ */
+export function buildEqualityPred(varName: string, exprStr: string): string {
+  return `${varName} == ${exprStr}`;
+}
+
+/**
+ * Substitute all occurrences of a variable name in a predicate string.
+ * Returns a new predicate string with the substitution applied.
+ */
+export function substitutePredVar(predicate: string, from: string, to: string): string {
+  const pred = parsePredicate(predicate);
+  const subst = substituteVar(pred, from, to);
+  return predToString(subst);
+}
+
+/** Convert a Pred AST back to a string representation. */
+export function predToString(p: Pred): string {
+  switch (p.tag) {
+    case "var": return p.name;
+    case "lit": return String(p.value);
+    case "true": return "true";
+    case "false": return "false";
+    case "add": return `(${predToString(p.left)} + ${predToString(p.right)})`;
+    case "sub": return `(${predToString(p.left)} - ${predToString(p.right)})`;
+    case "mul": return `(${predToString(p.left)} * ${predToString(p.right)})`;
+    case "neg": return `(-${predToString(p.operand)})`;
+    case "cmp": return `(${predToString(p.left)} ${p.op} ${predToString(p.right)})`;
+    case "and": return `(${predToString(p.left)} && ${predToString(p.right)})`;
+    case "or": return `(${predToString(p.left)} || ${predToString(p.right)})`;
+    case "not": return `(!${predToString(p.operand)})`;
+  }
+}
+
+/**
  * Check refinement implication with multiple assumptions.
  */
 export function checkImplication(

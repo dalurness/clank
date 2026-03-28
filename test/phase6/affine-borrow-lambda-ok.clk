@@ -1,0 +1,12 @@
+# Test: lambda can accept a borrow parameter (bare &T is allowed)
+# Expected output:
+# borrow lambda ok
+
+affine type Token = Token
+
+use-borrow : (t: Token) -> <> () =
+  let f = fn(x: &Token) => 42
+  let r = f(&t)
+  discard t
+
+main : () -> <io> () = print("borrow lambda ok")

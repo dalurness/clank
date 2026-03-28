@@ -1,0 +1,7 @@
+# Test: show dispatch on record type
+# Expected output:
+# {x: 1, y: 2}
+
+main : () -> <io> () =
+  let pt = {x: 1, y: 2}
+  print(show(pt))

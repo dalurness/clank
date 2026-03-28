@@ -1,0 +1,16 @@
+# Test: extern mod with host inference from library name
+# node: prefix should infer host = "js"
+
+extern mod "node:path" {
+  basename : (path: Str) -> <io> Str
+  dir-name : (path: Str) -> <io> Str
+    where symbol = "dirname"
+}
+
+main : () -> <io> () =
+  print(basename("/x/y/z.txt"))
+  print(dir-name("/x/y/z.txt"))
+
+# Expected output:
+# z.txt
+# /x/y

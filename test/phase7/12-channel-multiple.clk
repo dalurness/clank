@@ -1,0 +1,16 @@
+# Test: send and receive multiple values through a channel
+
+main : () -> <io, async> () =
+  let pair = channel(10)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  send(tx, 1)
+  send(tx, 2)
+  send(tx, 3)
+  let a = recv(rx)
+  let b = recv(rx)
+  let c = recv(rx)
+  print(show(add(a, add(b, c))))
+
+# Expected output:
+# 6

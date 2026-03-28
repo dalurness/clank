@@ -1,0 +1,28 @@
+# Test: cmp dispatch on list type
+# Expected output:
+# equal
+# less
+# greater
+# less
+
+main : () -> <io> () =
+  match cmp([1, 2, 3], [1, 2, 3]) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  match cmp([1, 2, 3], [1, 2, 4]) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  match cmp([2, 1], [1, 9]) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }
+  match cmp([1, 2], [1, 2, 3]) {
+    Lt => print("less")
+    Gt => print("greater")
+    Eq_ => print("equal")
+  }

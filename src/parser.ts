@@ -108,7 +108,7 @@ class Parser {
       } else if (this.at("keyword", "use")) {
         topLevels.push(this.parseUseDecl());
       } else if (this.at("keyword", "pub")) {
-        topLevels.push(this.parsePubDecl());
+        topLevels.push(...this.parsePubDecl());
       } else if (this.at("keyword", "affine")) {
         topLevels.push(this.parseAffineTypeDecl(false));
       } else if (this.at("keyword", "type")) {
@@ -121,6 +121,8 @@ class Parser {
         topLevels.push(this.parseImplBlock(false));
       } else if (this.at("keyword", "test")) {
         topLevels.push(this.parseTestDecl());
+      } else if (this.at("keyword", "extern")) {
+        topLevels.push(...this.parseExternDecl(false));
       } else {
         topLevels.push(this.parseDefinition(false));
       }
@@ -163,20 +165,22 @@ class Parser {
   // ── Pub prefix ──
   // pub definition | pub type ... | pub effect ...
 
-  private parsePubDecl(): TopLevel {
+  private parsePubDecl(): TopLevel[] {
     this.expect("keyword", "pub");
     if (this.at("keyword", "affine")) {
-      return this.parseAffineTypeDecl(true);
+      return [this.parseAffineTypeDecl(true)];
     } else if (this.at("keyword", "type")) {
-      return this.parseTypeDecl(true);
+      return [this.parseTypeDecl(true)];
     } else if (this.at("keyword", "effect")) {
-      return this.parseEffectDecl(true);
+      return [this.parseEffectDecl(true)];
     } else if (this.at("keyword", "interface")) {
-      return this.parseInterfaceDecl(true);
+      return [this.parseInterfaceDecl(true)];
     } else if (this.at("keyword", "impl")) {
-      return this.parseImplBlock(true);
+      return [this.parseImplBlock(true)];
+    } else if (this.at("keyword", "extern")) {
+      return this.parseExternDecl(true);
     } else {
-      return this.parseDefinition(true);
+      return [this.parseDefinition(true)];
     }
   }
 
@@ -224,6 +228,92 @@ class Parser {
     this.expect("op", "=");
     const body = this.parseBody();
     return { tag: "test-decl", name: nameTok.value, body, loc };
+  }
+
+  // ── Extern declaration ──
+  // extern "lib" name : type-sig [where host = "js", symbol = "name", unsafe]
+
+  private parseExternDecl(pub: boolean): TopLevel[] {
+    const loc = this.expect("keyword", "extern").loc;
+
+    // extern mod "lib" [where ...] { members }
+    if (this.at("keyword", "mod")) {
+      this.advance();
+      const library = this.expect("str").value;
+      // Parse optional shared where attributes
+      const shared = this.parseExternWhereAttrs();
+      // Infer host from library name if not specified
+      let host = shared.host;
+      if (!host) {
+        if (library.startsWith("node:")) host = "js";
+        else if (library.startsWith("lib")) host = "c";
+      }
+      this.expect("delim", "{");
+      const decls: TopLevel[] = [];
+      while (!this.at("delim", "}")) {
+        let memberPub = pub;
+        if (this.at("keyword", "pub")) {
+          this.advance();
+          memberPub = true;
+        }
+        const memberLoc = this.peek().loc;
+        const name = this.expect("ident").value;
+        this.expect("delim", ":");
+        const sig = this.parseTypeSig();
+        // Parse optional per-member where attributes (override shared)
+        const memberAttrs = this.parseExternWhereAttrs();
+        decls.push({
+          tag: "extern-decl",
+          name,
+          sig,
+          library,
+          host: memberAttrs.host ?? host,
+          symbol: memberAttrs.symbol ?? null,
+          unsafe: memberAttrs.unsafe || shared.unsafe,
+          pub: memberPub,
+          loc: memberLoc,
+        });
+      }
+      this.expect("delim", "}");
+      return decls;
+    }
+
+    // Single extern declaration: extern "lib" name : sig [where ...]
+    const library = this.expect("str").value;
+    const name = this.expect("ident").value;
+    this.expect("delim", ":");
+    const sig = this.parseTypeSig();
+    const attrs = this.parseExternWhereAttrs();
+    // Infer host from library name if not specified
+    let host = attrs.host;
+    if (!host) {
+      if (library.startsWith("node:")) host = "js";
+      else if (library.startsWith("lib")) host = "c";
+    }
+    return [{ tag: "extern-decl", name, sig, library, host, symbol: attrs.symbol, unsafe: attrs.unsafe, pub, loc }];
+  }
+
+  private parseExternWhereAttrs(): { host: string | null; symbol: string | null; unsafe: boolean } {
+    let host: string | null = null;
+    let symbol: string | null = null;
+    let isUnsafe = false;
+    if (this.at("keyword", "where")) {
+      this.advance();
+      do {
+        if (this.at("keyword", "unsafe")) {
+          this.advance();
+          isUnsafe = true;
+        } else {
+          const attrName = this.expect("ident").value;
+          this.expect("op", "=");
+          const attrVal = this.expect("str").value;
+          if (attrName === "host") host = attrVal;
+          else if (attrName === "symbol") symbol = attrVal;
+          else this.fail(`unknown extern attribute '${attrName}'`);
+        }
+      } while (this.at("delim", ",") && this.advance());
+    }
+    return { host, symbol, unsafe: isUnsafe };
   }
 
   // ── Affine type declaration ──
@@ -455,7 +545,14 @@ class Parser {
   // ── Type expression ──
 
   private parseTypeExpr(): TypeExpr {
-    const base = this.parseBaseTypeExpr();
+    let base = this.parseBaseTypeExpr();
+
+    // Postfix type-level queries: T @tag (tag projection)
+    while (this.at("delim", "@")) {
+      this.advance();
+      const tagName = this.expect("ident").value;
+      base = { tag: "t-tag-project", base, tagName, loc: base.loc };
+    }
 
     // Function type: T -> <effects> U (right-associative)
     if (this.at("op", "->")) {
@@ -476,6 +573,13 @@ class Parser {
 
   private parseBaseTypeExpr(): TypeExpr {
     const loc = this.peek().loc;
+
+    // &T — borrow type annotation
+    if (this.at("delim", "&")) {
+      this.advance();
+      const inner = this.parseBaseTypeExpr();
+      return { tag: "t-borrow", inner, loc };
+    }
 
     // () or (T, U) or (T)
     if (this.at("delim", "(")) {
@@ -509,7 +613,7 @@ class Parser {
     // {field: Type, ...} or {field: Type, ... | r} — record type with optional row variable
     if (this.at("delim", "{")) {
       this.advance();
-      const fields: { name: string; type: TypeExpr }[] = [];
+      const fields: { name: string; tags: string[]; type: TypeExpr }[] = [];
       let rowVar: string | null = null;
       if (!this.at("delim", "}")) {
         // Check for bare row variable: {r}
@@ -526,10 +630,16 @@ class Parser {
           }
         }
         do {
+          // Parse optional @tag annotations before field name
+          const tags: string[] = [];
+          while (this.at("delim", "@")) {
+            this.advance();
+            tags.push(this.expect("ident").value);
+          }
           const name = this.expect("ident").value;
           this.expect("delim", ":");
           const type = this.parseTypeExpr();
-          fields.push({ name, type });
+          fields.push({ name, tags, type });
         } while (this.at("delim", ",") && this.advance());
         // Check for row variable tail: | r
         if (this.at("delim", "|")) {
@@ -547,9 +657,25 @@ class Parser {
       return { tag: "t-name", name: "Self", loc: selfLoc };
     }
 
-    // Named type (may have generic args)
+    // Named type (may have generic args, or Pick/Omit builtins)
     if (this.at("ident")) {
       const name = this.advance().value;
+      // Built-in Pick<T, "f1" | "f2"> and Omit<T, "f1" | "f2">
+      if ((name === "Pick" || name === "Omit") && this.at("op", "<")) {
+        this.advance();
+        const baseType = this.parseTypeExpr();
+        this.expect("delim", ",");
+        // Parse string literal field names separated by |
+        const fieldNames: string[] = [];
+        fieldNames.push(this.expect("str").value);
+        while (this.at("delim", "|")) {
+          this.advance();
+          fieldNames.push(this.expect("str").value);
+        }
+        this.expect("op", ">");
+        const queryTag = name === "Pick" ? "t-pick" as const : "t-omit" as const;
+        return { tag: queryTag, base: baseType, fieldNames, loc };
+      }
       let base: TypeExpr;
       if (this.at("op", "<")) {
         this.advance();
@@ -758,6 +884,10 @@ class Parser {
       expr.body = this.parseBody();
       return expr;
     }
+    if (expr.tag === "let-pattern" && expr.body === null) {
+      expr.body = this.parseBody();
+      return expr;
+    }
 
     // Bare expression followed by more — sequence via let _ = expr in rest
     const rest = this.parseBody();
@@ -836,6 +966,18 @@ class Parser {
 
   private parseLet(): Expr {
     const loc = this.advance().loc;
+    // Check for pattern destructuring: let {fields} = expr or let (a, b) = expr
+    if (this.at("delim", "{") || this.at("delim", "(")) {
+      const pattern = this.parsePattern();
+      this.expect("op", "=");
+      const value = this.parseExpr();
+      let body: Expr | null = null;
+      if (this.at("keyword", "in")) {
+        this.advance();
+        body = this.parseExpr();
+      }
+      return { tag: "let-pattern", pattern, value, body, loc };
+    }
     const name = this.expect("ident").value;
     this.expect("op", "=");
     const value = this.parseExpr();
@@ -1042,6 +1184,50 @@ class Parser {
       // Single parenthesized pattern
       this.expect("delim", ")");
       return first;
+    }
+
+    // Record pattern: {field1, field2: pat, ... | rest}
+    if (t.tag === "delim" && t.value === "{") {
+      this.advance();
+      const fields: { name: string; pattern: Pattern | null }[] = [];
+      let rest: string | null = null;
+      if (!this.at("delim", "}")) {
+        do {
+          // Check for | rest at any point
+          if (this.at("delim", "|")) {
+            this.advance();
+            const restTok = this.peek();
+            if (restTok.tag === "ident" && restTok.value === "_") {
+              this.advance();
+              rest = "_";
+            } else {
+              rest = this.expect("ident").value;
+            }
+            break;
+          }
+          const name = this.expect("ident").value;
+          // Check for : pattern (rename/nested pattern)
+          let pattern: Pattern | null = null;
+          if (this.at("delim", ":")) {
+            this.advance();
+            pattern = this.parsePattern();
+          }
+          fields.push({ name, pattern });
+        } while (this.at("delim", ",") && this.advance());
+        // Check for | rest after fields
+        if (rest === null && this.at("delim", "|")) {
+          this.advance();
+          const restTok = this.peek();
+          if (restTok.tag === "ident" && restTok.value === "_") {
+            this.advance();
+            rest = "_";
+          } else {
+            rest = this.expect("ident").value;
+          }
+        }
+      }
+      this.expect("delim", "}");
+      return { tag: "p-record", fields, rest, loc: t.loc };
     }
 
     // Identifier — variant destructure, nullary variant, or variable binding
@@ -1296,13 +1482,14 @@ class Parser {
     }
 
     // {name: val, ...} — record literal
+    // {name: val, ..base} — record literal with spread
     // {base | name: val, ...} — record update
     if (t.tag === "delim" && t.value === "{") {
       this.advance();
       // Empty record
       if (this.at("delim", "}")) {
         this.advance();
-        return { tag: "record", fields: [], loc: t.loc };
+        return { tag: "record", fields: [], spread: null, loc: t.loc };
       }
       // Check for record update: { ident | field: val }
       // Lookahead: if ident followed by |, it's a record update
@@ -1325,16 +1512,29 @@ class Parser {
         this.expect("delim", "}");
         return { tag: "record-update", base, fields, loc: t.loc };
       }
-      // Regular record literal
-      const fields: { name: string; value: Expr }[] = [];
+      // Regular record literal (with optional @tag annotations on fields and spread)
+      const fields: { name: string; tags: string[]; value: Expr }[] = [];
+      let spread: Expr | null = null;
       do {
+        // Check for spread: ..expr
+        if (this.at("op", "..")) {
+          this.advance();
+          spread = this.parseExpr();
+          break;
+        }
+        // Parse optional @tag annotations
+        const tags: string[] = [];
+        while (this.at("delim", "@")) {
+          this.advance();
+          tags.push(this.expect("ident").value);
+        }
         const name = this.expect("ident").value;
         this.expect("delim", ":");
         const value = this.parseExpr();
-        fields.push({ name, value });
+        fields.push({ name, tags, value });
       } while (this.at("delim", ",") && this.advance());
       this.expect("delim", "}");
-      return { tag: "record", fields, loc: t.loc };
+      return { tag: "record", fields, spread, loc: t.loc };
     }
 
     this.fail(`unexpected '${t.value || t.tag}'`);

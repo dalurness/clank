@@ -1,0 +1,10 @@
+# Test: host inferred from library name
+# node: prefix automatically infers host = "js"
+
+extern "node:path" extname : (path: Str) -> <io> Str
+
+main : () -> <io> () =
+  print(extname("file.txt"))
+
+# Expected output:
+# .txt

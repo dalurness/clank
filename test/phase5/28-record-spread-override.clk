@@ -1,0 +1,10 @@
+# Test: record spread with field override
+# Expected output:
+# 37
+# Ada
+
+main : () -> <io> () =
+  let base = {name: "Ada", age: 36}
+  let updated = {age: 37, ..base}
+  print(show(updated.age))
+  print(updated.name)

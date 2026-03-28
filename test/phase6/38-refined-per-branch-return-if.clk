@@ -1,0 +1,8 @@
+# Test: per-branch return refinement — then branch has x > 0 so x satisfies v > 0
+# Expected output:
+# 5
+
+positive-branch : (x: Int) -> <> Int{v > 0} =
+  if gt(x, 0) then x else 1
+
+main : () -> <io> () = print(show(positive-branch(5)))

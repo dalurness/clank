@@ -1,0 +1,10 @@
+# Test: let binding with arithmetic expression propagates equality — let y = add(x, 1), y satisfies v > 0
+# Expected output:
+# 4
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+inc-check : (x: Int{v >= 0}) -> <> Int =
+  let y = add(x, 1) in positive(y)
+
+main : () -> <io> () = print(show(inc-check(3)))

@@ -1,0 +1,13 @@
+# Test: match arm with positive literal satisfies greater-than refinement
+# Expected output:
+# big
+
+big-check : (x: Int{v > 5}) -> <> String = "big"
+
+classify : (x: Int) -> <> String =
+  match x {
+    10 => big-check(x)
+    _ => "small"
+  }
+
+main : () -> <io> () = print(classify(10))

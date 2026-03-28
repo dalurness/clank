@@ -1,0 +1,11 @@
+# Test: extern declared pure (no effects)
+# Tests that pure extern functions work correctly
+
+extern "node:path" parse-path : (p: Str) -> <> Str
+  where host = "js", symbol = "basename"
+
+main : () -> <io> () =
+  print(parse-path("/foo/bar.txt"))
+
+# Expected output:
+# bar.txt

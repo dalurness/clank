@@ -1,0 +1,18 @@
+# Test: spawned task returns value computed from channel data
+
+sum-from-chan : (rx: Any) -> <async> Int =
+  let a = recv(rx)
+  let b = recv(rx)
+  add(a, b)
+
+main : () -> <io, async> () =
+  let pair = channel(5)
+  let tx = fst(pair)
+  let rx = snd(pair)
+  send(tx, 3)
+  send(tx, 7)
+  let worker = spawn(fn() => sum-from-chan(rx))
+  print(show(await(worker)))
+
+# Expected output:
+# 10

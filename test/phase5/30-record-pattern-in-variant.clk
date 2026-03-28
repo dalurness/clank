@@ -1,0 +1,16 @@
+# Test: record pattern inside variant match arms
+# Expected output:
+# ok: 42
+# err: oops
+
+type Result = Ok({value: Int}) | Err({msg: Str})
+
+describe : (r: Result) -> <> Str =
+  match r {
+    Ok({value}) => "ok: " ++ show(value)
+    Err({msg}) => "err: " ++ msg
+  }
+
+main : () -> <io> () =
+  print(describe(Ok({value: 42})))
+  print(describe(Err({msg: "oops"})))

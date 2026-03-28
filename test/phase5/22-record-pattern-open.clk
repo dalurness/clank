@@ -1,0 +1,13 @@
+# Test: open record pattern matching with rest
+# Expected output:
+# Ada
+# {age: 36}
+
+show-rest : (r: {name: Str, age: Int}) -> <io> () =
+  match r {
+    {name | rest} => let _ = print(name) in print(show(rest))
+  }
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  show-rest(person)

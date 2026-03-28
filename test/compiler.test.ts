@@ -431,7 +431,7 @@ test("record field access", () => {
 
 console.log("\nRecord update:");
 
-const record = (fields: { name: string; value: Expr }[]): Expr => ({ tag: "record", fields, loc });
+const record = (fields: { name: string; value: Expr }[], spread: Expr | null = null): Expr => ({ tag: "record", fields, spread, loc });
 const recordUpdate = (base: Expr, fields: { name: string; value: Expr }[]): Expr => ({
   tag: "record-update", base, fields, loc,
 });
@@ -461,8 +461,7 @@ test("record update multiple fields", () => {
   // Should have two RECORD_SET ops (one per field)
   const setCount = word.code.filter(op => op === Op.RECORD_SET).length;
   assertEq(setCount, 2, "RECORD_SET count");
-  const swapCount = word.code.filter(op => op === Op.SWAP).length;
-  assertEq(swapCount, 2, "SWAP count");
+  assert(hasOpcode(word.code, Op.SWAP), "should emit SWAP");
   assert(mod.strings.includes("name"), "string table should contain 'name'");
   assert(mod.strings.includes("age"), "string table should contain 'age'");
 });

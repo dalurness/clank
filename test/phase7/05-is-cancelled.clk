@@ -1,0 +1,8 @@
+# Test: is-cancelled returns false when not cancelled
+# Basic cancellation flag check
+
+main : () -> <io, async> () =
+  print(show(is-cancelled()))
+
+# Expected output:
+# false

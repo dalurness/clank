@@ -2,7 +2,7 @@
 // Compiles desugared AST to stack VM bytecode per compilation-strategy.md
 // and vm-instruction-set.md
 
-import type { Expr, Program, TopLevel, Pattern, MatchArm, Param } from "./ast.js";
+import type { Expr, Program, TopLevel, Pattern, MatchArm, Param, TypeExpr } from "./ast.js";
 
 // ── Opcodes ──
 
@@ -72,6 +72,7 @@ export const Op = {
   RECORD_NEW:    0x5A,
   RECORD_GET:    0x5B,
   RECORD_SET:    0x5C,
+  RECORD_REST:   0x5D,  // Create record excluding N named fields
   UNION_NEW:     0x5E,
   VARIANT_TAG:   0x5F,
   VARIANT_FIELD: 0x60,
@@ -91,6 +92,48 @@ export const Op = {
   RESUME_DISCARD:0x74,
 
   IO_PRINT:      0x90,
+
+  // ── Async / Concurrency ──
+  TASK_SPAWN:        0xA0,
+  TASK_AWAIT:        0xA1,
+  TASK_YIELD:        0xA2,
+  TASK_SLEEP:        0xA3,
+  TASK_GROUP_ENTER:  0xA4,
+  TASK_GROUP_EXIT:   0xA5,
+  CHAN_NEW:           0xA6,
+  CHAN_SEND:          0xA7,
+  CHAN_RECV:          0xA8,
+  CHAN_TRY_RECV:     0xA9,
+  CHAN_CLOSE:         0xAA,
+  SELECT_BUILD:      0xAB,
+  SELECT_WAIT:       0xAC,
+  TASK_CANCEL_CHECK: 0xAD,
+  TASK_SHIELD_ENTER: 0xAE,
+  TASK_SHIELD_EXIT:  0xAF,
+
+  DISPATCH:      0xB0,
+
+  // ── Iterators (Streaming I/O) ──
+  ITER_NEW:      0xB1,  // pop cleanup, pop generator closure, push Iterator
+  ITER_NEXT:     0xB2,  // pop Iterator, push value (or raise IterDone)
+  ITER_CLOSE:    0xB3,  // pop Iterator, run cleanup, consume handle
+
+  // ── STM (Software Transactional Memory) ──
+  TVAR_NEW:      0xC0,  // pop value, push TVar heap object
+  TVAR_READ:     0xC1,  // pop TVar, push current value (transactional)
+  TVAR_WRITE:    0xC2,  // pop value, pop TVar, write (transactional)
+  TVAR_TAKE:     0xC3,  // pop TVar, take value (affine)
+  TVAR_PUT:      0xC4,  // pop value, pop TVar, put value (affine)
+
+  // ── Ref (Mutable Reference Cell) ──
+  REF_NEW:       0xD0,  // pop value, push Ref heap object
+  REF_READ:      0xD1,  // pop Ref, push value (non-destructive copy)
+  REF_WRITE:     0xD2,  // pop value, pop Ref, overwrite cell, push Ref
+  REF_CAS:       0xD3,  // pop expected, pop new, pop Ref, CAS, push (Bool, cur)
+  REF_MODIFY:    0xD4,  // pop Quote, pop Ref, atomic read-apply-write, push new value
+  REF_CLOSE:     0xD5,  // pop Ref, decrement handle count, mark closed
+
+  CALL_EXTERN:   0xE0,  // Call a foreign function: u16 externIdx, u8 argCount
 
   HALT:          0xF0,
   TRAP:          0xF1,
@@ -128,9 +171,39 @@ const BUILTIN_OPS: Record<string, number[]> = {
   get:         [Op.LIST_IDX],
   fst:         [Op.TUPLE_GET, 0],
   snd:         [Op.TUPLE_GET, 1],
+  // Async primitives
+  spawn:             [Op.TASK_SPAWN],
+  await:             [Op.TASK_AWAIT],
+  "task-yield":      [Op.TASK_YIELD],
+  sleep:             [Op.TASK_SLEEP],
+  "is-cancelled":    [Op.TASK_CANCEL_CHECK],
+  channel:           [Op.CHAN_NEW],
+  send:              [Op.CHAN_SEND],
+  recv:              [Op.CHAN_RECV],
+  "try-recv":        [Op.CHAN_TRY_RECV],
+  "close-sender":    [Op.CHAN_CLOSE],
+  "close-receiver":  [Op.CHAN_CLOSE],
+  "select-wait":     [Op.SELECT_WAIT],
   "str.split": [Op.STR_SPLIT],
   "str.join":  [Op.STR_JOIN],
   "str.trim":  [Op.STR_TRIM],
+  // STM primitives
+  "tvar-new":    [Op.TVAR_NEW],
+  "tvar-read":   [Op.TVAR_READ],
+  "tvar-write":  [Op.TVAR_WRITE],
+  "tvar-take":   [Op.TVAR_TAKE],
+  "tvar-put":    [Op.TVAR_PUT],
+  // Iterator primitives
+  "iter-new":    [Op.ITER_NEW],
+  "iter-next":   [Op.ITER_NEXT],
+  "iter-close":  [Op.ITER_CLOSE],
+  // Ref (mutable reference cell) primitives
+  "ref-new":     [Op.REF_NEW],
+  "ref-read":    [Op.REF_READ],
+  "ref-write":   [Op.REF_WRITE],
+  "ref-cas":     [Op.REF_CAS],
+  "ref-modify":  [Op.REF_MODIFY],
+  "ref-close":   [Op.REF_CLOSE],
 };
 
 // Builtin functions dispatched by the VM at runtime (word IDs 1-255)
@@ -142,6 +215,71 @@ const VM_BUILTINS: Record<string, number> = {
   "flat-map": 4,
   range:  5,
   zip:    6,
+  "task-group": 7,
+  shield: 8,
+  "check-cancel": 9,
+  "atomically": 65,
+  "or-else": 66,
+  "retry": 67,
+  "cmp$Int": 230,
+  "cmp$Rat": 231,
+  "cmp$Str": 232,
+  "show$Record": 240,
+  "eq$Record": 241,
+  "clone$Record": 242,
+  "cmp$Record": 243,
+  "default$Record": 244,
+  "show$List": 250,
+  "eq$List": 251,
+  "clone$List": 252,
+  "show$Tuple": 253,
+  "eq$Tuple": 254,
+  "clone$Tuple": 255,
+  "cmp$List": 256,
+  "cmp$Tuple": 257,
+  "clone$Ref": 258,
+  "clone$TVar": 259,
+
+  // Tier 2: HTTP Client (IDs 120+ to avoid BUILTIN_OPS wrapper word range)
+  "http.get": 120, "http.post": 121, "http.put": 122, "http.del": 123,
+  "http.patch": 124, "http.req": 125, "http.hdr": 126, "http.json": 127, "http.ok?": 128,
+  // Tier 2: HTTP Server
+  "srv.new": 130, "srv.get": 131, "srv.post": 132, "srv.put": 133, "srv.del": 134,
+  "srv.start": 135, "srv.stop": 136, "srv.res": 137, "srv.json": 138, "srv.hdr": 139, "srv.mw": 140,
+  // Tier 2: CSV
+  "csv.dec": 145, "csv.enc": 146, "csv.decf": 147, "csv.encf": 148,
+  "csv.hdr": 149, "csv.rows": 150, "csv.maps": 151, "csv.opts": 152,
+  // Tier 2: Process
+  "proc.run": 155, "proc.sh": 156, "proc.ok": 157, "proc.pipe": 158,
+  "proc.bg": 159, "proc.wait": 160, "proc.kill": 161, "proc.exit": 162, "proc.pid": 163,
+  // Tier 2: DateTime
+  "dt.now": 170, "dt.unix": 171, "dt.from": 172, "dt.to": 173,
+  "dt.parse": 174, "dt.fmt": 175, "dt.add": 176, "dt.sub": 177,
+  "dt.tz": 178, "dt.iso": 179, "dt.ms": 180, "dt.sec": 181,
+  "dt.min": 182, "dt.hr": 183, "dt.day": 184,
+  // Iterator combinators
+  "iter.of": 70, "iter.range": 71, "iter.collect": 72,
+  "iter.map": 73, "iter.filter": 74, "iter.take": 75,
+  "iter.drop": 76, "iter.fold": 77, "iter.count": 78,
+  "iter.sum": 79, "iter.any": 80, "iter.all": 81,
+  "iter.find": 82, "iter.each": 83, "iter.drain": 84,
+  "iter.enumerate": 85, "iter.chain": 86, "iter.zip": 87,
+  "iter.take-while": 88, "iter.drop-while": 89,
+  "iter.flatmap": 90, "iter.first": 91, "iter.last": 92,
+  "iter.join": 93, "iter.repeat": 94, "iter.once": 95,
+  "iter.empty": 96, "iter.unfold": 97, "iter.scan": 98,
+  "iter.dedup": 99, "iter.chunk": 100, "iter.window": 101,
+  "iter.intersperse": 102, "iter.cycle": 103,
+  "iter.nth": 104, "iter.min": 105, "iter.max": 106,
+  "iter.generate": 107,
+  "iter-of": 70, "iter-range": 71, "iter-recv": 108,
+  "iter-send": 109, "iter-spawn": 110,
+  "collect": 72, "drain": 84, "close-iter": 111, "next": 112,
+  // Streaming I/O builtins
+  "fs.stream-lines": 190, "http.stream-lines": 191,
+  "proc.stream": 192, "io.stdin-lines": 193,
+  // Runtime-dispatched for-loop builtins (List→map/filter/fold, Iter→iter.each/filter/fold)
+  "__for_each": 113, "__for_filter": 114, "__for_fold": 115,
 };
 
 // ── Bytecode module (in-memory representation) ──
@@ -154,12 +292,22 @@ export type BytecodeWord = {
   isPublic: boolean;
 };
 
+export type ExternEntry = {
+  name: string;        // Clank-side name
+  library: string;     // module specifier (e.g. "node:path")
+  symbol: string;      // foreign symbol name (after hyphen→underscore conversion)
+  host: string | null; // host language ("js", "c", "python", or null)
+  argCount: number;    // number of parameters
+};
+
 export type BytecodeModule = {
   words: BytecodeWord[];
   strings: string[];
   rationals: number[];
   variantNames: string[];  // maps variant tag → name for display
   entryWordId: number | null;
+  dispatchTable: Map<string, Map<string, number>>;  // method name → type tag → wordId
+  externs: ExternEntry[];  // foreign function declarations
 };
 
 // ── Code emitter ──
@@ -235,7 +383,7 @@ export class Compiler {
   private rationalIndex: Map<number, number> = new Map();
   private words: BytecodeWord[] = [];
   private wordIds: Map<string, number> = new Map();
-  private nextWordId = 256; // 0-255 reserved for builtins
+  private nextWordId = 260; // 0-259 reserved for builtins
   // Tracks resume continuation variables (name → local slot) during handler compilation
   private resumeVars: Map<string, number> = new Map();
 
@@ -249,6 +397,17 @@ export class Compiler {
 
   // Effect operation info: op name → declared arity
   private effectOps: Map<string, number> = new Map();
+
+  // Extern function registry: name → externIdx
+  private externNames: Map<string, number> = new Map();
+  private externs: ExternEntry[] = [];
+
+  // Interface method names (from interface-decl)
+  private interfaceMethods: Set<string> = new Set();
+  // Interface method param counts (for non-lambda impl body compilation)
+  private interfaceMethodParamCount: Map<string, number> = new Map();
+  // Dispatch table: method name → type tag → wordId
+  private dispatchTable: Map<string, Map<string, number>> = new Map();
 
   private internString(s: string): number {
     const existing = this.stringIndex.get(s);
@@ -284,9 +443,11 @@ export class Compiler {
 
     // Synthesize wrapper words for BUILTIN_OPS so they can be used as values
     // (e.g., fold(xs, 0, add) where add is passed as a higher-order function)
+    const reservedIds = new Set(Object.values(VM_BUILTINS));
     let nextBuiltinWordId = 10;
     for (const [name, ops] of Object.entries(BUILTIN_OPS)) {
       if (!this.wordIds.has(name)) {
+        while (reservedIds.has(nextBuiltinWordId)) nextBuiltinWordId++;
         const id = nextBuiltinWordId++;
         this.wordIds.set(name, id);
         this.words.push({
@@ -302,6 +463,18 @@ export class Compiler {
     // Pre-register built-in effect operations
     this.effectOps.set("raise", 1); // exn.raise : Str -> a
 
+    // Register built-in Ordering variants (Lt, Eq_, Gt) for cmp interface
+    for (const name of ["None", "Some", "Lt", "Eq_", "Gt"]) {
+      if (!this.variantInfo.has(name)) {
+        const tag = this.nextVariantTag++;
+        this.variantInfo.set(name, { tag, arity: 0 });
+        this.variantNames[tag] = name;
+      }
+    }
+
+    // Register built-in interface methods and their primitive impls
+    this.registerBuiltinImpls();
+
     // First pass: allocate word IDs for all definitions, register variants and effect ops
     for (const tl of program.topLevels) {
       if (tl.tag === "definition") {
@@ -312,11 +485,59 @@ export class Compiler {
           this.variantInfo.set(variant.name, { tag, arity: variant.fields.length });
           this.variantNames[tag] = variant.name;
         }
+        // Register derived impl word IDs and dispatch table entries
+        if (tl.deriving && tl.deriving.length > 0) {
+          this.registerDerivedImplIds(tl.variants, tl.deriving);
+        }
       } else if (tl.tag === "effect-decl") {
         for (const op of tl.ops) {
           // Parser normalizes () -> T to arity-0 (empty params array)
           this.effectOps.set(op.name, op.sig.params.length);
         }
+      } else if (tl.tag === "interface-decl") {
+        for (const m of tl.methods) {
+          this.interfaceMethods.add(m.name);
+          this.interfaceMethodParamCount.set(m.name, m.sig.params.length);
+        }
+      } else if (tl.tag === "impl-block") {
+        const typeTag = this.typeExprToTag(tl.forType);
+        for (const m of tl.methods) {
+          // For From<T>, dispatch `from` on source type T, not the implementing type
+          const dispatchTag = (tl.interface_ === "From" && m.name === "from" && tl.typeArgs.length > 0)
+            ? this.typeExprToTag(tl.typeArgs[0])
+            : typeTag;
+          const implWordName = `${m.name}$${dispatchTag}`;
+          this.allocWordId(implWordName);
+          if (!this.dispatchTable.has(m.name)) {
+            this.dispatchTable.set(m.name, new Map());
+          }
+          this.dispatchTable.get(m.name)!.set(dispatchTag, this.wordIds.get(implWordName)!);
+        }
+        // Blanket rule: impl From<A> for B → register into$A pointing to from$A
+        if (tl.interface_ === "From" && tl.typeArgs.length > 0) {
+          const sourceTag = this.typeExprToTag(tl.typeArgs[0]);
+          const fromWordName = `from$${sourceTag}`;
+          const fromWordId = this.wordIds.get(fromWordName);
+          if (fromWordId !== undefined) {
+            if (!this.dispatchTable.has("into")) {
+              this.dispatchTable.set("into", new Map());
+            }
+            this.dispatchTable.get("into")!.set(sourceTag, fromWordId);
+          }
+        }
+      } else if (tl.tag === "extern-decl") {
+        // Register extern: allocate a word ID and store extern entry
+        this.allocWordId(tl.name);
+        const foreignSymbol = tl.symbol ?? tl.name.replace(/-/g, "_");
+        const externIdx = this.externs.length;
+        this.externs.push({
+          name: tl.name,
+          library: tl.library,
+          symbol: foreignSymbol,
+          host: tl.host,
+          argCount: tl.sig.params.length,
+        });
+        this.externNames.set(tl.name, externIdx);
       } else if (tl.tag === "use-decl") {
         // Wire up aliased imports: map alias → same word ID as original
         for (const imp of tl.imports) {
@@ -335,6 +556,9 @@ export class Compiler {
       }
     }
 
+    // Finalize builtin impls (add primitive fallbacks for show/eq/clone if needed)
+    this.finalizeBuiltinImpls();
+
     // Second pass: compile each definition
     for (const tl of program.topLevels) {
       this.compileTopLevel(tl);
@@ -350,6 +574,8 @@ export class Compiler {
       rationals: this.rationals,
       variantNames: this.variantNames,
       entryWordId: mainId,
+      dispatchTable: this.dispatchTable,
+      externs: this.externs,
     };
   }
 
@@ -383,14 +609,90 @@ export class Compiler {
         });
         break;
       }
-      // Type/effect/module/use declarations don't produce bytecode
       case "type-decl":
+        if (tl.deriving && tl.deriving.length > 0) {
+          this.compileDerivedImpls(tl.variants, tl.deriving);
+        }
+        break;
+      case "extern-decl": {
+        // Generate a synthetic word that calls the foreign function
+        const wordId = this.wordIds.get(tl.name)!;
+        const externIdx = this.externNames.get(tl.name)!;
+        const emitter = new CodeEmitter();
+        const argCount = tl.sig.params.length;
+        // The word receives args on the stack (already pushed by caller).
+        // Emit CALL_EXTERN <externIdx> <argCount>
+        emitter.emitU16(Op.CALL_EXTERN, externIdx);
+        emitter.code.push(argCount & 0xFF);
+        emitter.emit(Op.RET);
+        this.words.push({
+          name: tl.name,
+          wordId,
+          code: emitter.code,
+          localCount: 0,
+          isPublic: tl.pub,
+        });
+        break;
+      }
+      // Effect/module/use declarations don't produce bytecode
       case "effect-decl":
       case "effect-alias":
       case "mod-decl":
       case "use-decl":
       case "test-decl":
+      case "interface-decl":
         break;
+
+      case "impl-block": {
+        const typeTag = this.typeExprToTag(tl.forType);
+        for (const m of tl.methods) {
+          const dispatchTag = (tl.interface_ === "From" && m.name === "from" && tl.typeArgs.length > 0)
+            ? this.typeExprToTag(tl.typeArgs[0])
+            : typeTag;
+          const implWordName = `${m.name}$${dispatchTag}`;
+          const wordId = this.wordIds.get(implWordName)!;
+          const emitter = new CodeEmitter();
+          const scope = new LocalScope();
+
+          if (m.body.tag === "lambda") {
+            // Compile lambda params and body directly as the word
+            for (const p of m.body.params) {
+              scope.allocate(p.name);
+            }
+            for (let i = m.body.params.length - 1; i >= 0; i--) {
+              emitter.emitU8(Op.LOCAL_SET, scope.get(m.body.params[i].name)!);
+            }
+            this.compileExpr(m.body.body, emitter, scope, true);
+          } else {
+            // Non-lambda body (e.g., a function reference like `show = int-to-str`)
+            // Compile as: evaluate the expression, then tail-call it dynamically
+            // The impl word receives the same args the dispatcher passes
+            const paramCount = this.interfaceMethodParamCount.get(m.name) ?? 1;
+            for (let i = 0; i < paramCount; i++) {
+              scope.allocate(`__arg${i}`);
+            }
+            for (let i = paramCount - 1; i >= 0; i--) {
+              emitter.emitU8(Op.LOCAL_SET, scope.get(`__arg${i}`)!);
+            }
+            // Push args back for the dynamic call
+            for (let i = 0; i < paramCount; i++) {
+              emitter.emitU8(Op.LOCAL_GET, scope.get(`__arg${i}`)!);
+            }
+            this.compileExpr(m.body, emitter, scope, false);
+            emitter.emit(Op.TAIL_CALL_DYN);
+          }
+          emitter.emit(Op.RET);
+
+          this.words.push({
+            name: implWordName,
+            wordId,
+            code: emitter.code,
+            localCount: scope.count,
+            isPublic: false,
+          });
+        }
+        break;
+      }
     }
   }
 
@@ -481,20 +783,31 @@ export class Compiler {
       }
 
       case "record": {
-        for (const f of expr.fields) {
-          this.compileExpr(f.value, e, scope, false);
-        }
-        e.emitU8(Op.RECORD_NEW, expr.fields.length);
-        // Emit field name string indices inline after the instruction
-        for (const f of expr.fields) {
-          const nameIdx = this.internString(f.name);
-          e.code.push((nameIdx >> 8) & 0xFF, nameIdx & 0xFF);
+        if (expr.spread) {
+          // Spread: compile base record, then override with explicit fields
+          this.compileExpr(expr.spread, e, scope, false);
+          for (const f of expr.fields) {
+            this.compileExpr(f.value, e, scope, false);
+            e.emit(Op.SWAP);
+            const fieldId = this.internString(f.name);
+            e.emitU16(Op.RECORD_SET, fieldId);
+          }
+        } else {
+          for (const f of expr.fields) {
+            this.compileExpr(f.value, e, scope, false);
+          }
+          e.emitU8(Op.RECORD_NEW, expr.fields.length);
+          // Emit field name string indices inline after the instruction
+          for (const f of expr.fields) {
+            const nameIdx = this.internString(f.name);
+            e.code.push((nameIdx >> 8) & 0xFF, nameIdx & 0xFF);
+          }
         }
         break;
       }
 
       case "field-access": {
-        // Check for dotted builtin (e.g. str.cat, tuple.get)
+        // Check for dotted builtin (e.g. str.cat, tuple.get, http.get)
         if (expr.object.tag === "var") {
           const dottedName = `${expr.object.name}.${expr.field}`;
           if (dottedName in BUILTIN_OPS) {
@@ -502,6 +815,13 @@ export class Compiler {
             // Push as a string for now (won't work for all cases, but handles value references)
             const strIdx = this.internString(dottedName);
             e.emitU16(Op.PUSH_STR, strIdx);
+            break;
+          }
+          // Check for dotted VM builtin (tier-2 builtins like http.get, csv.dec, etc.)
+          const dottedWordId = this.wordIds.get(dottedName);
+          if (dottedWordId !== undefined) {
+            // Push closure reference to the VM builtin word
+            e.emitU16(Op.PUSH_QUOTE, dottedWordId);
             break;
           }
         }
@@ -534,12 +854,16 @@ export class Compiler {
 
       // Affine nodes — compile as pass-through (checker enforces rules)
       case "borrow":
-        return this.compileExpr(expr.expr);
+        this.compileExpr(expr.expr, e, scope, tail);
+        break;
       case "clone":
-        return this.compileExpr(expr.expr);
+        this.compileExpr(expr.expr, e, scope, tail);
+        break;
       case "discard":
-        this.compileExpr(expr.expr);
-        return this.emit("PUSH_UNIT");
+        this.compileExpr(expr.expr, e, scope, false);
+        e.emit(Op.DROP);
+        e.emit(Op.PUSH_UNIT);
+        break;
 
       // These should have been desugared
       case "pipeline":
@@ -548,12 +872,431 @@ export class Compiler {
       case "do":
       case "for":
       case "range":
+      case "let-pattern":
         throw new Error(`Compiler: unexpected sugared node '${expr.tag}' — run desugar first`);
 
       default: {
         const _: never = expr;
         throw new Error(`Compiler: unknown node tag '${(expr as any).tag}'`);
       }
+    }
+  }
+
+  private registerBuiltinImpls(): void {
+    // Register cmp as an interface method (not a BUILTIN_OP, needs dispatch)
+    this.interfaceMethods.add("cmp");
+    this.interfaceMethodParamCount.set("cmp", 2);
+
+    // cmp impls — dispatched as VM builtins (they return variant values)
+    for (const prim of ["Int", "Rat", "Str"]) {
+      const implName = `cmp$${prim}`;
+      // Already registered as VM_BUILTINS with reserved IDs
+      if (!this.dispatchTable.has("cmp")) {
+        this.dispatchTable.set("cmp", new Map());
+      }
+      this.dispatchTable.get("cmp")!.set(prim, this.wordIds.get(implName)!);
+    }
+
+    // Register default, from, into as interface methods
+    this.interfaceMethods.add("default");
+    this.interfaceMethodParamCount.set("default", 1); // dispatches on first arg
+    this.interfaceMethods.add("from");
+    this.interfaceMethodParamCount.set("from", 1);
+    this.interfaceMethods.add("into");
+    this.interfaceMethodParamCount.set("into", 1);
+
+    // default impls for primitives
+    this.registerPrimitiveDefaultImpls();
+
+    // Note: show and eq are handled by BUILTIN_OPS (TO_STR, EQ) for all types
+    // by default. When custom impls are declared, they get added to interfaceMethods
+    // in the first pass, and we add primitive fallback impls in finalizeBuiltinImpls().
+  }
+
+  private registerPrimitiveDefaultImpls(): void {
+    const emitDefault = (typeTag: string, emitValue: (e: CodeEmitter) => void): void => {
+      const implName = `default$${typeTag}`;
+      const wordId = this.allocWordId(implName);
+      const e = new CodeEmitter();
+      e.emit(Op.DROP); // drop the dispatch arg
+      emitValue(e);
+      e.emit(Op.RET);
+      this.words.push({ name: implName, wordId, code: e.code, localCount: 0, isPublic: false });
+      if (!this.dispatchTable.has("default")) this.dispatchTable.set("default", new Map());
+      this.dispatchTable.get("default")!.set(typeTag, wordId);
+    };
+    emitDefault("Int", e => e.emitU8(Op.PUSH_INT, 0));
+    emitDefault("Rat", e => e.emitU32(Op.PUSH_RAT, this.internRational(0.0)));
+    emitDefault("Bool", e => e.emit(Op.PUSH_FALSE));
+    emitDefault("Str", e => e.emitU16(Op.PUSH_STR, this.internString("")));
+    emitDefault("Unit", e => e.emit(Op.PUSH_UNIT));
+  }
+
+  /** After first pass: if show/eq were added to interfaceMethods by user impls,
+   *  register primitive fallback impls so dispatch works for all types. */
+  private finalizeBuiltinImpls(): void {
+    const makeImplWord = (name: string, typeTag: string, opcodes: number[]): void => {
+      const implName = `${name}$${typeTag}`;
+      if (this.wordIds.has(implName)) return; // already registered by user impl
+      const wordId = this.allocWordId(implName);
+      this.words.push({
+        name: implName,
+        wordId,
+        code: [...opcodes, Op.RET],
+        localCount: 0,
+        isPublic: false,
+      });
+      if (!this.dispatchTable.has(name)) {
+        this.dispatchTable.set(name, new Map());
+      }
+      const dt = this.dispatchTable.get(name)!;
+      if (!dt.has(typeTag)) {
+        dt.set(typeTag, wordId);
+      }
+    };
+
+    if (this.interfaceMethods.has("show")) {
+      for (const prim of ["Int", "Rat", "Bool", "Str", "Unit"]) {
+        makeImplWord("show", prim, [Op.TO_STR]);
+      }
+    }
+
+    if (this.interfaceMethods.has("eq")) {
+      for (const prim of ["Int", "Rat", "Bool", "Str"]) {
+        makeImplWord("eq", prim, [Op.EQ]);
+      }
+    }
+
+    if (this.interfaceMethods.has("clone")) {
+      for (const prim of ["Int", "Rat", "Bool", "Str", "Unit"]) {
+        makeImplWord("clone", prim, []);
+      }
+    }
+
+    // Register Record-type dispatch entries for VM builtins
+    const registerRecordBuiltin = (methodName: string, builtinName: string): void => {
+      if (!this.interfaceMethods.has(methodName)) return;
+      const wordId = this.wordIds.get(builtinName);
+      if (wordId === undefined) return;
+      if (!this.dispatchTable.has(methodName)) {
+        this.dispatchTable.set(methodName, new Map());
+      }
+      const dt = this.dispatchTable.get(methodName)!;
+      if (!dt.has("Record")) {
+        dt.set("Record", wordId);
+      }
+    };
+    registerRecordBuiltin("show", "show$Record");
+    registerRecordBuiltin("eq", "eq$Record");
+    registerRecordBuiltin("clone", "clone$Record");
+    registerRecordBuiltin("cmp", "cmp$Record");
+    registerRecordBuiltin("default", "default$Record");
+
+    // Register List and Tuple dispatch entries for VM builtins
+    const registerCompositeBuiltin = (methodName: string, typeTag: string, builtinName: string): void => {
+      if (!this.interfaceMethods.has(methodName)) return;
+      const wordId = this.wordIds.get(builtinName);
+      if (wordId === undefined) return;
+      if (!this.dispatchTable.has(methodName)) {
+        this.dispatchTable.set(methodName, new Map());
+      }
+      const dt = this.dispatchTable.get(methodName)!;
+      if (!dt.has(typeTag)) {
+        dt.set(typeTag, wordId);
+      }
+    };
+    registerCompositeBuiltin("show", "List", "show$List");
+    registerCompositeBuiltin("eq", "List", "eq$List");
+    registerCompositeBuiltin("clone", "List", "clone$List");
+    registerCompositeBuiltin("cmp", "List", "cmp$List");
+    registerCompositeBuiltin("show", "Tuple", "show$Tuple");
+    registerCompositeBuiltin("eq", "Tuple", "eq$Tuple");
+    registerCompositeBuiltin("clone", "Tuple", "clone$Tuple");
+    registerCompositeBuiltin("cmp", "Tuple", "cmp$Tuple");
+
+    // Ref and TVar clone: increments handle count, returns new handle to same cell
+    registerCompositeBuiltin("clone", "Ref", "clone$Ref");
+    registerCompositeBuiltin("clone", "TVar", "clone$TVar");
+  }
+
+  /** First pass: allocate word IDs and dispatch table entries for derived impls */
+  private registerDerivedImplIds(variants: { name: string; fields: TypeExpr[] }[], deriving: string[]): void {
+    const registerImpl = (methodName: string, variantName: string): void => {
+      const implName = `${methodName}$${variantName}`;
+      if (this.wordIds.has(implName)) return;
+      this.allocWordId(implName);
+      if (!this.dispatchTable.has(methodName)) {
+        this.dispatchTable.set(methodName, new Map());
+      }
+      this.dispatchTable.get(methodName)!.set(variantName, this.wordIds.get(implName)!);
+      this.interfaceMethods.add(methodName);
+    };
+
+    for (const iface of deriving) {
+      if (iface === "Show") {
+        for (const v of variants) registerImpl("show", v.name);
+      } else if (iface === "Eq") {
+        for (const v of variants) registerImpl("eq", v.name);
+      } else if (iface === "Clone") {
+        for (const v of variants) registerImpl("clone", v.name);
+      } else if (iface === "Ord") {
+        for (const v of variants) registerImpl("cmp", v.name);
+      } else if (iface === "Default") {
+        const nullary = variants.find(v => v.fields.length === 0);
+        if (nullary) registerImpl("default", nullary.name);
+      }
+    }
+  }
+
+  /** Second pass: compile bytecode words for derived impls */
+  private compileDerivedImpls(variants: { name: string; fields: TypeExpr[] }[], deriving: string[]): void {
+    for (const iface of deriving) {
+      if (iface === "Show") {
+        for (const v of variants) this.compileDerivedShow(v);
+      } else if (iface === "Eq") {
+        for (const v of variants) this.compileDerivedEq(v);
+      } else if (iface === "Clone") {
+        for (const v of variants) this.compileDerivedClone(v);
+      } else if (iface === "Ord") {
+        this.compileDerivedOrd(variants);
+      } else if (iface === "Default") {
+        const nullary = variants.find(vv => vv.fields.length === 0);
+        if (nullary) this.compileDerivedDefault(nullary);
+      }
+    }
+  }
+
+  /** show$Variant: (self) -> Str */
+  private compileDerivedShow(v: { name: string; fields: TypeExpr[] }): void {
+    const implName = `show$${v.name}`;
+    const wordId = this.wordIds.get(implName)!;
+    const e = new CodeEmitter();
+    const scope = new LocalScope();
+    const selfSlot = scope.allocate("self");
+    e.emitU8(Op.LOCAL_SET, selfSlot);
+
+    if (v.fields.length === 0) {
+      // Just push the variant name as a string
+      e.emitU16(Op.PUSH_STR, this.internString(v.name));
+    } else {
+      // "Name(" ++ show(field0) ++ ", " ++ show(field1) ++ ... ++ ")"
+      e.emitU16(Op.PUSH_STR, this.internString(v.name + "("));
+      for (let i = 0; i < v.fields.length; i++) {
+        if (i > 0) {
+          e.emitU16(Op.PUSH_STR, this.internString(", "));
+          e.emit(Op.STR_CAT);
+        }
+        // Extract field i and call show dispatch
+        e.emitU8(Op.LOCAL_GET, selfSlot);
+        e.emitU8(Op.VARIANT_FIELD, i);
+        const showIdx = this.internString("show");
+        e.emit(Op.DISPATCH);
+        e.code.push((showIdx >> 8) & 0xFF, showIdx & 0xFF);
+        e.code.push(1); // arg count
+        e.emit(Op.STR_CAT);
+      }
+      e.emitU16(Op.PUSH_STR, this.internString(")"));
+      e.emit(Op.STR_CAT);
+    }
+    e.emit(Op.RET);
+    this.words.push({ name: implName, wordId, code: e.code, localCount: scope.count, isPublic: false });
+  }
+
+  /** eq$Variant: (a, b) -> Bool */
+  private compileDerivedEq(v: { name: string; fields: TypeExpr[] }): void {
+    const implName = `eq$${v.name}`;
+    const wordId = this.wordIds.get(implName)!;
+    const e = new CodeEmitter();
+    const scope = new LocalScope();
+    const aSlot = scope.allocate("a");
+    const bSlot = scope.allocate("b");
+    e.emitU8(Op.LOCAL_SET, bSlot);
+    e.emitU8(Op.LOCAL_SET, aSlot);
+
+    // Check tags match (VARIANT_TAG peeks, so swap+drop to clean up)
+    e.emitU8(Op.LOCAL_GET, aSlot);
+    e.emit(Op.VARIANT_TAG);
+    e.emit(Op.SWAP);
+    e.emit(Op.DROP); // drop the peeked union, keep tag
+    e.emitU8(Op.LOCAL_GET, bSlot);
+    e.emit(Op.VARIANT_TAG);
+    e.emit(Op.SWAP);
+    e.emit(Op.DROP); // drop the peeked union, keep tag
+    e.emit(Op.EQ);
+    const tagMismatch = e.emitJumpPlaceholder(Op.JMP_UNLESS);
+
+    const falseJumps: number[] = [];
+
+    if (v.fields.length === 0) {
+      e.emit(Op.PUSH_TRUE);
+    } else {
+      for (let i = 0; i < v.fields.length; i++) {
+        e.emitU8(Op.LOCAL_GET, aSlot);
+        e.emitU8(Op.VARIANT_FIELD, i);
+        e.emitU8(Op.LOCAL_GET, bSlot);
+        e.emitU8(Op.VARIANT_FIELD, i);
+        const eqIdx = this.internString("eq");
+        e.emit(Op.DISPATCH);
+        e.code.push((eqIdx >> 8) & 0xFF, eqIdx & 0xFF);
+        e.code.push(2);
+        if (i < v.fields.length - 1) {
+          // If false, short-circuit to false
+          falseJumps.push(e.emitJumpPlaceholder(Op.JMP_UNLESS));
+        }
+      }
+      // Last eq result is on stack — that's our answer
+    }
+    const endPatch = e.emitJumpPlaceholder(Op.JMP);
+
+    // false path: tag mismatch or field mismatch
+    e.patchJump(tagMismatch);
+    for (const fj of falseJumps) e.patchJump(fj);
+    e.emit(Op.PUSH_FALSE);
+
+    e.patchJump(endPatch);
+    e.emit(Op.RET);
+    this.words.push({ name: implName, wordId, code: e.code, localCount: scope.count, isPublic: false });
+  }
+
+  /** clone$Variant: (self) -> self */
+  private compileDerivedClone(v: { name: string; fields: TypeExpr[] }): void {
+    const implName = `clone$${v.name}`;
+    const wordId = this.wordIds.get(implName)!;
+    const e = new CodeEmitter();
+    const scope = new LocalScope();
+    const selfSlot = scope.allocate("self");
+    e.emitU8(Op.LOCAL_SET, selfSlot);
+
+    if (v.fields.length === 0) {
+      // 0-arity variant: just return self
+      e.emitU8(Op.LOCAL_GET, selfSlot);
+    } else {
+      // Clone each field and create new variant
+      const vinfo = this.variantInfo.get(v.name)!;
+      for (let i = 0; i < v.fields.length; i++) {
+        e.emitU8(Op.LOCAL_GET, selfSlot);
+        e.emitU8(Op.VARIANT_FIELD, i);
+        const cloneIdx = this.internString("clone");
+        e.emit(Op.DISPATCH);
+        e.code.push((cloneIdx >> 8) & 0xFF, cloneIdx & 0xFF);
+        e.code.push(1);
+      }
+      e.emitU8(Op.UNION_NEW, vinfo.tag);
+      e.code.push(v.fields.length & 0xFF);
+    }
+    e.emit(Op.RET);
+    this.words.push({ name: implName, wordId, code: e.code, localCount: scope.count, isPublic: false });
+  }
+
+  /** cmp$Variant for each variant — compares by variant ordinal then fields */
+  private compileDerivedOrd(variants: { name: string; fields: TypeExpr[] }[]): void {
+    for (const v of variants) {
+      const implName = `cmp$${v.name}`;
+      const wordId = this.wordIds.get(implName)!;
+      const e = new CodeEmitter();
+      const scope = new LocalScope();
+      const aSlot = scope.allocate("a");
+      const bSlot = scope.allocate("b");
+      e.emitU8(Op.LOCAL_SET, bSlot);
+      e.emitU8(Op.LOCAL_SET, aSlot);
+
+      const aTagSlot = scope.allocate("atag");
+      const bTagSlot = scope.allocate("btag");
+
+      e.emitU8(Op.LOCAL_GET, aSlot);
+      e.emit(Op.VARIANT_TAG);
+      e.emit(Op.SWAP);
+      e.emit(Op.DROP);
+      e.emitU8(Op.LOCAL_SET, aTagSlot);
+
+      e.emitU8(Op.LOCAL_GET, bSlot);
+      e.emit(Op.VARIANT_TAG);
+      e.emit(Op.SWAP);
+      e.emit(Op.DROP);
+      e.emitU8(Op.LOCAL_SET, bTagSlot);
+
+      const doneJumps: number[] = [];
+
+      // if atag < btag → Lt
+      e.emitU8(Op.LOCAL_GET, aTagSlot);
+      e.emitU8(Op.LOCAL_GET, bTagSlot);
+      e.emit(Op.LT);
+      const notLt = e.emitJumpPlaceholder(Op.JMP_UNLESS);
+      e.emitU8(Op.UNION_NEW, this.variantInfo.get("Lt")!.tag);
+      e.code.push(0);
+      doneJumps.push(e.emitJumpPlaceholder(Op.JMP));
+      e.patchJump(notLt);
+
+      // if atag > btag → Gt
+      e.emitU8(Op.LOCAL_GET, aTagSlot);
+      e.emitU8(Op.LOCAL_GET, bTagSlot);
+      e.emit(Op.GT);
+      const notGt = e.emitJumpPlaceholder(Op.JMP_UNLESS);
+      e.emitU8(Op.UNION_NEW, this.variantInfo.get("Gt")!.tag);
+      e.code.push(0);
+      doneJumps.push(e.emitJumpPlaceholder(Op.JMP));
+      e.patchJump(notGt);
+
+      // Same tag: compare fields lexicographically or return Eq_
+      if (v.fields.length === 0) {
+        e.emitU8(Op.UNION_NEW, this.variantInfo.get("Eq_")!.tag);
+        e.code.push(0);
+      } else {
+        const resultSlot = scope.allocate("result");
+        for (let i = 0; i < v.fields.length; i++) {
+          e.emitU8(Op.LOCAL_GET, aSlot);
+          e.emitU8(Op.VARIANT_FIELD, i);
+          e.emitU8(Op.LOCAL_GET, bSlot);
+          e.emitU8(Op.VARIANT_FIELD, i);
+          const cmpIdx = this.internString("cmp");
+          e.emit(Op.DISPATCH);
+          e.code.push((cmpIdx >> 8) & 0xFF, cmpIdx & 0xFF);
+          e.code.push(2);
+          if (i < v.fields.length - 1) {
+            e.emitU8(Op.LOCAL_SET, resultSlot);
+            e.emitU8(Op.LOCAL_GET, resultSlot);
+            e.emit(Op.VARIANT_TAG);
+            e.emit(Op.SWAP);
+            e.emit(Op.DROP); // VARIANT_TAG peeks; clean up
+            e.emitU8(Op.PUSH_INT, this.variantInfo.get("Eq_")!.tag);
+            e.emit(Op.EQ);
+            const isEq = e.emitJumpPlaceholder(Op.JMP_IF);
+            // Not Eq_ → return this result
+            e.emitU8(Op.LOCAL_GET, resultSlot);
+            doneJumps.push(e.emitJumpPlaceholder(Op.JMP));
+            e.patchJump(isEq);
+          }
+          // Last field: result stays on stack
+        }
+      }
+
+      for (const dj of doneJumps) e.patchJump(dj);
+      e.emit(Op.RET);
+      this.words.push({ name: implName, wordId, code: e.code, localCount: scope.count, isPublic: false });
+    }
+  }
+
+  /** default$Variant: (dispatch_arg) -> variant */
+  private compileDerivedDefault(v: { name: string; fields: TypeExpr[] }): void {
+    const implName = `default$${v.name}`;
+    const wordId = this.wordIds.get(implName)!;
+    const e = new CodeEmitter();
+    e.emit(Op.DROP); // drop dispatch arg
+    const vinfo = this.variantInfo.get(v.name)!;
+    e.emitU8(Op.UNION_NEW, vinfo.tag);
+    e.code.push(0); // 0 fields
+    e.emit(Op.RET);
+    this.words.push({ name: implName, wordId, code: e.code, localCount: 0, isPublic: false });
+  }
+
+  private typeExprToTag(te: TypeExpr): string {
+    switch (te.tag) {
+      case "t-name": return te.name;
+      case "t-list": return "List";
+      case "t-tuple": return "Tuple";
+      case "t-record": return "Record";
+      case "t-generic": return te.name;
+      default: return "?";
     }
   }
 
@@ -627,6 +1370,18 @@ export class Compiler {
         return;
       }
 
+      // Check if calling an interface method (dispatch at runtime)
+      if (this.interfaceMethods.has(expr.fn.name) && !scope.get(expr.fn.name)) {
+        for (const arg of expr.args) {
+          this.compileExpr(arg, e, scope, false);
+        }
+        const methodIdx = this.internString(expr.fn.name);
+        e.emit(Op.DISPATCH);
+        e.code.push((methodIdx >> 8) & 0xFF, methodIdx & 0xFF);
+        e.code.push(expr.args.length & 0xFF);
+        return;
+      }
+
       // Check if calling a builtin that maps to a direct opcode
       if (expr.fn.name in BUILTIN_OPS) {
         const ops = BUILTIN_OPS[expr.fn.name];
@@ -664,6 +1419,19 @@ export class Compiler {
         }
         for (const op of ops) {
           e.emit(op);
+        }
+        return;
+      }
+      // Check for dotted VM builtin (tier-2: http.get, csv.dec, dt.now, etc.)
+      const dottedWordId = this.wordIds.get(dottedName);
+      if (dottedWordId !== undefined) {
+        for (const arg of expr.args) {
+          this.compileExpr(arg, e, scope, false);
+        }
+        if (tail) {
+          e.emitU16(Op.TAIL_CALL, dottedWordId);
+        } else {
+          e.emitU16(Op.CALL, dottedWordId);
         }
         return;
       }
@@ -926,6 +1694,7 @@ export class Compiler {
         case "do":
         case "for":
         case "range":
+        case "let-pattern":
           break; // should be desugared
       }
     };
@@ -942,6 +1711,16 @@ export class Compiler {
         break;
       case "p-tuple":
         for (const el of pat.elements) this.collectPatternVars(el, bound);
+        break;
+      case "p-record":
+        for (const pf of pat.fields) {
+          if (pf.pattern) {
+            this.collectPatternVars(pf.pattern, bound);
+          } else {
+            bound.add(pf.name);
+          }
+        }
+        if (pat.rest && pat.rest !== "_") bound.add(pat.rest);
         break;
       case "p-literal":
       case "p-wildcard":
@@ -1102,8 +1881,14 @@ export class Compiler {
             e.emitU8(Op.LOCAL_SET, slot);
           } else if (argPat.tag === "p-wildcard") {
             // skip
+          } else {
+            // Nested pattern (record, tuple, etc.) — extract to temp slot
+            e.emitU8(Op.LOCAL_GET, subjectSlot);
+            e.emitU8(Op.VARIANT_FIELD, i);
+            const tempSlot = scope.allocate(`__variant_arg_${subjectSlot}_${i}`);
+            e.emitU8(Op.LOCAL_SET, tempSlot);
+            this.compilePatternBind(argPat, tempSlot, e, scope);
           }
-          // Nested patterns could be handled recursively but keeping it simple
         }
 
         return failPatch;
@@ -1119,7 +1904,7 @@ export class Compiler {
             e.emitU8(Op.TUPLE_GET, i);
             const slot = scope.allocate(elPat.name);
             e.emitU8(Op.LOCAL_SET, slot);
-          } else if (elPat.tag === "p-tuple" || elPat.tag === "p-variant") {
+          } else if (elPat.tag !== "p-wildcard") {
             // Extract element into a temp slot for recursive binding
             e.emitU8(Op.LOCAL_GET, subjectSlot);
             e.emitU8(Op.TUPLE_GET, i);
@@ -1127,6 +1912,51 @@ export class Compiler {
             e.emitU8(Op.LOCAL_SET, tempSlot);
             this.compilePatternBind(elPat, tempSlot, e, scope);
           }
+        }
+        e.emit(Op.PUSH_TRUE);
+        return e.emitJumpPlaceholder(Op.JMP_UNLESS);
+      }
+
+      case "p-record": {
+        // Bind each named field from the record
+        for (const pf of pat.fields) {
+          if (pf.pattern) {
+            if (pf.pattern.tag === "p-var") {
+              e.emitU8(Op.LOCAL_GET, subjectSlot);
+              const fieldId = this.internString(pf.name);
+              e.emitU16(Op.RECORD_GET, fieldId);
+              const slot = scope.allocate(pf.pattern.name);
+              e.emitU8(Op.LOCAL_SET, slot);
+            } else if (pf.pattern.tag === "p-wildcard") {
+              // skip
+            } else {
+              // Nested pattern — extract to temp slot
+              e.emitU8(Op.LOCAL_GET, subjectSlot);
+              const fieldId = this.internString(pf.name);
+              e.emitU16(Op.RECORD_GET, fieldId);
+              const tempSlot = scope.allocate(`__rec_field_${subjectSlot}_${pf.name}`);
+              e.emitU8(Op.LOCAL_SET, tempSlot);
+              this.compilePatternBind(pf.pattern, tempSlot, e, scope);
+            }
+          } else {
+            // Shorthand: {name} binds name to field value
+            e.emitU8(Op.LOCAL_GET, subjectSlot);
+            const fieldId = this.internString(pf.name);
+            e.emitU16(Op.RECORD_GET, fieldId);
+            const slot = scope.allocate(pf.name);
+            e.emitU8(Op.LOCAL_SET, slot);
+          }
+        }
+        // Bind rest variable if present
+        if (pat.rest && pat.rest !== "_") {
+          e.emitU8(Op.LOCAL_GET, subjectSlot);
+          e.emitU8(Op.RECORD_REST, pat.fields.length);
+          for (const pf of pat.fields) {
+            const nameIdx = this.internString(pf.name);
+            e.code.push((nameIdx >> 8) & 0xFF, nameIdx & 0xFF);
+          }
+          const slot = scope.allocate(pat.rest);
+          e.emitU8(Op.LOCAL_SET, slot);
         }
         e.emit(Op.PUSH_TRUE);
         return e.emitJumpPlaceholder(Op.JMP_UNLESS);
@@ -1152,6 +1982,13 @@ export class Compiler {
             e.emitU8(Op.VARIANT_FIELD, i);
             const slot = scope.allocate(argPat.name);
             e.emitU8(Op.LOCAL_SET, slot);
+          } else if (argPat.tag !== "p-wildcard") {
+            // Nested pattern (record, tuple, etc.) — extract to temp slot
+            e.emitU8(Op.LOCAL_GET, subjectSlot);
+            e.emitU8(Op.VARIANT_FIELD, i);
+            const tempSlot = scope.allocate(`__variant_bind_${subjectSlot}_${i}`);
+            e.emitU8(Op.LOCAL_SET, tempSlot);
+            this.compilePatternBind(argPat, tempSlot, e, scope);
           }
         }
         break;
@@ -1163,13 +2000,49 @@ export class Compiler {
             e.emitU8(Op.TUPLE_GET, i);
             const slot = scope.allocate(elPat.name);
             e.emitU8(Op.LOCAL_SET, slot);
-          } else if (elPat.tag === "p-tuple" || elPat.tag === "p-variant") {
+          } else if (elPat.tag !== "p-wildcard") {
             e.emitU8(Op.LOCAL_GET, subjectSlot);
             e.emitU8(Op.TUPLE_GET, i);
             const tempSlot = scope.allocate(`__tuple_bind_${subjectSlot}_${i}`);
             e.emitU8(Op.LOCAL_SET, tempSlot);
             this.compilePatternBind(elPat, tempSlot, e, scope);
           }
+        }
+        break;
+      case "p-record":
+        for (const pf of pat.fields) {
+          if (pf.pattern) {
+            if (pf.pattern.tag === "p-var") {
+              e.emitU8(Op.LOCAL_GET, subjectSlot);
+              const fieldId = this.internString(pf.name);
+              e.emitU16(Op.RECORD_GET, fieldId);
+              const slot = scope.allocate(pf.pattern.name);
+              e.emitU8(Op.LOCAL_SET, slot);
+            } else if (pf.pattern.tag !== "p-wildcard") {
+              e.emitU8(Op.LOCAL_GET, subjectSlot);
+              const fieldId = this.internString(pf.name);
+              e.emitU16(Op.RECORD_GET, fieldId);
+              const tempSlot = scope.allocate(`__rec_bind_${subjectSlot}_${pf.name}`);
+              e.emitU8(Op.LOCAL_SET, tempSlot);
+              this.compilePatternBind(pf.pattern, tempSlot, e, scope);
+            }
+          } else {
+            e.emitU8(Op.LOCAL_GET, subjectSlot);
+            const fieldId = this.internString(pf.name);
+            e.emitU16(Op.RECORD_GET, fieldId);
+            const slot = scope.allocate(pf.name);
+            e.emitU8(Op.LOCAL_SET, slot);
+          }
+        }
+        if (pat.rest && pat.rest !== "_") {
+          e.emitU8(Op.LOCAL_GET, subjectSlot);
+          e.emitU8(Op.RECORD_REST, pat.fields.length);
+          for (const pf of pat.fields) {
+            const nameIdx = this.internString(pf.name);
+            e.code.push((nameIdx >> 8) & 0xFF, nameIdx & 0xFF);
+          }
+          const slot = scope.allocate(pat.rest);
+          e.emitU8(Op.LOCAL_SET, slot);
         }
         break;
       case "p-literal":

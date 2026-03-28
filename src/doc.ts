@@ -60,6 +60,7 @@ function showTypeExpr(te: TypeExpr): string {
     case "t-record": return `{${te.fields.map(f => `${f.name}: ${showTypeExpr(f.type)}`).join(", ")}}`;
     case "t-union": return `${showTypeExpr(te.left)} | ${showTypeExpr(te.right)}`;
     case "t-refined": return `${showTypeExpr(te.base)}{${te.predicate}}`;
+    case "t-borrow": return `&${showTypeExpr(te.inner)}`;
   }
 }
 
@@ -108,7 +109,7 @@ function resolveTypeExprToType(te: TypeExpr): Type {
       te.effects.map(e => ({ tag: "e-named" as const, name: e })),
     );
     case "t-generic": return { tag: "t-generic", name: te.name, args: te.args.map(resolveTypeExprToType) };
-    case "t-record": return { tag: "t-record", fields: te.fields.map(f => ({ name: f.name, type: resolveTypeExprToType(f.type) })), rowVar: null };
+    case "t-record": return { tag: "t-record", fields: te.fields.map(f => ({ name: f.name, tags: f.tags ?? [], type: resolveTypeExprToType(f.type) })), rowVar: null };
     default: return tAny;
   }
 }

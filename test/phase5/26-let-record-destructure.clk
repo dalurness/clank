@@ -1,0 +1,15 @@
+# Test: let destructuring with record patterns
+# Expected output:
+# Ada
+# 36
+# Ada
+# {age: 36}
+
+main : () -> <io> () =
+  let person = {name: "Ada", age: 36}
+  let {name, age} = person
+  print(name)
+  print(show(age))
+  let {name: n | rest} = person
+  print(n)
+  print(show(rest))

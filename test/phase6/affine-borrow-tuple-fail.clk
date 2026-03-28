@@ -1,0 +1,10 @@
+# Test: borrows cannot be stored in tuple compound types (spec 4.4)
+# Expected: error
+
+affine type Token = Token
+
+store-borrow : (t: Token) -> <> () =
+  let pair = (1, &t)
+  discard t
+
+main : () -> <io> () = print("unreachable")

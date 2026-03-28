@@ -1,0 +1,11 @@
+# Test: eq dispatch on list type
+# Expected output:
+# true
+# false
+
+main : () -> <io> () =
+  let a = [1, 2, 3]
+  let b = [1, 2, 3]
+  let c = [1, 2, 4]
+  print(show(eq(a, b)))
+  print(show(eq(a, c)))

@@ -115,6 +115,8 @@ function formatTopLevel(tl: TopLevel): string {
       return formatInterfaceDecl(tl);
     case "impl-block":
       return formatImplBlock(tl);
+    case "extern-decl":
+      return formatExternDecl(tl);
   }
 }
 
@@ -176,6 +178,18 @@ function formatImplBlock(tl: Extract<TopLevel, { tag: "impl-block" }>): string {
     return `  ${m.name} = ${body.trim()}`;
   }).join("\n");
   return `impl ${tl.interface_}${typeArgs} for ${forType}${constraints} {\n${methods}\n}`;
+}
+
+function formatExternDecl(tl: Extract<TopLevel, { tag: "extern-decl" }>): string {
+  const pub = tl.pub ? "pub " : "";
+  const sig = formatTypeSig(tl.sig);
+  let where = "";
+  const attrs: string[] = [];
+  if (tl.host) attrs.push(`host = "${tl.host}"`);
+  if (tl.symbol) attrs.push(`symbol = "${tl.symbol}"`);
+  if (tl.unsafe) attrs.push("unsafe");
+  if (attrs.length > 0) where = `\n  where ${attrs.join(", ")}`;
+  return `${pub}extern "${tl.library}" ${tl.name} : ${sig}${where}`;
 }
 
 function formatTypeDecl(tl: Extract<TopLevel, { tag: "type-decl" }>): string {
@@ -280,12 +294,23 @@ function formatTypeExpr(t: TypeExpr): string {
       if (t.elements.length === 0) return "()";
       return `(${t.elements.map(formatTypeExpr).join(", ")})`;
     case "t-record": {
-      const fieldStr = t.fields.map(f => `${f.name}: ${formatTypeExpr(f.type)}`).join(", ");
+      const fieldStr = t.fields.map(f => {
+        const tagPrefix = f.tags && f.tags.length > 0 ? f.tags.map((t: string) => `@${t} `).join("") : "";
+        return `${tagPrefix}${f.name}: ${formatTypeExpr(f.type)}`;
+      }).join(", ");
       if (t.rowVar !== null) {
         return fieldStr ? `{${fieldStr} | ${t.rowVar}}` : `{${t.rowVar}}`;
       }
       return `{${fieldStr}}`;
     }
+    case "t-tag-project":
+      return `${formatTypeExpr(t.base)} @${t.tagName}`;
+    case "t-type-filter":
+      return `${formatTypeExpr(t.base)} : ${formatTypeExpr(t.filterType)}`;
+    case "t-pick":
+      return `Pick<${formatTypeExpr(t.base)}, ${t.fieldNames.map(n => `"${n}"`).join(" | ")}>`;
+    case "t-omit":
+      return `Omit<${formatTypeExpr(t.base)}, ${t.fieldNames.map(n => `"${n}"`).join(" | ")}>`;
     case "t-union":
       return `${formatTypeExpr(t.left)} | ${formatTypeExpr(t.right)}`;
     case "t-fn": {
@@ -304,6 +329,8 @@ function formatTypeExpr(t: TypeExpr): string {
       return `${t.name}<${t.args.map(formatTypeExpr).join(", ")}>`;
     case "t-refined":
       return `${formatTypeExpr(t.base)} where ${t.predicate}`;
+    case "t-borrow":
+      return `&${formatTypeExpr(t.inner)}`;
   }
 }
 
@@ -318,6 +345,8 @@ function formatExpr(expr: Expr, indent: number): string {
       return pad + expr.name;
     case "let":
       return formatLet(expr, indent, false);
+    case "let-pattern":
+      return formatLetPattern(expr, indent, false);
     case "if":
       return formatIf(expr, indent);
     case "match":
@@ -418,6 +447,23 @@ function formatLet(expr: Extract<Expr, { tag: "let" }>, indent: number, isTopBod
   return `${pad}let ${expr.name} = ${valStr} in ${bodyStr}`;
 }
 
+function formatLetPattern(expr: Extract<Expr, { tag: "let-pattern" }>, indent: number, isTopBody: boolean = false): string {
+  const pad = " ".repeat(indent);
+  const patStr = formatPatternInline(expr.pattern);
+  if (expr.body === null) {
+    const valStr = formatExprAtIndent(expr.value, indent + 2);
+    return `${pad}let ${patStr} = ${valStr}`;
+  }
+  if (isTopBody) {
+    const valStr = formatExprAtIndent(expr.value, indent + 2);
+    const bodyStr = formatExprBody(expr.body, indent, true);
+    return `${pad}let ${patStr} = ${valStr}\n${bodyStr}`;
+  }
+  const valStr = formatExprInline(expr.value);
+  const bodyStr = formatExprInline(expr.body);
+  return `${pad}let ${patStr} = ${valStr} in ${bodyStr}`;
+}
+
 /** Format expression inline if simple, or with indentation if multi-line. */
 function formatExprAtIndent(expr: Expr, indent: number): string {
   // Try inline first
@@ -433,6 +479,9 @@ function formatExprAtIndent(expr: Expr, indent: number): string {
 function formatExprBody(expr: Expr, indent: number, isTopBody: boolean): string {
   if (expr.tag === "let") {
     return formatLet(expr, indent, isTopBody);
+  }
+  if (expr.tag === "let-pattern") {
+    return formatLetPattern(expr, indent, isTopBody);
   }
   return formatExpr(expr, indent);
 }
@@ -615,6 +664,11 @@ function formatPatternInline(pat: import("./ast.js").Pattern): string {
     case "p-variant": return pat.args.length > 0
       ? `${pat.name}(${pat.args.map(formatPatternInline).join(", ")})`
       : pat.name;
+    case "p-record": {
+      const fields = pat.fields.map(f => f.pattern ? `${f.name}: ${formatPatternInline(f.pattern)}` : f.name);
+      const rest = pat.rest ? ` | ${pat.rest}` : "";
+      return `{${fields.join(", ")}${rest}}`;
+    }
   }
 }
 
@@ -670,9 +724,13 @@ function formatList(expr: Extract<Expr, { tag: "list" }>, indent: number): strin
 
 function formatRecord(expr: Extract<Expr, { tag: "record" }>, indent: number): string {
   const pad = " ".repeat(indent);
-  if (expr.fields.length === 0) return `${pad}{}`;
-  const items = expr.fields.map(f => `${f.name}: ${formatExprInline(f.value)}`).join(", ");
-  return `${pad}{${items}}`;
+  if (expr.fields.length === 0 && !expr.spread) return `${pad}{}`;
+  const items = expr.fields.map(f => {
+    const tagPrefix = f.tags && f.tags.length > 0 ? f.tags.map((t: string) => `@${t} `).join("") : "";
+    return `${tagPrefix}${f.name}: ${formatExprInline(f.value)}`;
+  });
+  if (expr.spread) items.push(`..${formatExprInline(expr.spread)}`);
+  return `${pad}{${items.join(", ")}}`;
 }
 
 function formatRecordUpdate(expr: Extract<Expr, { tag: "record-update" }>, indent: number): string {
@@ -715,5 +773,10 @@ function formatPattern(p: Pattern): string {
       return `${p.name}(${p.args.map(formatPattern).join(", ")})`;
     case "p-tuple":
       return `(${p.elements.map(formatPattern).join(", ")})`;
+    case "p-record": {
+      const fields = p.fields.map(f => f.pattern ? `${f.name}: ${formatPattern(f.pattern)}` : f.name);
+      const rest = p.rest ? ` | ${p.rest}` : "";
+      return `{${fields.join(", ")}${rest}}`;
+    }
   }
 }

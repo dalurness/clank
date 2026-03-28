@@ -1,0 +1,10 @@
+# Test: eq dispatch on record type
+# Expected output:
+# true
+# false
+# false
+
+main : () -> <io> () =
+  print(show(eq({x: 1, y: 2}, {x: 1, y: 2})))
+  print(show(eq({x: 1, y: 2}, {x: 1, y: 3})))
+  print(show(eq({x: 1}, {x: 1, y: 2})))

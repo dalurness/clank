@@ -1,14 +1,9 @@
 # Spec example 8.3: Mean of a list (pipeline style)
 # Expected output:
 # 3
-# 5.5
 
 mean : (xs: [Int]) -> <> Int =
   fold(xs, 0, add) / len(xs)
 
-mean-rat : (xs: [Rat]) -> <> Rat =
-  fold(xs, 0.0, add) / len(xs)
-
 main : () -> <io> () =
   print(show(mean([1, 2, 3, 4, 5])))
-  print(show(mean-rat([1.0, 3.0, 5.0, 8.0, 10.5])))

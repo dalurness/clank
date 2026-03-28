@@ -1,0 +1,14 @@
+# Test: task group returns the body's result
+
+group-body : () -> <async> Int =
+  let a = spawn(fn() => 3)
+  let b = spawn(fn() => 4)
+  mul(await(a), await(b))
+
+compute : () -> <async> Int = task-group(fn() => group-body())
+
+main : () -> <io, async> () =
+  print(show(compute()))
+
+# Expected output:
+# 12

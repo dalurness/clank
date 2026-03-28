@@ -1,0 +1,10 @@
+# Test: parameter refinement combined with branch path condition
+# Expected output:
+# 5
+
+bounded-pos : (x: Int{v > 0 && v <= 10}) -> <> Int = x
+
+narrow : (x: Int{v > 0}) -> <> Int
+  = if lte(x, 10) then bounded-pos(x) else 1
+
+main : () -> <io> () = print(show(narrow(5)))

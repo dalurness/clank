@@ -1,0 +1,13 @@
+# Test: record spread operator
+# Expected output:
+# Countess
+# Ada
+# 37
+
+main : () -> <io> () =
+  let base = {name: "Ada", age: 36}
+  let extended = {title: "Countess", ..base}
+  print(extended.title)
+  print(extended.name)
+  let updated = {age: 37, ..base}
+  print(show(updated.age))

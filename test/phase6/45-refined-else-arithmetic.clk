@@ -1,0 +1,10 @@
+# Test: else branch path condition enables arithmetic refinement — negate(x) > 0 when x < 0 via !(x >= 0)
+# Expected output:
+# 3
+
+positive : (x: Int{v > 0}) -> <> Int = x
+
+flip : (x: Int) -> <> Int
+  = if gte(x, 0) then 1 else positive(negate(x))
+
+main : () -> <io> () = print(show(flip(-3)))

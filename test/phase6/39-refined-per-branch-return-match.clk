@@ -1,0 +1,11 @@
+# Test: per-branch return refinement with match — literal arm satisfies return predicate via path condition
+# Expected output:
+# 42
+
+always-positive : (x: Int) -> <> Int{v > 0} =
+  match x {
+    0 => 42
+    _ => 1
+  }
+
+main : () -> <io> () = print(show(always-positive(0)))

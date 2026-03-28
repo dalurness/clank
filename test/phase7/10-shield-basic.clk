@@ -1,0 +1,8 @@
+# Test: shield block runs to completion
+
+main : () -> <io, async> () =
+  let result = shield(fn() => 99)
+  print(show(result))
+
+# Expected output:
+# 99

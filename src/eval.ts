@@ -4,6 +4,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
+import { createRequire } from "node:module";
 import type { Expr, HandlerArm, ImportItem, Loc, MethodSig, Param, Pattern, Program, TopLevel, TypeExpr } from "./ast.js";
 import { builtins, setApplyFn } from "./builtins.js";
 import { lex } from "./lexer.js";
@@ -24,7 +25,45 @@ export type Value =
   | { tag: "variant"; name: string; fields: Value[] }
   | { tag: "closure"; params: Param[]; body: Expr; env: Env }
   | { tag: "builtin"; name: string; fn: (args: Value[], loc: Loc) => Value }
-  | { tag: "effect-def"; name: string; ops: string[] };
+  | { tag: "effect-def"; name: string; ops: string[] }
+  | { tag: "future"; task: AsyncTask }
+  | { tag: "sender"; channel: EvalChannel }
+  | { tag: "receiver"; channel: EvalChannel };
+
+// ── Channel type (tree-walker) ──
+
+type EvalChannel = {
+  id: number;
+  buffer: Value[];
+  capacity: number;
+  senderOpen: boolean;
+  receiverOpen: boolean;
+};
+
+// ── Async task types (tree-walker) ──
+
+type AsyncTaskStatus = "pending" | "completed" | "failed" | "cancelled";
+
+type AsyncTask = {
+  id: number;
+  status: AsyncTaskStatus;
+  result?: Value;
+  error?: string;
+  body: () => Value;
+  cancelFlag: boolean;
+  shieldDepth: number;
+  groupId: number | null;
+};
+
+type AsyncTaskGroup = {
+  id: number;
+  children: AsyncTask[];
+};
+
+let nextAsyncTaskId = 1;
+let nextAsyncGroupId = 1;
+let activeGroupStack: AsyncTaskGroup[] = [];
+let currentTask: AsyncTask | null = null;
 
 // ── Runtime errors ──
 
@@ -110,6 +149,9 @@ function runtimeTypeTag(v: Value): string {
     case "closure": return "Fn";
     case "builtin": return "Fn";
     case "effect-def": return "Effect";
+    case "future": return "Future";
+    case "sender": return "Sender";
+    case "receiver": return "Receiver";
   }
 }
 
@@ -235,6 +277,7 @@ function evaluate(expr: Expr, env: Env): Value {
     case "do":
     case "for":
     case "range":
+    case "let-pattern":
       throw { code: "E205", message: `'${expr.tag}' should have been desugared`, location: expr.loc } as RuntimeError;
 
     case "list":
@@ -268,6 +311,17 @@ function evaluate(expr: Expr, env: Env): Value {
 
     case "record": {
       const fields = new Map<string, Value>();
+      // If there's a spread, start with base record fields
+      if (expr.spread) {
+        const base = evaluate(expr.spread, env);
+        if (base.tag !== "record") {
+          throw { code: "E206", message: `spread requires a record value (got ${base.tag})`, location: expr.loc } as RuntimeError;
+        }
+        for (const [k, v] of base.fields) {
+          fields.set(k, v);
+        }
+      }
+      // Explicit fields override spread fields
       for (const f of expr.fields) {
         fields.set(f.name, evaluate(f.value, env));
       }
@@ -424,6 +478,31 @@ function applyValue(fn: Value, args: Value[], loc: Loc): Value {
   throw { code: "E204", message: `cannot call ${fn.tag} as a function`, location: loc } as RuntimeError;
 }
 
+// ── Async task execution ──
+
+function runAsyncTask(task: AsyncTask, loc: Loc): void {
+  const savedTask = currentTask;
+  currentTask = task;
+  task.status = "pending"; // still pending until we execute
+  try {
+    if (task.cancelFlag && task.shieldDepth === 0) {
+      task.status = "cancelled";
+    } else {
+      const result = task.body();
+      task.result = result;
+      task.status = "completed";
+    }
+  } catch (e: any) {
+    if (e && e.code === "E011") {
+      task.status = "cancelled";
+    } else {
+      task.status = "failed";
+      task.error = e?.message ?? String(e);
+    }
+  }
+  currentTask = savedTask;
+}
+
 // ── Helpers ──
 
 function expectNum(v: Value, loc: Loc): number {
@@ -504,6 +583,34 @@ function matchPattern(pattern: Pattern, value: Value): Map<string, Value> | null
       }
       return bindings;
     }
+
+    case "p-record": {
+      if (value.tag !== "record") return null;
+      const bindings = new Map<string, Value>();
+      const matchedNames = new Set<string>();
+      for (const pf of pattern.fields) {
+        const fieldVal = value.fields.get(pf.name);
+        if (fieldVal === undefined) return null;
+        matchedNames.add(pf.name);
+        if (pf.pattern) {
+          const sub = matchPattern(pf.pattern, fieldVal);
+          if (sub === null) return null;
+          for (const [k, v] of sub) bindings.set(k, v);
+        } else {
+          bindings.set(pf.name, fieldVal);
+        }
+      }
+      if (pattern.rest === null) {
+        if (value.fields.size !== pattern.fields.length) return null;
+      } else if (pattern.rest !== "_") {
+        const restFields = new Map<string, Value>();
+        for (const [k, v] of value.fields) {
+          if (!matchedNames.has(k)) restFields.set(k, v);
+        }
+        bindings.set(pattern.rest, { tag: "record", fields: restFields });
+      }
+      return bindings;
+    }
   }
 }
 
@@ -521,6 +628,9 @@ function showValueBrief(v: Value): string {
     case "closure": return "<fn>";
     case "builtin": return `<builtin:${v.name}>`;
     case "effect-def": return `<effect:${v.name}>`;
+    case "future": return `<future:${v.task.id}>`;
+    case "sender": return `<sender:${v.channel.id}>`;
+    case "receiver": return `<receiver:${v.channel.id}>`;
   }
 }
 
@@ -730,6 +840,12 @@ function initGlobalEnv(): Env {
   interfaceMethodNames.clear();
   registerBuiltinImpls();
 
+  // Reset async state
+  nextAsyncTaskId = 1;
+  nextAsyncGroupId = 1;
+  activeGroupStack = [];
+  currentTask = null;
+
   const global = new Env();
   for (const [name, fn] of Object.entries(builtins)) {
     global.set(name, { tag: "builtin", name, fn });
@@ -795,6 +911,334 @@ function initGlobalEnv(): Env {
   global.set("exn", { tag: "effect-def", name: "exn", ops: ["raise"] });
   global.set("raise", makeEffectOp("raise", "exn"));
   global.set("io", { tag: "effect-def", name: "io", ops: ["print", "read-ln"] });
+  global.set("async", { tag: "effect-def", name: "async", ops: ["spawn", "await", "task-yield", "sleep", "task-group-enter", "task-group-exit", "is-cancelled", "check-cancel", "shield-enter", "shield-exit"] });
+
+  // ── Async builtins ──
+
+  global.set("spawn", {
+    tag: "builtin",
+    name: "spawn",
+    fn: (args: Value[], loc: Loc): Value => {
+      const body = args[0];
+      if (!body || (body.tag !== "closure" && body.tag !== "builtin")) {
+        throw { code: "E204", message: "spawn expects a function", location: loc } as RuntimeError;
+      }
+      const taskId = nextAsyncTaskId++;
+      const group = activeGroupStack.length > 0 ? activeGroupStack[activeGroupStack.length - 1] : null;
+      const task: AsyncTask = {
+        id: taskId,
+        status: "pending",
+        body: () => applyValue(body, [], loc),
+        cancelFlag: false,
+        shieldDepth: 0,
+        groupId: group?.id ?? null,
+      };
+      if (group) group.children.push(task);
+      return { tag: "future", task };
+    },
+  });
+
+  global.set("await", {
+    tag: "builtin",
+    name: "await",
+    fn: (args: Value[], loc: Loc): Value => {
+      const futVal = args[0];
+      if (!futVal || futVal.tag !== "future") {
+        throw { code: "E200", message: "await expects a Future", location: loc } as RuntimeError;
+      }
+      const task = futVal.task;
+      // Check cancellation of current task
+      if (currentTask && currentTask.cancelFlag && currentTask.shieldDepth === 0) {
+        currentTask.status = "cancelled";
+        throw { code: "E011", message: "task cancelled", location: loc } as RuntimeError;
+      }
+      // Run the task if it hasn't been run yet
+      if (task.status === "pending") {
+        runAsyncTask(task, loc);
+      }
+      if (task.status === "completed") return task.result ?? { tag: "unit" };
+      if (task.status === "failed") {
+        throw { code: "E014", message: task.error ?? "task failed", location: loc } as RuntimeError;
+      }
+      if (task.status === "cancelled") {
+        throw { code: "E011", message: "awaited task was cancelled", location: loc } as RuntimeError;
+      }
+      return { tag: "unit" };
+    },
+  });
+
+  global.set("task-group", {
+    tag: "builtin",
+    name: "task-group",
+    fn: (args: Value[], loc: Loc): Value => {
+      const body = args[0];
+      if (!body || (body.tag !== "closure" && body.tag !== "builtin")) {
+        throw { code: "E204", message: "task-group expects a function", location: loc } as RuntimeError;
+      }
+      const group: AsyncTaskGroup = { id: nextAsyncGroupId++, children: [] };
+      activeGroupStack.push(group);
+      let result: Value;
+      let bodyError: any = null;
+      try {
+        result = applyValue(body, [], loc);
+      } catch (e) {
+        bodyError = e;
+        result = { tag: "unit" };
+      }
+      activeGroupStack.pop();
+
+      // Cancel still-pending children
+      for (const child of group.children) {
+        if (child.status === "pending") {
+          child.cancelFlag = true;
+        }
+      }
+      // Run remaining children (they'll observe cancellation)
+      for (const child of group.children) {
+        if (child.status === "pending") {
+          runAsyncTask(child, loc);
+        }
+      }
+      // Check for child failures
+      let firstChildError: any = null;
+      for (const child of group.children) {
+        if (child.status === "failed" && !firstChildError) {
+          firstChildError = { code: "E014", message: child.error ?? "child task failed", location: loc };
+        }
+      }
+
+      if (bodyError) throw bodyError;
+      if (firstChildError) throw firstChildError;
+      return result;
+    },
+  });
+
+  global.set("task-yield", {
+    tag: "builtin",
+    name: "task-yield",
+    fn: (_args: Value[], loc: Loc): Value => {
+      if (currentTask && currentTask.cancelFlag && currentTask.shieldDepth === 0) {
+        currentTask.status = "cancelled";
+        throw { code: "E011", message: "task cancelled", location: loc } as RuntimeError;
+      }
+      return { tag: "unit" };
+    },
+  });
+
+  global.set("sleep", {
+    tag: "builtin",
+    name: "sleep",
+    fn: (args: Value[], loc: Loc): Value => {
+      // In synchronous tree-walker, sleep is a cancellation check point
+      if (currentTask && currentTask.cancelFlag && currentTask.shieldDepth === 0) {
+        currentTask.status = "cancelled";
+        throw { code: "E011", message: "task cancelled", location: loc } as RuntimeError;
+      }
+      return { tag: "unit" };
+    },
+  });
+
+  global.set("is-cancelled", {
+    tag: "builtin",
+    name: "is-cancelled",
+    fn: (_args: Value[], _loc: Loc): Value => {
+      const cancelled = currentTask ? currentTask.cancelFlag && currentTask.shieldDepth === 0 : false;
+      return { tag: "bool", value: cancelled };
+    },
+  });
+
+  global.set("check-cancel", {
+    tag: "builtin",
+    name: "check-cancel",
+    fn: (_args: Value[], loc: Loc): Value => {
+      if (currentTask && currentTask.cancelFlag && currentTask.shieldDepth === 0) {
+        currentTask.status = "cancelled";
+        throw { code: "E011", message: "task cancelled", location: loc } as RuntimeError;
+      }
+      return { tag: "unit" };
+    },
+  });
+
+  global.set("shield", {
+    tag: "builtin",
+    name: "shield",
+    fn: (args: Value[], loc: Loc): Value => {
+      const body = args[0];
+      if (!body || (body.tag !== "closure" && body.tag !== "builtin")) {
+        throw { code: "E204", message: "shield expects a function", location: loc } as RuntimeError;
+      }
+      if (currentTask) currentTask.shieldDepth++;
+      try {
+        const result = applyValue(body, [], loc);
+        if (currentTask) currentTask.shieldDepth--;
+        return result;
+      } catch (e) {
+        if (currentTask) currentTask.shieldDepth--;
+        throw e;
+      }
+    },
+  });
+
+  // ── Channel builtins ──
+
+  let nextChannelId = 1;
+
+  global.set("channel", {
+    tag: "builtin",
+    name: "channel",
+    fn: (args: Value[], loc: Loc): Value => {
+      const cap = args[0];
+      if (!cap || cap.tag !== "int") {
+        throw { code: "E204", message: "channel expects an Int capacity", location: loc } as RuntimeError;
+      }
+      const chan: EvalChannel = {
+        id: nextChannelId++,
+        buffer: [],
+        capacity: cap.value,
+        senderOpen: true,
+        receiverOpen: true,
+      };
+      return { tag: "tuple", elements: [{ tag: "sender", channel: chan }, { tag: "receiver", channel: chan }] };
+    },
+  });
+
+  global.set("send", {
+    tag: "builtin",
+    name: "send",
+    fn: (args: Value[], loc: Loc): Value => {
+      const sender = args[0];
+      if (!sender || sender.tag !== "sender") {
+        throw { code: "E204", message: "send expects a Sender", location: loc } as RuntimeError;
+      }
+      const chan = sender.channel;
+      if (!chan.receiverOpen) {
+        throw { code: "E012", message: "send: channel receiver is closed", location: loc } as RuntimeError;
+      }
+      if (!chan.senderOpen) {
+        throw { code: "E012", message: "send: sender is closed", location: loc } as RuntimeError;
+      }
+      chan.buffer.push(args[1]);
+      return { tag: "unit" };
+    },
+  });
+
+  global.set("recv", {
+    tag: "builtin",
+    name: "recv",
+    fn: (args: Value[], loc: Loc): Value => {
+      const receiver = args[0];
+      if (!receiver || receiver.tag !== "receiver") {
+        throw { code: "E204", message: "recv expects a Receiver", location: loc } as RuntimeError;
+      }
+      const chan = receiver.channel;
+      if (chan.buffer.length > 0) {
+        return chan.buffer.shift()!;
+      }
+      if (!chan.senderOpen) {
+        throw { code: "E012", message: "recv: channel is closed and empty", location: loc } as RuntimeError;
+      }
+      throw { code: "E012", message: "recv: channel is empty", location: loc } as RuntimeError;
+    },
+  });
+
+  global.set("try-recv", {
+    tag: "builtin",
+    name: "try-recv",
+    fn: (args: Value[], loc: Loc): Value => {
+      const receiver = args[0];
+      if (!receiver || receiver.tag !== "receiver") {
+        throw { code: "E204", message: "try-recv expects a Receiver", location: loc } as RuntimeError;
+      }
+      const chan = receiver.channel;
+      if (chan.buffer.length > 0) {
+        return { tag: "variant", name: "Some", fields: [chan.buffer.shift()!] };
+      }
+      return { tag: "variant", name: "None", fields: [] };
+    },
+  });
+
+  global.set("close-sender", {
+    tag: "builtin",
+    name: "close-sender",
+    fn: (args: Value[], loc: Loc): Value => {
+      const sender = args[0];
+      if (!sender || sender.tag !== "sender") {
+        throw { code: "E204", message: "close-sender expects a Sender", location: loc } as RuntimeError;
+      }
+      sender.channel.senderOpen = false;
+      return { tag: "unit" };
+    },
+  });
+
+  global.set("close-receiver", {
+    tag: "builtin",
+    name: "close-receiver",
+    fn: (args: Value[], loc: Loc): Value => {
+      const receiver = args[0];
+      if (!receiver || receiver.tag !== "receiver") {
+        throw { code: "E204", message: "close-receiver expects a Receiver", location: loc } as RuntimeError;
+      }
+      receiver.channel.receiverOpen = false;
+      return { tag: "unit" };
+    },
+  });
+
+  // ── Runtime-dispatched for-loop builtins ──
+
+  global.set("__for_each", {
+    tag: "builtin",
+    name: "__for_each",
+    fn: (args: Value[], loc: Loc): Value => {
+      const collection = args[0];
+      const fn = args[1];
+      if (collection.tag === "list") {
+        const results: Value[] = [];
+        for (const el of collection.elements) {
+          results.push(applyValue(fn, [el], loc));
+        }
+        return { tag: "list", elements: results };
+      }
+      throw { code: "E204", message: "__for_each: expected List", location: loc } as RuntimeError;
+    },
+  });
+
+  global.set("__for_filter", {
+    tag: "builtin",
+    name: "__for_filter",
+    fn: (args: Value[], loc: Loc): Value => {
+      const collection = args[0];
+      const fn = args[1];
+      if (collection.tag === "list") {
+        const results: Value[] = [];
+        for (const el of collection.elements) {
+          const result = applyValue(fn, [el], loc);
+          if (result.tag === "bool" && result.value) {
+            results.push(el);
+          }
+        }
+        return { tag: "list", elements: results };
+      }
+      throw { code: "E204", message: "__for_filter: expected List", location: loc } as RuntimeError;
+    },
+  });
+
+  global.set("__for_fold", {
+    tag: "builtin",
+    name: "__for_fold",
+    fn: (args: Value[], loc: Loc): Value => {
+      const collection = args[0];
+      const init = args[1];
+      const fn = args[2];
+      if (collection.tag === "list") {
+        let acc = init;
+        for (const el of collection.elements) {
+          acc = applyValue(fn, [acc, el], loc);
+        }
+        return acc;
+      }
+      throw { code: "E204", message: "__for_fold: expected List", location: loc } as RuntimeError;
+    },
+  });
 
   // Override div to raise on division by zero (via effect system)
   global.set("div", {
@@ -965,7 +1409,120 @@ function loadTopLevels(env: Env, program: Program, baseDir: string, packageModul
       };
       env.set(tl.name, closure);
     }
+
+    if (tl.tag === "extern-decl") {
+      const externName = tl.name;
+      const library = (tl as any).library as string;
+      const host = (tl as any).host as string | null;
+      const foreignSymbol = (tl as any).symbol as string | null;
+      const paramNames = tl.sig.params.map(p => p.name);
+
+      // Resolve the foreign symbol name (convert hyphens to underscores)
+      const jsFnName = foreignSymbol ?? externName.replace(/-/g, "_");
+
+      const externBuiltin: Value = {
+        tag: "builtin",
+        name: `extern:${externName}`,
+        fn: (args: Value[], loc: Loc): Value => {
+          // Only JS/Node interop supported for now
+          if (host !== "js" && host !== null) {
+            throw {
+              code: "E804",
+              message: `extern host '${host}' is not supported (only 'js' is available in the Node runtime)`,
+              location: loc,
+            } as RuntimeError;
+          }
+
+          // Convert Clank values to JS values
+          const jsArgs = args.map(v => clankToJs(v));
+
+          try {
+            // Resolve the module and function
+            let mod: any;
+            try {
+              const require = createRequire(import.meta.url);
+              mod = require(library);
+            } catch {
+              throw {
+                code: "E800",
+                message: `failed to load extern module '${library}'`,
+                location: loc,
+              } as RuntimeError;
+            }
+
+            // Look up the function
+            const fn = mod[jsFnName];
+            if (typeof fn !== "function") {
+              throw {
+                code: "E800",
+                message: `'${jsFnName}' is not a function in module '${library}'`,
+                location: loc,
+              } as RuntimeError;
+            }
+
+            // Call the foreign function
+            const result = fn(...jsArgs);
+
+            // Convert JS result back to Clank value
+            return jsToClank(result);
+          } catch (e: unknown) {
+            if (e && typeof e === "object" && "code" in e) throw e; // Re-throw Clank errors
+            throw {
+              code: "E800",
+              message: `extern call '${externName}' threw: ${e instanceof Error ? e.message : String(e)}`,
+              location: loc,
+            } as RuntimeError;
+          }
+        },
+      };
+      env.set(externName, externBuiltin);
+    }
   }
+}
+
+// ── FFI value conversion helpers ──
+
+function clankToJs(v: Value): unknown {
+  switch (v.tag) {
+    case "int": return v.value;
+    case "rat": return v.value;
+    case "bool": return v.value;
+    case "str": return v.value;
+    case "unit": return undefined;
+    case "list": return v.elements.map(clankToJs);
+    case "tuple": return v.elements.map(clankToJs);
+    case "record": {
+      const obj: Record<string, unknown> = {};
+      for (const [k, val] of v.fields) obj[k] = clankToJs(val);
+      return obj;
+    }
+    case "variant": {
+      if (v.name === "None" && v.fields.length === 0) return null;
+      if (v.name === "Some" && v.fields.length === 1) return clankToJs(v.fields[0]);
+      return { tag: v.name, fields: v.fields.map(clankToJs) };
+    }
+    default: return v;
+  }
+}
+
+function jsToClank(v: unknown): Value {
+  if (v === undefined || v === null) return { tag: "unit" };
+  if (typeof v === "number") {
+    return Number.isInteger(v) ? { tag: "int", value: v } : { tag: "rat", value: v };
+  }
+  if (typeof v === "bigint") return { tag: "int", value: Number(v) };
+  if (typeof v === "boolean") return { tag: "bool", value: v };
+  if (typeof v === "string") return { tag: "str", value: v };
+  if (Array.isArray(v)) return { tag: "list", elements: v.map(jsToClank) };
+  if (typeof v === "object") {
+    if (v instanceof Buffer) return { tag: "str", value: v.toString("utf-8") };
+    const fields = new Map<string, Value>();
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      fields.set(k, jsToClank(val));
+    }
+    return { tag: "record", fields };
+  }
+  return { tag: "str", value: String(v) };
 }
 
 // ── Auto-derive impl generation ──
@@ -1111,6 +1668,73 @@ function registerBuiltinImpls(): void {
   registerImpl("cmp", "Int", { tag: "builtin", name: "cmp:Int", fn: (args, _loc) => cmpFn((args[0] as any).value, (args[1] as any).value) });
   registerImpl("cmp", "Rat", { tag: "builtin", name: "cmp:Rat", fn: (args, _loc) => cmpFn((args[0] as any).value, (args[1] as any).value) });
   registerImpl("cmp", "Str", { tag: "builtin", name: "cmp:Str", fn: (args, _loc) => cmpFn((args[0] as any).value, (args[1] as any).value) });
+
+  // cmp for List — lexicographic element-wise comparison
+  registerImpl("cmp", "List", {
+    tag: "builtin",
+    name: "cmp:List",
+    fn: (args, loc) => {
+      const a = args[0] as Value & { tag: "list"; elements: Value[] };
+      const b = args[1] as Value & { tag: "list"; elements: Value[] };
+      const minLen = Math.min(a.elements.length, b.elements.length);
+      for (let i = 0; i < minLen; i++) {
+        const cmpImpl = implTable.get("cmp")?.get(runtimeTypeTag(a.elements[i]));
+        if (!cmpImpl) {
+          throw { code: "E212", message: `no impl of method 'cmp' for type '${runtimeTypeTag(a.elements[i])}'`, location: loc } as RuntimeError;
+        }
+        const result = cmpImpl.tag === "builtin" ? cmpImpl.fn([a.elements[i], b.elements[i]], loc) : { tag: "variant" as const, name: "Eq_", fields: [] as Value[] };
+        if (result.tag === "variant" && result.name !== "Eq_") return result;
+      }
+      if (a.elements.length < b.elements.length) return { tag: "variant", name: "Lt", fields: [] };
+      if (a.elements.length > b.elements.length) return { tag: "variant", name: "Gt", fields: [] };
+      return { tag: "variant", name: "Eq_", fields: [] };
+    },
+  });
+
+  // cmp for Tuple — element-wise comparison
+  registerImpl("cmp", "Tuple", {
+    tag: "builtin",
+    name: "cmp:Tuple",
+    fn: (args, loc) => {
+      const a = args[0] as Value & { tag: "tuple"; elements: Value[] };
+      const b = args[1] as Value & { tag: "tuple"; elements: Value[] };
+      const minLen = Math.min(a.elements.length, b.elements.length);
+      for (let i = 0; i < minLen; i++) {
+        const cmpImpl = implTable.get("cmp")?.get(runtimeTypeTag(a.elements[i]));
+        if (!cmpImpl) {
+          throw { code: "E212", message: `no impl of method 'cmp' for type '${runtimeTypeTag(a.elements[i])}'`, location: loc } as RuntimeError;
+        }
+        const result = cmpImpl.tag === "builtin" ? cmpImpl.fn([a.elements[i], b.elements[i]], loc) : { tag: "variant" as const, name: "Eq_", fields: [] as Value[] };
+        if (result.tag === "variant" && result.name !== "Eq_") return result;
+      }
+      if (a.elements.length < b.elements.length) return { tag: "variant", name: "Lt", fields: [] };
+      if (a.elements.length > b.elements.length) return { tag: "variant", name: "Gt", fields: [] };
+      return { tag: "variant", name: "Eq_", fields: [] };
+    },
+  });
+
+  // cmp for Record — compare fields lexicographically by sorted key order
+  registerImpl("cmp", "Record", {
+    tag: "builtin",
+    name: "cmp:Record",
+    fn: (args, loc) => {
+      const a = args[0] as Value & { tag: "record"; fields: Map<string, Value> };
+      const b = args[1] as Value & { tag: "record"; fields: Map<string, Value> };
+      const keys = [...a.fields.keys()].sort();
+      for (const key of keys) {
+        const av = a.fields.get(key);
+        const bv = b.fields.get(key);
+        if (!av || !bv) continue;
+        const cmpImpl = implTable.get("cmp")?.get(runtimeTypeTag(av));
+        if (!cmpImpl) {
+          throw { code: "E212", message: `no impl of method 'cmp' for type '${runtimeTypeTag(av)}'`, location: loc } as RuntimeError;
+        }
+        const result = cmpImpl.tag === "builtin" ? cmpImpl.fn([av, bv], loc) : { tag: "variant" as const, name: "Eq_", fields: [] as Value[] };
+        if (result.tag === "variant" && result.name !== "Eq_") return result;
+      }
+      return { tag: "variant", name: "Eq_", fields: [] };
+    },
+  });
 }
 
 // ── Program runner ──
@@ -1169,6 +1793,9 @@ export function valueToJSON(v: Value): unknown {
     case "closure": return "<fn>";
     case "builtin": return `<builtin:${v.name}>`;
     case "effect-def": return `<effect:${v.name}>`;
+    case "future": return `<future:${v.task.id}>`;
+    case "sender": return `<sender:${v.channel.id}>`;
+    case "receiver": return `<receiver:${v.channel.id}>`;
   }
 }
 
@@ -1187,6 +1814,9 @@ export function valueTypeName(v: Value): string {
     case "closure": return "Fn";
     case "builtin": return "Fn";
     case "effect-def": return "Effect";
+    case "future": return "Future";
+    case "sender": return "Sender";
+    case "receiver": return "Receiver";
   }
 }
 
