@@ -2794,7 +2794,7 @@ func registerBuiltins(env *typeEnv) {
 	env.set("trim", NewTFn(TStr, TStr))
 
 	// Runtime dispatch helpers (desugared from for-expressions)
-	env.set("__for_each", NewTFn(TAny, NewTFn(TAny, TUnit)))
+	env.set("__for_each", NewTFn(TAny, NewTFn(TAny, TAny)))
 	env.set("__for_filter", NewTFn(TAny, NewTFn(TAny, TAny)))
 	env.set("__for_fold", NewTFn(TAny, NewTFn(TAny, NewTFn(TAny, TAny))))
 

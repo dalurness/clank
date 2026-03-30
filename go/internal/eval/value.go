@@ -42,6 +42,11 @@ type ValEffectDef struct {
 	Ops  []string
 }
 
+// Async value types
+type ValFuture struct{ Task *AsyncTask }
+type ValSender struct{ Channel *EvalChannel }
+type ValReceiver struct{ Channel *EvalChannel }
+
 func (ValInt) valueTag() string       { return "int" }
 func (ValRat) valueTag() string       { return "rat" }
 func (ValBool) valueTag() string      { return "bool" }
@@ -54,6 +59,9 @@ func (ValVariant) valueTag() string   { return "variant" }
 func (ValClosure) valueTag() string   { return "closure" }
 func (ValBuiltin) valueTag() string   { return "builtin" }
 func (ValEffectDef) valueTag() string { return "effect-def" }
+func (ValFuture) valueTag() string    { return "future" }
+func (ValSender) valueTag() string    { return "sender" }
+func (ValReceiver) valueTag() string  { return "receiver" }
 
 // ── OrderedMap for record fields ──
 
@@ -213,6 +221,12 @@ func ShowValue(v Value) string {
 		return fmt.Sprintf("<builtin:%s>", val.Name)
 	case ValEffectDef:
 		return fmt.Sprintf("<effect:%s>", val.Name)
+	case ValFuture:
+		return "<future>"
+	case ValSender:
+		return "<sender>"
+	case ValReceiver:
+		return "<receiver>"
 	default:
 		return "?"
 	}
@@ -340,6 +354,12 @@ func RuntimeTypeTag(v Value) string {
 		return "Fn"
 	case ValEffectDef:
 		return "Effect"
+	case ValFuture:
+		return "Future"
+	case ValSender:
+		return "Sender"
+	case ValReceiver:
+		return "Receiver"
 	default:
 		return "?"
 	}

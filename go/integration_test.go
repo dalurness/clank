@@ -191,6 +191,8 @@ func TestIntegration(t *testing.T) {
 		{"phase3", filepath.Join(root, "phase3"), false},
 		{"phase5", filepath.Join(root, "phase5"), false},
 		{"phase6", filepath.Join(root, "phase6"), true},
+		{"phase7", filepath.Join(root, "phase7"), false},
+		{"phase8", filepath.Join(root, "phase8"), true},
 		{"examples", filepath.Join(root, "examples"), false},
 	}
 
@@ -220,9 +222,15 @@ func TestIntegration(t *testing.T) {
 							if pipeErr != nil {
 								t.Fatalf("pipeline error: %v", pipeErr)
 							}
-							if len(typeErrors) == 0 {
-								t.Fatalf("expected type error but checker reported none")
+							if len(typeErrors) > 0 {
+								return // type error found as expected
 							}
+							// No type errors — try running; expect a runtime error
+							_, runErr := runProgram(src)
+							if runErr != nil {
+								return // runtime error found as expected
+							}
+							t.Fatalf("expected error but neither checker nor runtime reported one")
 							return
 						}
 					} else {

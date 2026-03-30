@@ -1,8 +1,11 @@
 package eval
 
 import (
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"sort"
+	"strings"
 
 	"github.com/dalurness/clank/internal/ast"
 	"github.com/dalurness/clank/internal/token"
@@ -299,8 +302,13 @@ func InitGlobalEnv() *Env {
 	registerBuiltinImpls()
 	resetModuleCache()
 
+	resetAsyncState()
+
 	global := NewEnv(nil)
 	for name, fn := range Builtins() {
+		global.Set(name, ValBuiltin{Name: name, Fn: fn})
+	}
+	for name, fn := range AsyncBuiltins() {
 		global.Set(name, ValBuiltin{Name: name, Fn: fn})
 	}
 
@@ -348,6 +356,9 @@ func InitGlobalEnv() *Env {
 	global.Set("exn", ValEffectDef{Name: "exn", Ops: []string{"raise"}})
 	global.Set("raise", makeEffectOp("raise", "exn"))
 	global.Set("io", ValEffectDef{Name: "io", Ops: []string{"print", "read-ln"}})
+	global.Set("async", ValEffectDef{Name: "async", Ops: []string{
+		"spawn", "await", "task-yield", "sleep", "task-group", "is-cancelled", "shield",
+	}})
 
 	// Override div to raise on division by zero (via effect system)
 	global.Set("div", ValBuiltin{
@@ -484,10 +495,182 @@ func LoadTopLevels(env *Env, program *ast.Program) {
 			closure := ValClosure{Params: params, Body: decl.Body, Env: env}
 			env.Set(decl.Name, closure)
 
+		case ast.TopExternDecl:
+			externName := decl.Name
+			library := decl.Library
+			host := decl.Host
+			symbol := decl.Symbol
+
+			// Resolve foreign symbol name: explicit symbol or hyphen-to-underscore
+			jsFnName := symbol
+			if jsFnName == "" {
+				jsFnName = strings.ReplaceAll(externName, "-", "_")
+			}
+
+			env.Set(externName, ValBuiltin{
+				Name: "extern:" + externName,
+				Fn: func(args []Value, loc token.Loc) Value {
+					return callExternJS(library, jsFnName, host, externName, args, loc)
+				},
+			})
+
 		case ast.TopTestDecl:
 			// Tests are not loaded — they're run separately
 			continue
 		}
+	}
+}
+
+// callExternJS executes a foreign function call by shelling out to Node.js.
+func callExternJS(library, symbol, host, externName string, args []Value, loc token.Loc) Value {
+	// Only JS host is supported
+	if host != "js" && host != "" {
+		panic(runtimeError("E804", fmt.Sprintf("extern host '%s' is not supported (only 'js' is available)", host), loc))
+	}
+
+	// Convert Clank values to JSON-serializable args
+	jsArgs := make([]interface{}, len(args))
+	for i, a := range args {
+		jsArgs[i] = clankToJS(a)
+	}
+
+	argsJSON, err := json.Marshal(jsArgs)
+	if err != nil {
+		panic(runtimeError("E800", fmt.Sprintf("extern call '%s': failed to serialize arguments: %v", externName, err), loc))
+	}
+
+	// Build a Node.js script that requires the module, calls the function, and prints the result as JSON
+	script := fmt.Sprintf(`
+try {
+  const mod = require(%q);
+  const fn = mod[%q];
+  if (typeof fn !== "function") {
+    process.stdout.write(JSON.stringify({error: "E800", message: %q}));
+    process.exit(0);
+  }
+  const args = %s;
+  const result = fn(...args);
+  process.stdout.write(JSON.stringify({ok: true, value: result}));
+} catch(e) {
+  if (e && e.code === "MODULE_NOT_FOUND") {
+    process.stdout.write(JSON.stringify({error: "E800", message: %q}));
+  } else {
+    process.stdout.write(JSON.stringify({error: "E800", message: "extern call threw: " + (e.message || String(e))}));
+  }
+}`,
+		library,
+		symbol,
+		fmt.Sprintf("'%s' is not a function in module '%s'", symbol, library),
+		string(argsJSON),
+		fmt.Sprintf("failed to load extern module '%s'", library),
+	)
+
+	cmd := exec.Command("node", "-e", script)
+	out, err := cmd.Output()
+	if err != nil {
+		panic(runtimeError("E800", fmt.Sprintf("extern call '%s' failed: %v", externName, err), loc))
+	}
+
+	var result struct {
+		OK      bool            `json:"ok"`
+		Value   json.RawMessage `json:"value"`
+		Error   string          `json:"error"`
+		Message string          `json:"message"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		panic(runtimeError("E800", fmt.Sprintf("extern call '%s': failed to parse result: %v", externName, err), loc))
+	}
+
+	if result.Error != "" {
+		panic(runtimeError(result.Error, result.Message, loc))
+	}
+
+	return jsToClank(result.Value)
+}
+
+// clankToJS converts a Clank Value to a Go value suitable for JSON marshaling.
+func clankToJS(v Value) interface{} {
+	switch val := v.(type) {
+	case ValInt:
+		return val.Val
+	case ValRat:
+		return val.Val
+	case ValBool:
+		return val.Val
+	case ValStr:
+		return val.Val
+	case ValUnit:
+		return nil
+	case ValList:
+		elems := make([]interface{}, len(val.Elements))
+		for i, e := range val.Elements {
+			elems[i] = clankToJS(e)
+		}
+		return elems
+	case ValTuple:
+		elems := make([]interface{}, len(val.Elements))
+		for i, e := range val.Elements {
+			elems[i] = clankToJS(e)
+		}
+		return elems
+	case ValRecord:
+		obj := make(map[string]interface{})
+		for _, k := range val.Fields.Keys() {
+			v, _ := val.Fields.Get(k)
+			obj[k] = clankToJS(v)
+		}
+		return obj
+	case ValVariant:
+		if val.Name == "None" && len(val.Fields) == 0 {
+			return nil
+		}
+		if val.Name == "Some" && len(val.Fields) == 1 {
+			return clankToJS(val.Fields[0])
+		}
+		fields := make([]interface{}, len(val.Fields))
+		for i, f := range val.Fields {
+			fields[i] = clankToJS(f)
+		}
+		return map[string]interface{}{"tag": val.Name, "fields": fields}
+	default:
+		return nil
+	}
+}
+
+// jsToClank converts a JSON-encoded value back to a Clank Value.
+func jsToClank(raw json.RawMessage) Value {
+	var v interface{}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return ValUnit{}
+	}
+	return jsValueToClank(v)
+}
+
+func jsValueToClank(v interface{}) Value {
+	if v == nil {
+		return ValUnit{}
+	}
+	switch val := v.(type) {
+	case float64:
+		if val == float64(int64(val)) {
+			return ValInt{Val: int64(val)}
+		}
+		return ValRat{Val: val}
+	case bool:
+		return ValBool{Val: val}
+	case string:
+		return ValStr{Val: val}
+	case []interface{}:
+		elems := make([]Value, len(val))
+		for i, e := range val {
+			elems[i] = jsValueToClank(e)
+		}
+		return ValList{Elements: elems}
+	case map[string]interface{}:
+		// Could be a record — convert to ValRecord
+		return ValStr{Val: fmt.Sprintf("%v", val)}
+	default:
+		return ValStr{Val: fmt.Sprintf("%v", val)}
 	}
 }
 
