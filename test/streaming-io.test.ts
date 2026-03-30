@@ -1,10 +1,10 @@
 // Streaming I/O and Iterator tests
 // Run with: npx tsx test/streaming-io.test.ts
 
-import { compileProgram, Op, type BytecodeModule } from "../src/compiler.js";
-import { VM, execute, Val, Tag, type Value, type IteratorState } from "../src/vm.js";
-import { desugar } from "../src/desugar.js";
-import type { Expr, Program, TopLevel, TypeSig, Loc } from "../src/ast.js";
+import { compileProgram, Op, type BytecodeModule } from "../ts/src/compiler.js";
+import { VM, execute, Val, Tag, type Value, type IteratorState } from "../ts/src/vm.js";
+import { desugar } from "../ts/src/desugar.js";
+import type { Expr, Program, TopLevel, TypeSig, Loc } from "../ts/src/ast.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 

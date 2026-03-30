@@ -5,7 +5,7 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../.." && pwd)"
-CLANK="npx tsx $ROOT/src/main.ts"
+CLANK="npx tsx $ROOT/ts/src/main.ts"
 PASS=0
 FAIL=0
 

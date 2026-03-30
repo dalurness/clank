@@ -6,7 +6,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-CLANK="${1:-npx tsx src/main.ts}"
+CLANK="${1:-npx tsx ts/src/main.ts}"
 VM_FLAG=""
 EXIT=0
 

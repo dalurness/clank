@@ -1,6 +1,6 @@
 // Clank CLI entry point
-// Usage: npx tsx src/main.ts [--vm] [--json] <file.clk>
-//        npx tsx src/main.ts eval [--file <file.clk>] [--session <name>] [--type] [--json] "<expr>"
+// Usage: npx tsx ts/src/main.ts [--vm] [--json] <file.clk>
+//        npx tsx ts/src/main.ts eval [--file <file.clk>] [--session <name>] [--type] [--json] "<expr>"
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";

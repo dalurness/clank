@@ -5,7 +5,7 @@ import { execSync } from "node:child_process";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-const CLI = join(import.meta.dirname, "..", "src", "main.ts");
+const CLI = join(import.meta.dirname, "..", "ts", "src", "main.ts");
 const TMP_DIR = "/tmp/clank-test-runner-test-suite";
 
 let passed = 0;

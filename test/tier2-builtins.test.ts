@@ -1,10 +1,10 @@
 // Integration tests for tier-2 stdlib builtins: http, srv, csv, proc, dt
 // Run with: npx tsx test/tier2-builtins.test.ts
 
-import { compileProgram, type BytecodeModule } from "../src/compiler.js";
-import { VM, execute, Val, Tag, type Value } from "../src/vm.js";
-import { desugar } from "../src/desugar.js";
-import type { Expr, Program, TopLevel, TypeSig, Loc } from "../src/ast.js";
+import { compileProgram, type BytecodeModule } from "../ts/src/compiler.js";
+import { VM, execute, Val, Tag, type Value } from "../ts/src/vm.js";
+import { desugar } from "../ts/src/desugar.js";
+import type { Expr, Program, TopLevel, TypeSig, Loc } from "../ts/src/ast.js";
 
 const loc: Loc = { line: 1, col: 1 };
 

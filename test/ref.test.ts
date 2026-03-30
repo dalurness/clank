@@ -1,10 +1,10 @@
 // Ref (mutable reference cell) integration tests
 // Run with: npx tsx test/ref.test.ts
 
-import { compileProgram, Op, type BytecodeModule } from "../src/compiler.js";
-import { VM, execute, Val, Tag, type Value } from "../src/vm.js";
-import { desugar } from "../src/desugar.js";
-import type { Expr, Program, TopLevel, TypeSig, Loc } from "../src/ast.js";
+import { compileProgram, Op, type BytecodeModule } from "../ts/src/compiler.js";
+import { VM, execute, Val, Tag, type Value } from "../ts/src/vm.js";
+import { desugar } from "../ts/src/desugar.js";
+import type { Expr, Program, TopLevel, TypeSig, Loc } from "../ts/src/ast.js";
 
 const loc: Loc = { line: 1, col: 1 };
 

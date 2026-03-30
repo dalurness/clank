@@ -1,10 +1,10 @@
 // Integration tests: compile → execute pipeline
 // Run with: npx tsx test/vm.test.ts
 
-import { compileProgram, Op, type BytecodeModule } from "../src/compiler.js";
-import { VM, execute, Val, Tag, type Value } from "../src/vm.js";
-import { desugar } from "../src/desugar.js";
-import type { Expr, Program, TopLevel, TypeSig, Loc } from "../src/ast.js";
+import { compileProgram, Op, type BytecodeModule } from "../ts/src/compiler.js";
+import { VM, execute, Val, Tag, type Value } from "../ts/src/vm.js";
+import { desugar } from "../ts/src/desugar.js";
+import type { Expr, Program, TopLevel, TypeSig, Loc } from "../ts/src/ast.js";
 
 const loc: Loc = { line: 1, col: 1 };
 
@@ -534,7 +534,7 @@ test("multiple let bindings", () => {
 
 // ── Effect handler helpers ──
 
-import type { HandlerArm, Param } from "../src/ast.js";
+import type { HandlerArm, Param } from "../ts/src/ast.js";
 
 function handlerArm(name: string, params: string[], resumeName: string | null, body: Expr): HandlerArm {
   return {

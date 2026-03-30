@@ -23,9 +23,9 @@ import {
   generateWorkspaceLockfile,
   writeWorkspaceLockfile,
   PkgError,
-} from "../src/pkg.js";
+} from "../ts/src/pkg.js";
 
-const CLI = join(import.meta.dirname, "..", "src", "main.ts");
+const CLI = join(import.meta.dirname, "..", "ts", "src", "main.ts");
 const TMP_DIR = join("/tmp", `clank-ws-test-${Date.now()}`);
 
 let passed = 0;

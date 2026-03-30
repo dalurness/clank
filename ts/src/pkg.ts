@@ -2321,7 +2321,7 @@ export function pkgPublish(options?: { dir?: string; dryRun?: boolean }): PkgPub
     if (existsSync(srcDir)) {
       try {
         const checkResult = execSync(
-          `npx tsx "${join(manifestDir, "..", "src", "main.ts")}" check src/ --json 2>/dev/null || npx tsx src/main.ts check "${srcDir}" --json 2>/dev/null || true`,
+          `npx tsx "${join(manifestDir, "..", "ts", "src", "main.ts")}" check src/ --json 2>/dev/null || npx tsx ts/src/main.ts check "${srcDir}" --json 2>/dev/null || true`,
           { cwd: manifestDir, encoding: "utf-8", timeout: 30000, stdio: ["pipe", "pipe", "pipe"] },
         ).trim();
         if (checkResult) {

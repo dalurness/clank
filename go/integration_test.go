@@ -1,0 +1,279 @@
+package clank_test
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/dalurness/clank/internal/ast"
+	"github.com/dalurness/clank/internal/checker"
+	"github.com/dalurness/clank/internal/desugar"
+	"github.com/dalurness/clank/internal/eval"
+	"github.com/dalurness/clank/internal/lexer"
+	"github.com/dalurness/clank/internal/parser"
+)
+
+// testRoot returns the path to the project test/ directory.
+func testRoot(t *testing.T) string {
+	t.Helper()
+	// go/ is at project root; test/ is a sibling
+	return filepath.Join("..", "test")
+}
+
+// parseExpected extracts expected output lines from # Expected output: comments.
+func parseExpected(source string) (lines []string, found bool) {
+	inBlock := false
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# Expected output:") {
+			inBlock = true
+			continue
+		}
+		if inBlock {
+			if strings.HasPrefix(trimmed, "# ") {
+				lines = append(lines, trimmed[2:])
+			} else if trimmed == "#" {
+				lines = append(lines, "")
+			} else {
+				break
+			}
+		}
+	}
+	return lines, inBlock
+}
+
+// isErrorTest returns true if the file expects an error rather than output.
+func isErrorTest(source string) bool {
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "Expected:") && strings.Contains(trimmed, "error") {
+			return true
+		}
+		if strings.Contains(trimmed, "Expected") && strings.Contains(trimmed, "error") &&
+			strings.HasPrefix(trimmed, "#") {
+			return true
+		}
+	}
+	return false
+}
+
+// usesImports returns true if the file uses `use` (module imports).
+func usesImports(source string) bool {
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "use ") {
+			return true
+		}
+	}
+	return false
+}
+
+// checkProgram lexes, parses, desugars, and type-checks a program.
+// Returns type errors (nil if none) and any pipeline error.
+func checkProgram(source string) ([]checker.TypeError, error) {
+	tokens, lexErr := lexer.Lex(source)
+	if lexErr != nil {
+		return nil, fmt.Errorf("lex error: %s", lexErr.Message)
+	}
+
+	program, parseErr := parser.Parse(tokens)
+	if parseErr != nil {
+		return nil, fmt.Errorf("parse error: %s", parseErr.Message)
+	}
+
+	// Desugar before type checking (checker expects desugared AST)
+	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
+	for i, tl := range program.TopLevels {
+		switch d := tl.(type) {
+		case ast.TopDefinition:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopTestDecl:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopImplBlock:
+			methods := make([]ast.ImplMethod, len(d.Methods))
+			for j, m := range d.Methods {
+				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
+			}
+			d.Methods = methods
+			desugared.TopLevels[i] = d
+		default:
+			desugared.TopLevels[i] = tl
+		}
+	}
+
+	typeErrors := checker.TypeCheck(desugared)
+	return typeErrors, nil
+}
+
+// runProgram lexes, parses, desugars, and evaluates a program, returning captured stdout.
+func runProgram(source string) (string, error) {
+	tokens, lexErr := lexer.Lex(source)
+	if lexErr != nil {
+		return "", fmt.Errorf("lex error: %s", lexErr.Message)
+	}
+
+	program, parseErr := parser.Parse(tokens)
+	if parseErr != nil {
+		return "", fmt.Errorf("parse error: %s", parseErr.Message)
+	}
+
+	// Desugar all top-level definition bodies
+	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
+	for i, tl := range program.TopLevels {
+		switch d := tl.(type) {
+		case ast.TopDefinition:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopTestDecl:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopImplBlock:
+			methods := make([]ast.ImplMethod, len(d.Methods))
+			for j, m := range d.Methods {
+				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
+			}
+			d.Methods = methods
+			desugared.TopLevels[i] = d
+		default:
+			desugared.TopLevels[i] = tl
+		}
+	}
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		return "", err
+	}
+	os.Stdout = w
+
+	_, runErr := eval.Run(desugared)
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	r.Close()
+
+	if runErr != nil {
+		return buf.String(), runErr
+	}
+	return buf.String(), nil
+}
+
+// collectTestFiles finds .clk files in a directory that have expected output.
+func collectTestFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "*.clk"))
+	if err != nil {
+		t.Fatalf("glob error: %v", err)
+	}
+	return matches
+}
+
+func TestIntegration(t *testing.T) {
+	root := testRoot(t)
+
+	dirs := []struct {
+		name     string
+		path     string
+		useCheck bool // run type checker
+	}{
+		{"phase1", filepath.Join(root, "phase1"), false},
+		{"phase2", filepath.Join(root, "phase2"), false},
+		{"phase3", filepath.Join(root, "phase3"), false},
+		{"phase5", filepath.Join(root, "phase5"), false},
+		{"phase6", filepath.Join(root, "phase6"), true},
+		{"examples", filepath.Join(root, "examples"), false},
+	}
+
+	for _, dir := range dirs {
+		t.Run(dir.name, func(t *testing.T) {
+			files := collectTestFiles(t, dir.path)
+			if len(files) == 0 {
+				t.Skipf("no .clk files in %s", dir.path)
+			}
+
+			for _, file := range files {
+				base := filepath.Base(file)
+				t.Run(base, func(t *testing.T) {
+					source, err := os.ReadFile(file)
+					if err != nil {
+						t.Fatalf("read error: %v", err)
+					}
+					src := string(source)
+
+					// Set BaseDir for module imports
+					eval.BaseDir = filepath.Dir(file)
+
+					if dir.useCheck {
+						// Error tests: run checker and verify errors are reported
+						if isErrorTest(src) {
+							typeErrors, pipeErr := checkProgram(src)
+							if pipeErr != nil {
+								t.Fatalf("pipeline error: %v", pipeErr)
+							}
+							if len(typeErrors) == 0 {
+								t.Fatalf("expected type error but checker reported none")
+							}
+							return
+						}
+					} else {
+						if isErrorTest(src) {
+							t.Skip("expects error (type checker)")
+						}
+					}
+
+					expected, hasExpected := parseExpected(src)
+					if !hasExpected {
+						t.Skip("no expected output (library module)")
+					}
+
+					if dir.useCheck {
+						// Run checker (should report no errors for pass tests)
+						typeErrors, pipeErr := checkProgram(src)
+						if pipeErr != nil {
+							t.Fatalf("pipeline error: %v", pipeErr)
+						}
+						if len(typeErrors) > 0 {
+							msgs := make([]string, len(typeErrors))
+							for i, e := range typeErrors {
+								msgs[i] = e.Error()
+							}
+							t.Fatalf("unexpected type errors:\n%s", strings.Join(msgs, "\n"))
+						}
+					}
+
+					output, runErr := runProgram(src)
+					if runErr != nil {
+						t.Fatalf("runtime error: %v", runErr)
+					}
+
+					// Compare output line by line
+					actualLines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+					if output == "" {
+						actualLines = nil
+					}
+
+					if len(actualLines) != len(expected) {
+						t.Fatalf("output line count mismatch:\nexpected %d lines: %v\ngot %d lines: %v",
+							len(expected), expected, len(actualLines), actualLines)
+					}
+
+					for i := range expected {
+						if actualLines[i] != expected[i] {
+							t.Errorf("line %d:\n  expected: %q\n  got:      %q", i+1, expected[i], actualLines[i])
+						}
+					}
+				})
+			}
+		})
+	}
+}

@@ -5,7 +5,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
-const CLI = join(import.meta.dirname, "..", "src", "main.ts");
+const CLI = join(import.meta.dirname, "..", "ts", "src", "main.ts");
 const TMP_DIR = "/tmp";
 
 let passed = 0;

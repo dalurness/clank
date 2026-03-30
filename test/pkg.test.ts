@@ -4,11 +4,11 @@
 import { execSync, spawnSync } from "node:child_process";
 import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseManifest, serializeManifest, findManifest, resolveLocalDeps, loadManifest, discoverModules, resolvePackages, pkgInit, pkgResolve, pkgAdd, pkgRemove, pkgInstall, pkgPublish, pkgSearch, pkgInfo, createGitHubRegistry, generateLockfile, serializeLockfile, parseLockfile, writeLockfile, readLockfile, verifyLockfile, versionSatisfies, selectVersion, mergeConstraints, CLANK_VERSION, PkgError } from "../src/pkg.js";
-import type { LockPackage, Lockfile, RegistryPackageInfo, RegistryPublishEntry, RegistryProtocol } from "../src/pkg.js";
+import { parseManifest, serializeManifest, findManifest, resolveLocalDeps, loadManifest, discoverModules, resolvePackages, pkgInit, pkgResolve, pkgAdd, pkgRemove, pkgInstall, pkgPublish, pkgSearch, pkgInfo, createGitHubRegistry, generateLockfile, serializeLockfile, parseLockfile, writeLockfile, readLockfile, verifyLockfile, versionSatisfies, selectVersion, mergeConstraints, CLANK_VERSION, PkgError } from "../ts/src/pkg.js";
+import type { LockPackage, Lockfile, RegistryPackageInfo, RegistryPublishEntry, RegistryProtocol } from "../ts/src/pkg.js";
 
 
-const CLI = join(import.meta.dirname, "..", "src", "main.ts");
+const CLI = join(import.meta.dirname, "..", "ts", "src", "main.ts");
 const TMP_DIR = join("/tmp", `clank-pkg-test-${Date.now()}`);
 
 let passed = 0;
