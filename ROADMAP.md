@@ -34,7 +34,6 @@ The Go implementation (`go/`) is the active codebase. The TypeScript reference i
 - **WASM compilation backend** — not started; requires WASM 3.0 GC
 - **Workspace orchestration** — `clank.workspace` manifest, `clank build`, parallel member builds, workspace lockfile not in Go port
 - **Full async VM runtime** — VM has opcode stubs (`OpTASK_SPAWN`, `OpTASK_AWAIT`, etc.) but cooperative goroutine scheduling is not implemented; async works in tree-walker only
-- **Embedding API** — no `ClankRuntime` host-language interop equivalent in Go port
 - **Extended package registry** — `pkg search`, `pkg publish`, GitHub-backed registry not in Go port
 - **Composite literal type inference** — some composite literals fall through to `TAny`; Clone checking only works on annotated types
 - **`ref-swap` builtin** — spec says CAS-loop but no builtin entry

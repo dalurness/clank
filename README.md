@@ -290,7 +290,6 @@ The Go implementation (`go/`) is the active codebase. All items below refer to i
 - Workspace orchestration (`clank.workspace`, `clank build`)
 - Full async runtime in the bytecode VM (VM has opcode stubs; full scheduling requires cooperative goroutine support)
 - Full effect row unification (effects are currently checked as flat sets; row-variable unification not performed)
-- Embedding API (`ClankRuntime` host-language interop)
 - `pkg search`, `pkg publish`, GitHub-backed registry
 
 See [ROADMAP.md](ROADMAP.md) for details and priorities.

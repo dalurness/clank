@@ -9,12 +9,7 @@
 
 ## 1. Overview
 
-Clank's FFI system enables two directions of interop:
-
-1. **Calling out**: Clank programs call host language functions (C, JavaScript, Python)
-2. **Calling in**: Host programs embed the Clank interpreter and invoke Clank functions
-
-The design upholds Clank's three safety pillars — effects, affine types, and refinement
+Clank's FFI system enables Clank programs to call host language functions (C, JavaScript, Python) while upholding Clank's three safety pillars — effects, affine types, and refinement
 types — at the FFI boundary. Foreign functions are treated as opaque, untrusted code:
 the FFI declaration is where the programmer asserts the contract that the type checker
 enforces on the Clank side.
@@ -382,198 +377,9 @@ runtime must prevent the GC from collecting these objects:
 
 ---
 
-## 6. Embedding API (Reference Interpreter)
+## 6. Refinement Types Across FFI
 
-The reference interpreter is TypeScript. The embedding API lets a host TypeScript/JS
-program create a Clank runtime, load modules, call functions, and exchange values.
-
-### 6.1 Core API
-
-```typescript
-interface ClankRuntime {
-  // Lifecycle
-  static create(opts?: RuntimeOptions): ClankRuntime;
-  dispose(): void;
-
-  // Module loading
-  loadModule(source: string, name?: string): ClankModule;
-  loadFile(path: string): ClankModule;
-
-  // Function invocation
-  call(fn: string, ...args: ClankValue[]): ClankResult;
-  callAsync(fn: string, ...args: ClankValue[]): Promise<ClankResult>;
-
-  // Value conversion
-  toClank(jsValue: unknown, typeHint?: string): ClankValue;
-  toJS(clankValue: ClankValue): unknown;
-
-  // Registration of host functions
-  register(name: string, sig: string, impl: (...args: any[]) => any): void;
-  registerModule(name: string, fns: Record<string, HostFn>): void;
-}
-
-interface RuntimeOptions {
-  maxSteps?: number;       // execution step limit (for sandboxing)
-  maxMemory?: number;      // heap limit in bytes
-  effects?: EffectConfig;  // which built-in effects are available
-  modules?: string[];      // pre-loaded module paths
-}
-
-interface ClankModule {
-  name: string;
-  exports: Map<string, ClankValue>;
-  types: Map<string, TypeInfo>;
-}
-
-interface ClankResult {
-  ok: boolean;
-  value?: ClankValue;
-  error?: ClankError;
-  effects: string[];       // effects that were performed
-  diagnostics: Diagnostic[];
-}
-
-interface ClankValue {
-  type: string;            // Clank type as string
-  value: unknown;          // JS representation
-  affine: boolean;         // is this an affine value?
-  consumed: boolean;       // has this value been consumed?
-}
-```
-
-### 6.2 Registering Host Functions
-
-Host programs register functions that Clank code can call via `extern`:
-
-```typescript
-const rt = ClankRuntime.create();
-
-// Register a single function
-rt.register(
-  "read-file",                              // Clank name
-  "(path: Str) -> <io, exn> Str",           // Clank type signature
-  (path: string) => fs.readFileSync(path, "utf-8")
-);
-
-// Register a module of functions
-rt.registerModule("mylib", {
-  "greet": {
-    sig: "(name: Str) -> <> Str",
-    impl: (name: string) => `Hello, ${name}!`
-  },
-  "fetch-data": {
-    sig: "(url: Str) -> <io, exn, async> Str",
-    impl: async (url: string) => { /* ... */ }
-  }
-});
-
-// Load Clank code that uses the registered functions
-rt.loadModule(`
-  mod app.main
-  extern "mylib" greet : (name: Str) -> <> Str
-  extern "mylib" fetch-data : (url: Str) -> <io, exn, async> Str
-
-  pub main : () -> <io> () =
-    greet("world") |> print
-`);
-
-const result = rt.call("main");
-```
-
-### 6.3 Calling Clank from the Host
-
-```typescript
-const rt = ClankRuntime.create();
-
-rt.loadModule(`
-  mod math
-  pub factorial : (n: Int{>= 0}) -> <> Int =
-    if n == 0 then 1 else n * factorial(n - 1)
-
-  pub mean : (xs: [Rat]{len > 0}) -> <> Rat =
-    fold(xs, 0.0, add) / len(xs)
-`);
-
-// Call a pure Clank function
-const result = rt.call("factorial", rt.toClank(10));
-console.log(rt.toJS(result.value)); // 3628800
-
-// Call with a list
-const avg = rt.call("mean", rt.toClank([1.5, 2.5, 3.5], "[Rat]"));
-console.log(rt.toJS(avg.value)); // 2.5
-```
-
-### 6.4 Affine Value Handling in the Embedding API
-
-```typescript
-// Affine values track consumption
-const rt = ClankRuntime.create();
-rt.loadFile("db-module.clk");
-
-const conn = rt.call("pg-connect", rt.toClank("host=localhost"));
-console.log(conn.value.affine);   // true
-console.log(conn.value.consumed); // false
-
-// Using the connection (borrow)
-const rows = rt.call("pg-query", conn.value, rt.toClank("SELECT 1"));
-console.log(conn.value.consumed); // false (was borrowed)
-
-// Closing the connection (move — consumes)
-rt.call("pg-close", conn.value);
-console.log(conn.value.consumed); // true
-
-// Attempting to use again throws
-rt.call("pg-query", conn.value, rt.toClank("SELECT 2"));
-// Error: Cannot use consumed affine value of type DbConn
-```
-
-### 6.5 Effect Handling in the Embedding API
-
-The host can provide handlers for effects:
-
-```typescript
-const rt = ClankRuntime.create({
-  effects: {
-    io: true,               // enable io effect
-    exn: true,              // enable exceptions
-    async: false            // disable async (single-threaded mode)
-  }
-});
-
-// Catch Clank exceptions on the host side
-const result = rt.call("risky-function");
-if (!result.ok) {
-  console.error("Clank error:", result.error.message);
-  console.error("Effect:", result.error.effect);   // e.g., "exn"
-  console.error("Value:", result.error.value);      // the raised error value
-}
-```
-
-### 6.6 Structured Output
-
-All embedding API responses follow the same JSON envelope as the CLI tools:
-
-```typescript
-interface ClankResult {
-  ok: boolean;
-  value?: ClankValue;
-  error?: {
-    code: string;          // e.g., "E600" for affine violation
-    message: string;
-    effect?: string;       // which effect caused the error
-    value?: unknown;       // the error value (for exn)
-    location?: Location;   // source location if available
-  };
-  diagnostics: Diagnostic[];
-  timing: { total_ms: number };
-}
-```
-
----
-
-## 7. Refinement Types Across FFI
-
-### 7.1 Refinement Checking at the Boundary
+### 6.1 Refinement Checking at the Boundary
 
 Refinement predicates cannot be verified for values coming from foreign code.
 The runtime inserts **dynamic checks** at the FFI boundary for refined types:
@@ -585,7 +391,7 @@ extern "mylib" get-port : () -> <io> Int{> 0 && <= 65535}
 When `get-port` returns, the runtime checks `v > 0 && v <= 65535` at runtime.
 If the check fails, it raises `exn` with a refinement violation error.
 
-### 7.2 Refinement Rules
+### 6.2 Refinement Rules
 
 | Direction | Behavior |
 |-----------|----------|
@@ -593,7 +399,7 @@ If the check fails, it raises `exn` with a refinement violation error.
 | Foreign → Clank | Runtime check inserted. Violation raises `exn`. |
 | `where unsafe` | Runtime checks are skipped. |
 
-### 7.3 Dynamic Check Cost
+### 6.3 Dynamic Check Cost
 
 Runtime refinement checks are an unavoidable cost of FFI safety. For hot paths,
 the programmer can:
@@ -603,7 +409,7 @@ the programmer can:
 
 ---
 
-## 8. Error Code Additions
+## 7. Error Code Additions
 
 | Code | Description |
 |------|-------------|
@@ -618,9 +424,9 @@ the programmer can:
 
 ---
 
-## 9. Complete Examples
+## 8. Complete Examples
 
-### 9.1 SQLite Bindings
+### 8.1 SQLite Bindings
 
 ```
 mod db.sqlite
@@ -643,7 +449,7 @@ pub with-db : (path: Str, query: Str) -> <io, exn> [Row] =
     rows
 ```
 
-### 9.2 Node.js Crypto
+### 8.2 Node.js Crypto
 
 ```
 mod util.crypto
@@ -659,7 +465,7 @@ pub sha256 : (input: Str) -> <> Str =
   create-hash("sha256")
 ```
 
-### 9.3 Python ML Integration
+### 8.3 Python ML Integration
 
 ```
 mod ml.predict
@@ -680,39 +486,7 @@ pub train-and-predict : ([[Rat]], [Rat], [[Rat]]) -> <io, exn> [Rat] =
     preds
 ```
 
-### 9.4 Embedding: Building a Clank-Powered CLI Tool
-
-```typescript
-import { ClankRuntime } from "clank";
-
-const rt = ClankRuntime.create({ effects: { io: true, exn: true } });
-
-// Register host functions
-rt.registerModule("env", {
-  "get-arg": {
-    sig: "(n: Int{>= 0}) -> <io> Option<Str>",
-    impl: (n: number) => process.argv[n + 2] ?? null
-  },
-  "cwd": {
-    sig: "() -> <io> Str",
-    impl: () => process.cwd()
-  }
-});
-
-// Load the Clank application
-rt.loadFile("src/main.clk");
-
-// Run it
-const result = rt.call("main");
-if (!result.ok) {
-  console.error(result.error.message);
-  process.exit(1);
-}
-
-rt.dispose();
-```
-
-### 9.5 Callback Pattern: Foreign Iterator
+### 8.4 Callback Pattern: Foreign Iterator
 
 ```
 affine type CsvReader
@@ -740,7 +514,7 @@ effect counter {
 
 ---
 
-## 10. Design Rationale
+## 9. Design Rationale
 
 ### Why `extern` instead of extending `use`?
 
@@ -788,9 +562,4 @@ unusual ownership conventions, performance-critical inner loops, or host APIs th
 don't fit Clank's model. `unsafe` makes these sites explicit and linter-detectable,
 following the same philosophy as `discard` for affine values.
 
-### Why track affine consumption in the embedding API?
 
-Without consumption tracking, a host program could use-after-close a database
-connection through the embedding API, defeating the purpose of affine types. The
-`ClankValue.consumed` flag and runtime enforcement ensure that even host code
-respects resource protocols — or gets a clear error message when it doesn't.
