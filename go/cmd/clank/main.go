@@ -38,7 +38,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [command] [flags] <file.clk>\n\n")
+	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [--pretty] [command] [flags] <file.clk>\n\n")
 	fmt.Fprintf(os.Stderr, "Commands:\n")
 	fmt.Fprintf(os.Stderr, "  run [--vm]  Run a program (default)\n")
 	fmt.Fprintf(os.Stderr, "  check       Type-check a program\n")
@@ -79,6 +79,7 @@ func run() int {
 	useVM := false
 	checkMode := false
 	stdinMode := false
+	prettyMode := false
 	command := "run"
 	var file string
 	var ruleFlags []string
@@ -101,6 +102,8 @@ func run() int {
 				}
 				i++ // skip the value
 			}
+		case "--pretty":
+			prettyMode = true
 		case "--dev", "--all":
 			// boolean flags for pkg/test — just consume
 		case "--help", "-h":
@@ -166,6 +169,12 @@ func run() int {
 		return cmdPrettyTerse(string(source), command, file, jsonOut, stdinMode)
 	}
 
+	// --pretty: expand terse source to verbose form before processing
+	if prettyMode {
+		result := pretty.Transform(string(source), pretty.Pretty)
+		source = []byte(result.Source)
+	}
+
 	// Set BaseDir for module imports
 	if file != "" {
 		absPath, _ := filepath.Abs(file)
@@ -210,7 +219,7 @@ func run() int {
 		return cmdEval(desugared, jsonOut)
 	case "run":
 		// Type-check before running (parity with TS reference)
-		typeErrors := checker.TypeCheck(desugared)
+		typeErrors := checker.TypeCheckWithResolvers(desugared, nil, makeEffectAliasResolver(eval.BaseDir))
 		hasErrors := false
 		for _, te := range typeErrors {
 			if !strings.HasPrefix(te.Code, "W") {
@@ -250,6 +259,46 @@ func run() int {
 		return cmdRun(desugared, jsonOut)
 	}
 	return 0
+}
+
+// makeEffectAliasResolver builds a ModuleEffectAliasResolver that parses
+// imported module files and extracts their pub effect alias declarations.
+func makeEffectAliasResolver(baseDir string) checker.ModuleEffectAliasResolver {
+	return func(modulePath []string) map[string]*checker.EffectAliasInfo {
+		absPath, err := eval.ResolveModulePath(modulePath, baseDir)
+		if err != nil {
+			return nil
+		}
+
+		source, err := os.ReadFile(absPath)
+		if err != nil {
+			return nil
+		}
+
+		tokens, lexErr := lexer.Lex(string(source))
+		if lexErr != nil {
+			return nil
+		}
+
+		program, parseErr := parser.Parse(tokens)
+		if parseErr != nil {
+			return nil
+		}
+
+		aliases := map[string]*checker.EffectAliasInfo{}
+		for _, tl := range program.TopLevels {
+			if ea, ok := tl.(ast.TopEffectAlias); ok && ea.Pub {
+				aliases[ea.Name] = &checker.EffectAliasInfo{
+					Params:  ea.Params,
+					Effects: ea.Effects,
+				}
+			}
+		}
+		if len(aliases) == 0 {
+			return nil
+		}
+		return aliases
+	}
 }
 
 // desugarProgram applies desugaring to all definition bodies.
@@ -315,7 +364,7 @@ func cmdRunVM(program *ast.Program, jsonOut bool) int {
 
 // cmdCheck runs the type checker and reports errors.
 func cmdCheck(program *ast.Program, jsonOut bool) int {
-	typeErrors := checker.TypeCheck(program)
+	typeErrors := checker.TypeCheckWithResolvers(program, nil, makeEffectAliasResolver(eval.BaseDir))
 	if len(typeErrors) == 0 {
 		if !jsonOut {
 			fmt.Println("ok")

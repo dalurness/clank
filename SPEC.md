@@ -113,7 +113,7 @@ The type checker performs basic Hindley-Milner-style inference:
 - List and tuple construction
 - Exhaustiveness checking for match (variant registry)
 
-The checker does **not** currently enforce: refinement predicates, affine use-at-most-once, full effect row unification, or interface constraints. These are planned (see ROADMAP.md).
+The checker enforces: refinement predicates (QF_LIA micro-solver with path condition tracking), affine use-at-most-once (move/borrow/clone tracking via `affineCtx`, errors E600/E601/W600), and interface constraints (impl registry, `where`-clause validation, derived-impl verification). The checker does **not** currently enforce: full effect row unification — effect annotations are checked as flat sets; row-variable unification is not performed.
 
 ## 4. Module System
 

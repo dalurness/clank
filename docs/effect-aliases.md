@@ -360,17 +360,23 @@ could be confused with type-level union operations.
 
 ---
 
-## 9. Future Extensions
+## 9. Implementation Status (Go Port)
+
+Alias resolution is **fully wired** into the type-checking pipeline in the Go implementation:
+
+- `expandEffects()` in `internal/checker/checker.go` performs recursive alias expansion before any unification or inference.
+- `makeEffectAliasResolver()` in `cmd/clank/main.go` parses imported module files and extracts their `pub effect alias` declarations, feeding them to `TypeCheckWithResolvers()` for cross-module alias resolution.
+- Effect subtraction in alias definitions (`TopEffectAlias.Subtracted`) is fully implemented — `resolveEffectSubtraction()` handles the `web - log` pattern.
+- Alias visibility (`pub`/private) is enforced: only `pub` aliases are exported via the module resolver.
+
+---
+
+## 10. Future Extensions
 
 These are explicitly **out of scope** for this spec but noted for
 completeness:
 
-- **Effect subtraction in aliases:** `effect alias quiet-web = web - log`
-  (removing an effect from an alias). Useful but adds complexity.
 - **Handle-all-in-alias shorthand:** `handle expr { web { ... } }` to
   handle all effects in an alias at once with generated clauses.
 - **Conditional aliases:** aliases that include/exclude effects based on
   compile-time flags (e.g., debug vs. release builds).
-- **Alias export/visibility:** controlling whether an alias is public or
-  module-private. For now, aliases follow the same visibility rules as
-  other declarations.

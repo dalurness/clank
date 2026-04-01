@@ -172,3 +172,64 @@ func TestDirectionString(t *testing.T) {
 		t.Errorf("Terse.String() = %q", Terse.String())
 	}
 }
+
+func TestScopeAnalysisLetBinding(t *testing.T) {
+	// let len = 5 should prevent expanding len in the body
+	input := "let len = 5\nlen + 1"
+	got := Transform(input, Pretty)
+	if got.Source != input {
+		t.Errorf("let binding should prevent expansion: got %q, want %q", got.Source, input)
+	}
+	if got.Transformations != 0 {
+		t.Errorf("transformations = %d, want 0", got.Transformations)
+	}
+}
+
+func TestScopeAnalysisTopLevelDef(t *testing.T) {
+	// top-level definition eq : (a: Int, b: Int) -> <> Bool = ...
+	input := "eq : (a: Int, b: Int) -> <> Bool =\n  eq"
+	got := Transform(input, Pretty)
+	if got.Source != input {
+		t.Errorf("top-level def should prevent expansion: got %q, want %q", got.Source, input)
+	}
+}
+
+func TestScopeAnalysisMatchBinding(t *testing.T) {
+	// match arm: eq => print(eq) should not expand eq
+	input := "match x {\n  eq => print(eq)\n}"
+	got := Transform(input, Pretty)
+	if got.Source != input {
+		t.Errorf("match binding should prevent expansion: got %q, want %q", got.Source, input)
+	}
+}
+
+func TestScopeAnalysisLambdaParam(t *testing.T) {
+	// fn(eq) => eq should not expand eq
+	input := "fn(eq) => eq"
+	got := Transform(input, Pretty)
+	if got.Source != input {
+		t.Errorf("lambda param should prevent expansion: got %q, want %q", got.Source, input)
+	}
+}
+
+func TestScopeAnalysisDoesNotBlockQualified(t *testing.T) {
+	// Even if "len" is defined, str.len should still expand
+	input := "let len = 5\nstr.len x"
+	got := Transform(input, Pretty)
+	want := "let len = 5\nstring.length x"
+	if got.Source != want {
+		t.Errorf("qualified expansion should still work: got %q, want %q", got.Source, want)
+	}
+}
+
+func TestScopeAnalysisMultipleBindings(t *testing.T) {
+	// Multiple binding forms in one source
+	input := "eq : (a: Int) -> <> Bool =\n  let cmp = 0\n  match x {\n    cat => cat\n  }\n  fn(len) => len"
+	got := Transform(input, Pretty)
+	if got.Source != input {
+		t.Errorf("multiple bindings should prevent all expansions: got %q, want %q", got.Source, input)
+	}
+	if got.Transformations != 0 {
+		t.Errorf("transformations = %d, want 0", got.Transformations)
+	}
+}

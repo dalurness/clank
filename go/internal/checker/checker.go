@@ -39,7 +39,24 @@ type checkerState struct {
 
 	// Registries
 	implRegistry map[string][]implEntry
+
+	// Module resolution
+	moduleResolver             ModuleTypeResolver
+	moduleEffectAliasResolver  ModuleEffectAliasResolver
 }
+
+// ModuleTypeResolver resolves a module path to exported name → type.
+// Used for cross-package type checking.
+type ModuleTypeResolver func(modulePath []string) map[string]Type
+
+// EffectAliasInfo describes an exported effect alias from a module.
+type EffectAliasInfo struct {
+	Params  []string
+	Effects []ast.EffectRef
+}
+
+// ModuleEffectAliasResolver resolves a module path to exported effect aliases.
+type ModuleEffectAliasResolver func(modulePath []string) map[string]*EffectAliasInfo
 
 type fnRefInfo struct {
 	paramPreds []string // "" means no predicate
@@ -428,11 +445,23 @@ func (s *checkerState) unifyTypes(a, b Type) bool {
 			return true
 		}
 	}
+	// Borrow coercion: &T unifies with T
+	if ba, ok := ra.(TBorrow); ok {
+		if _, ok := rb.(TBorrow); !ok {
+			return s.unifyTypes(ba.Inner, rb)
+		}
+	}
+	if bb, ok := rb.(TBorrow); ok {
+		if _, ok := ra.(TBorrow); !ok {
+			return s.unifyTypes(ra, bb.Inner)
+		}
+	}
+
 	if _, ok := ra.(TGeneric); ok {
-		return true
+		return false
 	}
 	if _, ok := rb.(TGeneric); ok {
-		return true
+		return false
 	}
 
 	// Same tag — structural
@@ -465,8 +494,33 @@ func (s *checkerState) unifyTypes(a, b Type) bool {
 			return true
 		}
 		return false
+	case TRecord:
+		if rb, ok := rb.(TRecord); ok {
+			aMap := make(map[string]Type, len(ra.Fields))
+			for _, f := range ra.Fields {
+				aMap[f.Name] = f.Type
+			}
+			bMap := make(map[string]Type, len(rb.Fields))
+			for _, f := range rb.Fields {
+				bMap[f.Name] = f.Type
+			}
+			for name, at := range aMap {
+				if bt, ok := bMap[name]; ok {
+					if !s.unifyTypes(at, bt) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		return false
+	case TBorrow:
+		if rb, ok := rb.(TBorrow); ok {
+			return s.unifyTypes(ra.Inner, rb.Inner)
+		}
+		return false
 	}
-	return true
+	return false
 }
 
 func (s *checkerState) freshTypeVar() Type {
@@ -1174,11 +1228,26 @@ func showType(t Type) string {
 // ── Type equality / compatibility ──
 
 func typeEqual(a, b Type) bool {
-	if _, ok := a.(TGeneric); ok {
+	if isAnyType(a) || isAnyType(b) {
 		return true
 	}
+	// Named generics: compare structurally
+	if ga, ok := a.(TGeneric); ok {
+		if gb, ok := b.(TGeneric); ok {
+			if ga.Name != gb.Name || len(ga.Args) != len(gb.Args) {
+				return false
+			}
+			for i := range ga.Args {
+				if !typeEqual(ga.Args[i], gb.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
 	if _, ok := b.(TGeneric); ok {
-		return true
+		return false
 	}
 	if _, ok := a.(TVar); ok {
 		return true
@@ -1250,8 +1319,29 @@ func typeEqual(a, b Type) bool {
 			return true
 		}
 		return false
+	case TVariant:
+		if b, ok := b.(TVariant); ok {
+			if len(a.Variants) != len(b.Variants) {
+				return false
+			}
+			for i := range a.Variants {
+				if a.Variants[i].Name != b.Variants[i].Name {
+					return false
+				}
+				if len(a.Variants[i].Fields) != len(b.Variants[i].Fields) {
+					return false
+				}
+				for j := range a.Variants[i].Fields {
+					if !typeEqual(a.Variants[i].Fields[j], b.Variants[i].Fields[j]) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		return false
 	}
-	return true
+	return false
 }
 
 func numCompatible(a, b Type) bool {
@@ -1269,6 +1359,16 @@ func numCompatible(a, b Type) bool {
 func isAnyType(t Type) bool {
 	if g, ok := t.(TGeneric); ok {
 		return g.Name == "?"
+	}
+	return false
+}
+
+// isUnresolvedVar returns true if the type is a TVar that hasn't been bound
+// through unification (i.e., no substitution exists for it).
+func isUnresolvedVar(s *checkerState, t Type) bool {
+	if v, ok := t.(TVar); ok {
+		_, bound := s.typeSubst[v.ID]
+		return !bound
 	}
 	return false
 }
@@ -1817,7 +1917,7 @@ func (s *checkerState) hasImpl(interfaceName, typeName string, constraintTypeArg
 	// Direct impl lookup
 	for _, e := range entries {
 		if e.forType == typeName {
-			if len(constraintTypeArgs) == 0 || len(e.typeArgs) == 0 {
+			if len(constraintTypeArgs) == 0 {
 				return true
 			}
 			if len(e.typeArgs) == len(constraintTypeArgs) {
@@ -2233,10 +2333,11 @@ func (s *checkerState) inferExpr(
 			}
 			resolved := s.applyTypeSubst(returnType)
 
-			// Per-call-site specialization
+			// Per-call-site specialization for builtin interface methods
 			if v, ok := e.Fn.(ast.ExprVar); ok && len(argTypes) > 0 {
 				fnName := v.Name
-				if g, ok := resolved.(TGeneric); ok && g.Name == "?" {
+				needsSpecialization := isAnyType(resolved) || isUnresolvedVar(s, resolved)
+				if needsSpecialization {
 					if fnName == "clone" && len(argTypes) == 1 {
 						return argTypes[0]
 					}
@@ -2835,6 +2936,25 @@ func registerBuiltins(env *typeEnv) {
 	registerPolyBuiltin(env, "fst", 2, func(v []Type) Type { return NewTFn(TTuple{Elements: []Type{v[0], v[1]}}, v[0]) })
 	registerPolyBuiltin(env, "snd", 2, func(v []Type) Type { return NewTFn(TTuple{Elements: []Type{v[0], v[1]}}, v[1]) })
 	registerPolyBuiltin(env, "raise", 2, func(v []Type) Type { return NewTFn(v[0], v[1]) })
+
+	// Async / concurrency
+	env.set("async", TAny)
+	env.set("spawn", NewTFn(TAny, TAny))
+	env.set("await", NewTFn(TAny, TAny))
+	env.set("task-group", NewTFn(TAny, TAny))
+	env.set("task-yield", NewTFn(TUnit, TUnit))
+	env.set("sleep", NewTFn(TInt, TUnit))
+	env.set("is-cancelled", NewTFn(TUnit, TBool))
+	env.set("check-cancel", NewTFn(TUnit, TUnit))
+	env.set("shield", NewTFn(TAny, TAny))
+
+	// Channels
+	env.set("channel", NewTFn(TInt, TAny))
+	env.set("send", NewTFn(TAny, NewTFn(TAny, TUnit)))
+	env.set("recv", NewTFn(TAny, TAny))
+	env.set("try-recv", NewTFn(TAny, TAny))
+	env.set("close-sender", NewTFn(TAny, TUnit))
+	env.set("close-receiver", NewTFn(TAny, TUnit))
 }
 
 // ── Effect collection ──
@@ -2993,7 +3113,7 @@ func substituteEffectRefs(effects []ast.EffectRef, params, args []string) []ast.
 	return result
 }
 
-func expandEffects(effects []ast.EffectRef, aliases map[string]*effectAliasEntry) []ast.EffectRef {
+func expandEffects(effects []ast.EffectRef, aliases map[string]*effectAliasEntry, errors *[]TypeError, loc token.Loc) []ast.EffectRef {
 	resultKeys := make(map[string]bool)
 	var result []ast.EffectRef
 	seen := make(map[string]bool)
@@ -3001,6 +3121,16 @@ func expandEffects(effects []ast.EffectRef, aliases map[string]*effectAliasEntry
 	expand = func(ref ast.EffectRef) {
 		alias, ok := aliases[ref.Name]
 		if ok && !seen[ref.Name] {
+			// Arity check: number of args must match number of params
+			if len(ref.Args) != len(alias.params) {
+				if errors != nil {
+					*errors = append(*errors, TypeError{
+						Code:     "E502",
+						Message:  fmt.Sprintf("effect alias '%s' expects %d type argument(s), got %d", ref.Name, len(alias.params), len(ref.Args)),
+						Location: loc,
+					})
+				}
+			}
 			seen[ref.Name] = true
 			substituted := substituteEffectRefs(alias.effects, alias.params, ref.Args)
 			for _, eff := range substituted {
@@ -3081,19 +3211,36 @@ type interfaceEntry struct {
 
 // TypeCheck validates a program and returns any type errors.
 func TypeCheck(program *ast.Program) []TypeError {
+	return typeCheckImpl(program, nil, nil)
+}
+
+// TypeCheckWithModules validates a program with cross-package module resolution.
+func TypeCheckWithModules(program *ast.Program, resolver ModuleTypeResolver) []TypeError {
+	return typeCheckImpl(program, resolver, nil)
+}
+
+
+// TypeCheckWithResolvers validates a program with cross-package type and effect alias resolution.
+func TypeCheckWithResolvers(program *ast.Program, typeResolver ModuleTypeResolver, aliasResolver ModuleEffectAliasResolver) []TypeError {
+	return typeCheckImpl(program, typeResolver, aliasResolver)
+}
+
+func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResolver ModuleEffectAliasResolver) []TypeError {
 	var errors []TypeError
 
 	s := &checkerState{
-		fnRefInfo:       make(map[string]*fnRefInfo),
-		varRefinements:  make(map[string]string),
-		fnConstraints:   make(map[string]*fnConstraintInfo),
-		fnParamTypeExps: make(map[string][]ast.TypeExpr),
-		rowSubst:        make(map[int]*rowSubstEntry),
-		namedRowVars:    make(map[string]int),
-		typeSubst:       make(map[int]Type),
-		knownTypes:      make(map[string]bool),
-		fnTypeParamVs:   make(map[string]map[string]Type),
-		implRegistry:    make(map[string][]implEntry),
+		fnRefInfo:                  make(map[string]*fnRefInfo),
+		varRefinements:             make(map[string]string),
+		fnConstraints:              make(map[string]*fnConstraintInfo),
+		fnParamTypeExps:            make(map[string][]ast.TypeExpr),
+		rowSubst:                   make(map[int]*rowSubstEntry),
+		namedRowVars:               make(map[string]int),
+		typeSubst:                  make(map[int]Type),
+		knownTypes:                 make(map[string]bool),
+		fnTypeParamVs:              make(map[string]map[string]Type),
+		implRegistry:               make(map[string][]implEntry),
+		moduleResolver:             resolver,
+		moduleEffectAliasResolver:  aliasResolver,
 	}
 	ResetVarCounter()
 
@@ -3145,7 +3292,7 @@ func TypeCheck(program *ast.Program) []TypeError {
 	// Register interface method builtins
 	registerPolyBuiltin(env, "clone", 1, func(v []Type) Type { return NewTFn(v[0], v[0]) })
 	registerPolyBuiltin(env, "cmp", 1, func(v []Type) Type { return NewTFn(v[0], NewTFn(v[0], TGeneric{Name: "Ordering"})) })
-	registerPolyBuiltin(env, "default", 1, func(v []Type) Type { return NewTFn(TUnit, v[0]) })
+	registerPolyBuiltin(env, "default", 1, func(v []Type) Type { return NewTFn(v[0], v[0]) })
 	registerPolyBuiltin(env, "into", 2, func(v []Type) Type { return NewTFn(v[0], v[1]) })
 	registerPolyBuiltin(env, "from", 2, func(v []Type) Type { return NewTFn(v[0], v[1]) })
 
@@ -3174,15 +3321,38 @@ func TypeCheck(program *ast.Program) []TypeError {
 		case ast.TopModDecl:
 			continue
 		case ast.TopUseDecl:
+			// Resolve types and effect aliases from the imported module
+			var moduleTypes map[string]Type
+			if s.moduleResolver != nil {
+				moduleTypes = s.moduleResolver(d.Path)
+			}
+			var moduleAliases map[string]*EffectAliasInfo
+			if s.moduleEffectAliasResolver != nil {
+				moduleAliases = s.moduleEffectAliasResolver(d.Path)
+			}
 			for _, imp := range d.Imports {
-				name := imp.Name
+				localName := imp.Name
 				if imp.Alias != "" {
-					name = imp.Alias
+					localName = imp.Alias
 				}
-				env.set(name, TAny)
-				if imp.Alias != "" {
-					if ea, ok := effectAliases[imp.Name]; ok {
-						effectAliases[imp.Alias] = ea
+				// Use resolved type from module if available, otherwise fall back to TAny
+				if moduleTypes != nil {
+					if t, ok := moduleTypes[imp.Name]; ok {
+						env.set(localName, t)
+						// Clear any builtin scheme that would shadow this import
+						env.setScheme(localName, TypeScheme{})
+					} else {
+						env.set(localName, TAny)
+					}
+				} else {
+					env.set(localName, TAny)
+				}
+				// Propagate effect alias metadata under the local name
+				if ea, ok := effectAliases[imp.Name]; ok {
+					effectAliases[localName] = ea
+				} else if moduleAliases != nil {
+					if info, ok := moduleAliases[imp.Name]; ok {
+						effectAliases[localName] = &effectAliasEntry{params: info.Params, effects: info.Effects}
 					}
 				}
 			}
@@ -3243,17 +3413,29 @@ func TypeCheck(program *ast.Program) []TypeError {
 					s.implRegistry[d.Name] = nil
 				}
 				for _, m := range d.Methods {
-					retType := resolveType(m.Sig.ReturnType, s)
+					// Map Self and interface type params to fresh TVars for polymorphism
+					varMapping := make(map[string]Type)
+					var schemeVarIDs []int
+					selfID := FreshVar()
+					varMapping["Self"] = TVar{ID: selfID}
+					schemeVarIDs = append(schemeVarIDs, selfID)
+					for _, tp := range d.TypeParams {
+						tpID := FreshVar()
+						varMapping[tp] = TVar{ID: tpID}
+						schemeVarIDs = append(schemeVarIDs, tpID)
+					}
+					retType := resolveTypeWithVars(m.Sig.ReturnType, varMapping, s)
 					var fnType Type
 					if len(m.Sig.Params) == 0 {
 						fnType = NewTFn(TUnit, retType)
 					} else {
 						fnType = retType
 						for i := len(m.Sig.Params) - 1; i >= 0; i-- {
-							fnType = NewTFn(resolveType(m.Sig.Params[i].Type, s), fnType)
+							fnType = NewTFn(resolveTypeWithVars(m.Sig.Params[i].Type, varMapping, s), fnType)
 						}
 					}
 					env.set(m.Name, fnType)
+					env.setScheme(m.Name, TypeScheme{TypeVars: schemeVarIDs, Body: fnType})
 				}
 			}
 		case ast.TopImplBlock:
@@ -3345,8 +3527,8 @@ func TypeCheck(program *ast.Program) []TypeError {
 				}
 			}
 		case ast.TopEffectAlias:
-			expandedBase := expandEffects(d.Effects, effectAliases)
-			expandedSub := expandEffects(d.Subtracted, effectAliases)
+			expandedBase := expandEffects(d.Effects, effectAliases, &errors, d.Loc)
+			expandedSub := expandEffects(d.Subtracted, effectAliases, &errors, d.Loc)
 			resolved := resolveEffectSubtraction(expandedBase, expandedSub, &errors, d.Loc)
 			effectAliases[d.Name] = &effectAliasEntry{params: d.Params, effects: resolved}
 		case ast.TopEffectDecl:
@@ -3592,8 +3774,8 @@ func TypeCheck(program *ast.Program) []TypeError {
 		}
 
 		// Effect checking
-		expandedEffects := expandEffects(def.Sig.Effects, effectAliases)
-		expandedSubtracted := expandEffects(def.Sig.Subtracted, effectAliases)
+		expandedEffects := expandEffects(def.Sig.Effects, effectAliases, &errors, def.Loc)
+		expandedSubtracted := expandEffects(def.Sig.Subtracted, effectAliases, &errors, def.Loc)
 		resolvedEffects := resolveEffectSubtraction(expandedEffects, expandedSubtracted, &errors, def.Loc)
 		bodyEffects := collectEffects(def.Body, opMap, make(map[string]bool))
 		declaredEffects := make(map[string]bool, len(resolvedEffects))

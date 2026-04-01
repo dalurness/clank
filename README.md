@@ -24,32 +24,29 @@ The full language spec fits in ~2300 tokens — readable in a single context win
 
 ### Prerequisites
 
-- Node.js (v18+)
+- Go 1.22+
 
-### Install
+### Build
 
 ```bash
-git clone <repo-url> && cd clank
-npm install
+git clone <repo-url> && cd clank/go
+go build ./cmd/clank
 ```
 
 ### Run a program
 
 ```bash
 # Tree-walking interpreter (default)
-npx tsx src/main.ts test/examples/01-factorial.clk
+./clank test/examples/01-factorial.clk
 
 # Bytecode compiler + VM
-npx tsx src/main.ts --vm test/examples/01-factorial.clk
+./clank --vm test/examples/01-factorial.clk
 ```
 
 ### Run the test suite
 
 ```bash
-npm test
-
-# Or run with the VM backend
-bash test/run-tests.sh "npx tsx src/main.ts" --vm
+go test ./...
 ```
 
 ## Examples
@@ -207,41 +204,44 @@ pub mean : (xs: [Rat]{len > 0}) -> <> Rat = ...
 ```bash
 clank <file>                         # Run a .clk file (tree-walker)
 clank --vm <file>                    # Run via bytecode compiler + VM
-clank eval "<expr>"                  # Evaluate an expression
-clank eval --session repl "<expr>"   # Persistent eval session
-clank check <file|dir>               # Type-check without running
-clank lint <file|dir>                # Lint beyond type-checking
+clank eval <file>                    # Evaluate and print the result
+clank check <file>                   # Type-check without running
+clank lint <file>                    # Lint beyond type-checking
 clank lint --rule +name <file>       # Enable/disable specific rules
-clank fmt <file|dir>                 # Canonical formatting
+clank fmt <file>                     # Canonical formatting
 clank fmt --check <file>             # Check formatting (no write)
 clank doc search <query>             # Search documentation
 clank doc show <name>                # Show docs for a name
-clank test [glob]                    # Run test modules
+clank test [files...]                # Run test modules
 clank test --filter <pattern>        # Filter tests by pattern
+clank pretty <file>                  # Expand terse identifiers to verbose form
+clank terse <file>                   # Compress verbose identifiers to terse form
+clank pkg init|add|remove|resolve|verify  # Package management
 ```
 
-All output is structured JSON by default (agent-native). Use `--json` / no flag to control format.
+Use `--json` for structured JSON output (agent-native). Use `--pretty` flag to expand terse source before processing.
 
 ## Project Structure
 
 ```
-src/
-  main.ts          CLI entry point
-  lexer.ts         Tokenizer
-  parser.ts        Recursive descent parser
-  ast.ts           AST type definitions
-  desugar.ts       Pipeline/operator/do-block desugaring
-  types.ts         Type representations
-  checker.ts       Type checker
-  eval.ts          Tree-walking interpreter
-  compiler.ts      AST-to-bytecode compiler
-  vm.ts            Stack-based bytecode VM (87 opcodes)
-  builtins.ts      Built-in functions
-  builtin-registry.ts  Shared builtin registry
-  linter.ts        Linting rules
-  formatter.ts     Code formatter
-  doc.ts           Documentation extraction/search
-  diagnostics.ts   Structured error formatting
+go/
+  cmd/clank/main.go          CLI entry point (subcommands: run, check, eval, fmt, lint, doc, test, pkg, pretty, terse)
+  internal/
+    lexer/                   Tokenizer
+    parser/                  Recursive descent parser
+    ast/                     AST type definitions
+    desugar/                 Pipeline/operator/do-block desugaring
+    checker/                 Type checker (HM inference, affine, refinement, interfaces, effect aliases)
+    eval/                    Tree-walking interpreter (including async spawn/await/cancel)
+    compiler/                AST-to-bytecode compiler
+    vm/                      Stack-based bytecode VM with STM, Ref, TVar, channel/async stubs
+    pretty/                  Terse/verbose identifier transformation
+    formatter/               Source code formatter
+    linter/                  Lint rules
+    doc/                     Documentation extraction and search
+    pkg/                     Package manifest parsing and local dependency resolution
+    testrunner/              Test discovery and execution
+    token/                   Token types and source locations
 ```
 
 ## Documentation
@@ -260,30 +260,38 @@ src/
 
 ## Current Status
 
+The Go implementation (`go/`) is the active codebase. All items below refer to it.
+
 **Working:**
 - Full pipeline: lexer, parser, desugarer, type checker, tree-walking interpreter
-- Bytecode compiler + 87-opcode stack VM (via `--vm` flag)
+- Bytecode compiler + stack VM (via `--vm` flag)
 - Algebraic data types, pattern matching, recursion, closures
 - Pipeline operator (`|>`) and operator desugaring
 - Algebraic effects and effect handlers
+- Effect aliases with cross-module resolution (`makeEffectAliasResolver`)
 - Module system with imports and visibility
 - Records, tuples, lists
 - Do-blocks
-- CLI tooling: eval (with sessions), check, lint, fmt, doc, test
+- **Refinement type checking** — QF_LIA micro-solver with path condition tracking and arithmetic expression inference (E310/E311)
+- **Affine type enforcement** — move/borrow/clone tracking with `affineCtx`; use-after-move and resource-leak errors (E600/E601/W600)
+- **Interface constraints** — impl registry, `where`-clause validation, 7 built-in interfaces (Clone, Show, Eq, Ord, Default, Into, From), `deriving` auto-generation, blanket From→Into impls
+- **Software transactional memory** — `atomically`/`or-else` with write-log snapshot/restore; nested transactions merge into parent write-log
+- **FFI** — `extern` declarations compiled to `CALL_EXTERN` opcode
+- **Package manager** — `clank pkg init|add|remove|resolve|verify` with `clank.pkg` manifest and lockfile
+- **Pretty-print layer** — `clank pretty`/`clank terse` bidirectional terse/verbose transformation; `--pretty` flag on all commands
+- Row polymorphism in records (row variables unified in TRecord types)
+- HM type schemes — polymorphic builtin registration with fresh type variable instantiation per call site
+- Async spawn/await/cancel (tree-walking evaluator)
+- CLI tooling: run, eval, check, lint, fmt, doc, test, pkg, pretty, terse
 - Structured JSON diagnostics throughout
-- 50+ test files across 5 implementation phases
 
-**Specced but not yet implemented:**
-- Refinement type checking (SMT solver integration)
-- Affine type enforcement (move/borrow/clone tracking)
-- Async runtime and `<async>` effect
-- Software transactional memory (`<state>` effect at runtime)
-- FFI (`extern` declarations)
-- Package manager (`clank pkg`)
-- Pretty-print layer (terse/verbose conversion)
+**Specced but not yet implemented (Go port):**
 - WASM compilation backend
-- Row polymorphism inference
-- Workspace orchestration
+- Workspace orchestration (`clank.workspace`, `clank build`)
+- Full async runtime in the bytecode VM (VM has opcode stubs; full scheduling requires cooperative goroutine support)
+- Full effect row unification (effects are currently checked as flat sets; row-variable unification not performed)
+- Embedding API (`ClankRuntime` host-language interop)
+- `pkg search`, `pkg publish`, GitHub-backed registry
 
 See [ROADMAP.md](ROADMAP.md) for details and priorities.
 

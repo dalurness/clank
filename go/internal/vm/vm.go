@@ -56,6 +56,11 @@ type VM struct {
 	activeGroups  []int
 	asyncMode     bool
 
+	// STM transaction write-log — records pre-modification TVar state
+	// so that atomically/or-else can restore on abort.
+	txnWriteLog []tvarSnapshot
+	inTxn       bool
+
 	// I/O capture (for testing)
 	Stdout []string
 }
@@ -1015,8 +1020,57 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 			return vm.trap("E002", "TVAR_READ: expected TVar")
 		}
 		vm.push(v.Heap.TVar.Val)
-	case compiler.OpTVAR_WRITE, compiler.OpTVAR_TAKE, compiler.OpTVAR_PUT:
-		return vm.trap("E020", "STM operations not yet implemented in Go runtime")
+	case compiler.OpTVAR_WRITE:
+		newVal, _ := vm.pop()
+		tvVal, _ := vm.pop()
+		if tvVal.Tag != TagHEAP || tvVal.Heap.Kind != KindTVar {
+			return vm.trap("E002", "TVAR_WRITE: expected TVar")
+		}
+		tv := tvVal.Heap.TVar
+		if tv.Closed {
+			return vm.trap("E020", "TVAR_WRITE: TVar is closed")
+		}
+		vm.recordTVarSnapshot(tv)
+		tv.Val = newVal
+		tv.Occupied = true
+		tv.Version++
+		vm.push(ValUnit())
+	case compiler.OpTVAR_TAKE:
+		tvVal, _ := vm.pop()
+		if tvVal.Tag != TagHEAP || tvVal.Heap.Kind != KindTVar {
+			return vm.trap("E002", "TVAR_TAKE: expected TVar")
+		}
+		tv := tvVal.Heap.TVar
+		if tv.Closed {
+			return vm.trap("E020", "TVAR_TAKE: TVar is closed")
+		}
+		if !tv.Occupied {
+			return vm.trap("E020", "TVAR_TAKE: TVar is empty")
+		}
+		vm.recordTVarSnapshot(tv)
+		val := tv.Val
+		tv.Val = ValUnit()
+		tv.Occupied = false
+		tv.Version++
+		vm.push(val)
+	case compiler.OpTVAR_PUT:
+		newVal, _ := vm.pop()
+		tvVal, _ := vm.pop()
+		if tvVal.Tag != TagHEAP || tvVal.Heap.Kind != KindTVar {
+			return vm.trap("E002", "TVAR_PUT: expected TVar")
+		}
+		tv := tvVal.Heap.TVar
+		if tv.Closed {
+			return vm.trap("E020", "TVAR_PUT: TVar is closed")
+		}
+		if tv.Occupied {
+			return vm.trap("E020", "TVAR_PUT: TVar is already occupied")
+		}
+		vm.recordTVarSnapshot(tv)
+		tv.Val = newVal
+		tv.Occupied = true
+		tv.Version++
+		vm.push(ValUnit())
 
 	// ── Ref stubs ──
 	case compiler.OpREF_NEW:
@@ -1335,6 +1389,14 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 	case 9: // check-cancel
 		vm.push(ValUnit())
 		return nil
+
+	// STM builtins
+	case 65: // atomically
+		return vm.builtinAtomically()
+	case 66: // or-else
+		return vm.builtinOrElse()
+	case 67: // retry
+		return vm.trap("E020", "STM retry: no alternative branch (single-threaded runtime)")
 
 	// Cmp builtins
 	case 230, 231, 232: // cmp$Int, cmp$Rat, cmp$Str
@@ -2232,6 +2294,96 @@ func (vm *VM) builtinCloneTVar() error {
 	}
 	v.Heap.TVar.HandleCount++
 	vm.push(ValTVarVal(v.Heap.TVar))
+	return nil
+}
+
+// ── STM builtins ──
+
+// tvarSnapshot captures TVar state for rollback on transaction abort.
+type tvarSnapshot struct {
+	tv       *TVar
+	val      Value
+	occupied bool
+	version  int
+}
+
+// recordTVarSnapshot records the pre-modification state of a TVar into the
+// transaction write-log. Only the first modification per TVar per transaction
+// is recorded — subsequent modifications don't overwrite the original snapshot.
+func (vm *VM) recordTVarSnapshot(tv *TVar) {
+	if !vm.inTxn {
+		return
+	}
+	for _, s := range vm.txnWriteLog {
+		if s.tv == tv {
+			return // already recorded
+		}
+	}
+	vm.txnWriteLog = append(vm.txnWriteLog, tvarSnapshot{
+		tv: tv, val: tv.Val, occupied: tv.Occupied, version: tv.Version,
+	})
+}
+
+// restoreTVars rolls back TVars to their pre-transaction state.
+func restoreTVars(snaps []tvarSnapshot) {
+	for _, s := range snaps {
+		s.tv.Val = s.val
+		s.tv.Occupied = s.occupied
+		s.tv.Version = s.version
+	}
+}
+
+func (vm *VM) builtinAtomically() error {
+	bodyFn, _ := vm.pop()
+	prevInTxn := vm.inTxn
+	prevLog := vm.txnWriteLog
+	vm.inTxn = true
+	vm.txnWriteLog = nil
+	result, err := vm.callBuiltinFn(bodyFn, nil)
+	if err != nil {
+		// Transaction aborted — restore all TVars modified during the txn.
+		restoreTVars(vm.txnWriteLog)
+		vm.inTxn = prevInTxn
+		vm.txnWriteLog = prevLog
+		return err
+	}
+	// Commit — merge write-log into parent transaction if nested.
+	if prevInTxn {
+		prevLog = append(prevLog, vm.txnWriteLog...)
+	}
+	vm.inTxn = prevInTxn
+	vm.txnWriteLog = prevLog
+	vm.push(result)
+	return nil
+}
+
+func (vm *VM) builtinOrElse() error {
+	altFn, _ := vm.pop()
+	bodyFn, _ := vm.pop()
+	prevInTxn := vm.inTxn
+	prevLog := vm.txnWriteLog
+	vm.inTxn = true
+	vm.txnWriteLog = nil
+	result, err := vm.callBuiltinFn(bodyFn, nil)
+	if err != nil {
+		// First branch failed — restore TVars and try alternative.
+		restoreTVars(vm.txnWriteLog)
+		vm.txnWriteLog = nil
+		result, err = vm.callBuiltinFn(altFn, nil)
+		if err != nil {
+			restoreTVars(vm.txnWriteLog)
+			vm.inTxn = prevInTxn
+			vm.txnWriteLog = prevLog
+			return err
+		}
+	}
+	// Commit — merge into parent.
+	if prevInTxn {
+		prevLog = append(prevLog, vm.txnWriteLog...)
+	}
+	vm.inTxn = prevInTxn
+	vm.txnWriteLog = prevLog
+	vm.push(result)
 	return nil
 }
 

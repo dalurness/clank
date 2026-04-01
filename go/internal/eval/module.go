@@ -21,10 +21,10 @@ func resetModuleCache() {
 	moduleCache = make(map[string]map[string]Value)
 }
 
-// resolveModulePath resolves a module path (e.g. ["utils", "strings"]) to an
+// ResolveModulePath resolves a module path (e.g. ["utils", "strings"]) to an
 // absolute file path, relative to the given base directory.
 // Tries: baseDir/utils/strings.clk (directory-based), then baseDir/utils.strings.clk (flat).
-func resolveModulePath(modPath []string, baseDir string) (string, error) {
+func ResolveModulePath(modPath []string, baseDir string) (string, error) {
 	// Directory-based: utils/strings.clk
 	parts := append(modPath[:len(modPath)-1:len(modPath)-1], modPath[len(modPath)-1]+".clk")
 	dirBased := filepath.Join(append([]string{baseDir}, parts...)...)
@@ -102,7 +102,7 @@ func loadModule(absPath string, loc token.Loc) map[string]Value {
 
 		case ast.TopUseDecl:
 			// Resolve and load imported module
-			importPath, err := resolveModulePath(decl.Path, modDir)
+			importPath, err := ResolveModulePath(decl.Path, modDir)
 			if err != nil {
 				panic(runtimeError("E220", err.Error(), decl.Loc))
 			}
@@ -204,7 +204,7 @@ func loadModule(absPath string, loc token.Loc) map[string]Value {
 // HandleUseDecl processes a use declaration in the given environment.
 // baseDir is the directory of the file containing the use declaration.
 func HandleUseDecl(decl ast.TopUseDecl, env *Env, baseDir string) {
-	importPath, err := resolveModulePath(decl.Path, baseDir)
+	importPath, err := ResolveModulePath(decl.Path, baseDir)
 	if err != nil {
 		panic(runtimeError("E220", err.Error(), decl.Loc))
 	}

@@ -867,3 +867,218 @@ func TestNestedCallPerform(t *testing.T) {
 func intPtr(n int) *int {
 	return &n
 }
+
+// ── STM Tests ──
+
+func TestTVarNewAndRead(t *testing.T) {
+	// let tv = tvar-new 42 in tvar-read tv
+	result, err := runMain(nil,
+		letExpr("tv", apply(varRef("tvar-new"), []ast.Expr{litInt(42)}),
+			apply(varRef("tvar-read"), []ast.Expr{varRef("tv")})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIntResult(t, result, 42)
+}
+
+func TestTVarWrite(t *testing.T) {
+	// let tv = tvar-new 10 in
+	//   let _ = tvar-write tv 99 in
+	//     tvar-read tv
+	result, err := runMain(nil,
+		letExpr("tv", apply(varRef("tvar-new"), []ast.Expr{litInt(10)}),
+			letExpr("_w", apply(varRef("tvar-write"), []ast.Expr{varRef("tv"), litInt(99)}),
+				apply(varRef("tvar-read"), []ast.Expr{varRef("tv")}))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIntResult(t, result, 99)
+}
+
+func TestTVarTakeAndPut(t *testing.T) {
+	// let tv = tvar-new 7 in
+	//   let val = tvar-take tv in    -- val=7, tv is now empty
+	//     let _ = tvar-put tv 100 in -- tv=100
+	//       val + tvar-read tv       -- 7 + 100 = 107
+	result, err := runMain(nil,
+		letExpr("tv", apply(varRef("tvar-new"), []ast.Expr{litInt(7)}),
+			letExpr("val", apply(varRef("tvar-take"), []ast.Expr{varRef("tv")}),
+				letExpr("_p", apply(varRef("tvar-put"), []ast.Expr{varRef("tv"), litInt(100)}),
+					desugar.Desugar(infix("+", varRef("val"),
+						apply(varRef("tvar-read"), []ast.Expr{varRef("tv")})))))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIntResult(t, result, 107)
+}
+
+func TestTVarTakeEmptyTraps(t *testing.T) {
+	// let tv = tvar-new 1 in
+	//   let _ = tvar-take tv in  -- tv now empty
+	//     tvar-take tv           -- should trap
+	_, err := runMain(nil,
+		letExpr("tv", apply(varRef("tvar-new"), []ast.Expr{litInt(1)}),
+			letExpr("_", apply(varRef("tvar-take"), []ast.Expr{varRef("tv")}),
+				apply(varRef("tvar-take"), []ast.Expr{varRef("tv")}))))
+	if err == nil {
+		t.Fatal("expected trap on tvar-take of empty TVar")
+	}
+}
+
+func TestTVarPutOccupiedTraps(t *testing.T) {
+	// tvar-put (tvar-new 1) 2   -- should trap, already occupied
+	_, err := runMain(nil,
+		apply(varRef("tvar-put"), []ast.Expr{
+			apply(varRef("tvar-new"), []ast.Expr{litInt(1)}),
+			litInt(2)}))
+	if err == nil {
+		t.Fatal("expected trap on tvar-put to occupied TVar")
+	}
+}
+
+func TestAtomicallyBasic(t *testing.T) {
+	// let tv = tvar-new 10 in
+	//   atomically \-> {
+	//     let v = tvar-read tv in
+	//     let _ = tvar-write tv (v + 5) in
+	//     tvar-read tv
+	//   }
+	result, err := runMain(nil,
+		letExpr("tv", apply(varRef("tvar-new"), []ast.Expr{litInt(10)}),
+			apply(varRef("atomically"), []ast.Expr{
+				lambda(nil,
+					letExpr("v", apply(varRef("tvar-read"), []ast.Expr{varRef("tv")}),
+						letExpr("_w", apply(varRef("tvar-write"), []ast.Expr{varRef("tv"),
+							desugar.Desugar(infix("+", varRef("v"), litInt(5)))}),
+							apply(varRef("tvar-read"), []ast.Expr{varRef("tv")}))))})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIntResult(t, result, 15)
+}
+
+func TestAtomicallyRollbackOnError(t *testing.T) {
+	// Verify affine safety: if atomically body traps after tvar-take,
+	// the TVar is restored via the transaction write-log (not stack scan).
+	tv := &TVar{ID: 1, Version: 0, Val: ValInt(42), Occupied: true, HandleCount: 1}
+	vm2 := New(&compiler.BytecodeModule{})
+
+	// Enable transaction tracking and simulate tvar-take with write-log
+	vm2.inTxn = true
+	vm2.txnWriteLog = nil
+	vm2.recordTVarSnapshot(tv)
+
+	// Simulate tvar-take
+	tv.Val = ValUnit()
+	tv.Occupied = false
+	tv.Version++
+
+	// Verify it's empty now
+	if tv.Occupied {
+		t.Fatal("TVar should be empty after take")
+	}
+
+	// Abort: restore from write-log
+	restoreTVars(vm2.txnWriteLog)
+
+	// Verify restored
+	if !tv.Occupied {
+		t.Fatal("TVar should be occupied after rollback")
+	}
+	if tv.Val.Tag != TagINT || tv.Val.IntVal != 42 {
+		t.Fatalf("TVar value should be 42 after rollback, got %v", tv.Val)
+	}
+	if tv.Version != 0 {
+		t.Fatalf("TVar version should be 0 after rollback, got %d", tv.Version)
+	}
+}
+
+func TestAtomicallyRollbackTVarNotOnStack(t *testing.T) {
+	// Regression: TVar only in a closure/local (not on the data stack)
+	// must still be rolled back. The old stack-scan approach missed this.
+	tv := &TVar{ID: 1, Version: 0, Val: ValInt(100), Occupied: true, HandleCount: 1}
+	vm2 := New(&compiler.BytecodeModule{})
+
+	// TVar is NOT on the data stack — simulates it being captured in a closure
+	vm2.dataStack = nil
+	vm2.inTxn = true
+	vm2.txnWriteLog = nil
+
+	// Simulate tvar-write via the opcode path (which calls recordTVarSnapshot)
+	vm2.recordTVarSnapshot(tv)
+	tv.Val = ValInt(999)
+	tv.Version++
+
+	// Abort
+	restoreTVars(vm2.txnWriteLog)
+
+	if tv.Val.Tag != TagINT || tv.Val.IntVal != 100 {
+		t.Fatalf("expected TVar value 100 after rollback, got %v", tv.Val)
+	}
+}
+
+func TestOrElseFirstBranchSucceeds(t *testing.T) {
+	// or-else (\-> 10) (\-> 20) should return 10
+	result, err := runMain(nil,
+		apply(varRef("or-else"), []ast.Expr{
+			lambda(nil, litInt(10)),
+			lambda(nil, litInt(20)),
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIntResult(t, result, 10)
+}
+
+func TestOrElseTVarRollbackOnFirstBranchFailure(t *testing.T) {
+	// Verify that if the first branch of or-else modifies a TVar then fails,
+	// the TVar is rolled back before the second branch runs.
+	tv := &TVar{ID: 1, Version: 0, Val: ValInt(1), Occupied: true, HandleCount: 1}
+	vm2 := New(&compiler.BytecodeModule{})
+
+	// Simulate or-else first branch with write-log
+	vm2.inTxn = true
+	vm2.txnWriteLog = nil
+	vm2.recordTVarSnapshot(tv)
+
+	// First branch modifies TVar
+	tv.Val = ValInt(999)
+	tv.Version++
+
+	// First branch fails → restore from write-log
+	restoreTVars(vm2.txnWriteLog)
+
+	// TVar should be back to original
+	if tv.Val.Tag != TagINT || tv.Val.IntVal != 1 {
+		t.Fatalf("expected TVar value 1 after or-else rollback, got %v", tv.Val)
+	}
+	if tv.Version != 0 {
+		t.Fatalf("expected TVar version 0 after rollback, got %d", tv.Version)
+	}
+}
+
+func TestWriteLogDeduplicatesMultipleModifications(t *testing.T) {
+	// Only the first modification per TVar should be recorded.
+	tv := &TVar{ID: 1, Version: 0, Val: ValInt(1), Occupied: true, HandleCount: 1}
+	vm2 := New(&compiler.BytecodeModule{})
+	vm2.inTxn = true
+	vm2.txnWriteLog = nil
+
+	vm2.recordTVarSnapshot(tv)
+	tv.Val = ValInt(100)
+	tv.Version++
+
+	vm2.recordTVarSnapshot(tv) // second record — should be ignored
+	tv.Val = ValInt(200)
+	tv.Version++
+
+	if len(vm2.txnWriteLog) != 1 {
+		t.Fatalf("expected 1 write-log entry, got %d", len(vm2.txnWriteLog))
+	}
+
+	// Restore should go back to original (1), not intermediate (100)
+	restoreTVars(vm2.txnWriteLog)
+	if tv.Val.Tag != TagINT || tv.Val.IntVal != 1 {
+		t.Fatalf("expected TVar value 1, got %v", tv.Val)
+	}
+}

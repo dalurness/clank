@@ -15,6 +15,8 @@ This spec defines the runtime implementation of Clank's Software Transactional M
 
 **Out of scope:** VM opcode encoding (TASK-088), performance benchmarking, stdlib concurrent data structures.
 
+**Go implementation note:** The Go VM (`internal/vm/vm.go`) implements a simplified STM sufficient for single-threaded execution. It uses a **write-log** (`txnWriteLog []tvarSnapshot`) that records the pre-modification value of each TVar on first write within a transaction. On abort, it restores all snapshotted TVars. There is no global version clock, no read set, and no commit-time validation — these full-concurrency mechanisms are not needed in the single-threaded Go evaluator. Nested `atomically` calls are supported via write-log save/restore/merge (see §9.4).
+
 ---
 
 ## 2. TVar Heap Object Layout
@@ -583,9 +585,13 @@ The only continuation-like behavior is transaction restart (abort → re-execute
 
 ### 9.4 Nested `atomically`
 
-Nested `atomically` calls are **not supported** in v1. If a transaction body calls `atomically`, this is a runtime error (`TRAP_STM_NESTED`). The type system should prevent this statically (the body has effect `<stm | e>` where `e` excludes `shared`, and `atomically` requires `<shared>`), but the runtime check is a safety net.
+**Go implementation note:** The Go VM (`internal/vm/vm.go`) **does support** nested `atomically` calls. A nested call saves the parent write-log (`prevLog`), starts a fresh `txnWriteLog`, and on commit merges its entries back into `prevLog`. On abort it restores TVars from the nested write-log and restores `prevLog` unchanged. This provides flat nesting (inner commits are provisional until the outermost transaction commits).
 
-**Rationale:** Nested transactions require either flat nesting (inner commits are provisional) or closed nesting (inner transactions are sub-transactions). Both add significant complexity. Clank's STM is composable — instead of nesting `atomically`, compose STM actions within a single `atomically` block.
+**Original spec (v1 design):** Nested `atomically` calls are **not supported** in v1. If a transaction body calls `atomically`, this is a runtime error (`TRAP_STM_NESTED`). The type system should prevent this statically (the body has effect `<stm | e>` where `e` excludes `shared`, and `atomically` requires `<shared>`), but the runtime check is a safety net.
+
+**Rationale for original design:** Nested transactions require either flat nesting (inner commits are provisional) or closed nesting (inner transactions are sub-transactions). Both add significant complexity. Clank's STM is composable — instead of nesting `atomically`, compose STM actions within a single `atomically` block.
+
+**Implementation divergence:** The Go port chose flat nesting for simplicity and composability. The v1 spec's restriction may be revisited.
 
 ---
 
@@ -718,5 +724,5 @@ atomically \-> {
 | Retry blocking | TVar wait queues + async scheduler integration | Efficient (no polling); reuses existing task suspension |
 | Contention management | Exponential backoff with jitter | Simple, effective, well-understood |
 | GC integration | Supplementary root registration | No special GC logic; existing mark-sweep suffices |
-| Nested atomically | Disallowed (runtime trap) | Complexity not justified; compose STM actions instead |
+| Nested atomically | Supported in Go port (flat nesting, write-log merge); original v1 spec disallowed it | Go port chose composability; original rationale was complexity |
 | Or-else | Checkpoint + truncate | Append-only sets make rollback trivial |

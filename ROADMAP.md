@@ -4,6 +4,50 @@ Current state of the implementation and what's next.
 
 ---
 
+## Go Port Status (Phase 39)
+
+The Go implementation (`go/`) is the active codebase. The TypeScript reference implementation (`src/`) is archived.
+
+### ✅ Completed in Go Port
+
+- Core pipeline: lexer, parser, desugarer, type checker, tree-walking interpreter, bytecode compiler, stack VM
+- All core language features: ADTs, pattern matching, effects/handlers, modules, records, tuples, lists, do-blocks, closures, recursion
+- **Effect alias propagation with cross-module resolution** — `makeEffectAliasResolver` wired into type checker; imported aliases expand correctly across module boundaries
+- **Refinement types (micro-solver)** — QF_LIA Fourier-Motzkin solver with path condition tracking, arithmetic expression inference, match-arm propagation (E310/E311)
+- **Affine type enforcement** — `affineCtx` tracks move/borrow/clone; raises E600 (use-after-move), E601 (not consumed), W600 (branch inconsistency)
+- **Interface constraint validation** — impl registry with `where`-clause enforcement; 7 built-in interfaces (Clone, Show, Eq, Ord, Default, Into, From); `deriving` auto-generation; blanket From→Into; cross-package type checking via `ModuleTypeResolver`
+- **Structural type comparison (typeEqual)** — fixed overly-permissive `t-generic` handling; `typeEqual` now compares named generics structurally
+- **STM / affine ownership fix** — `txnWriteLog` write-log with `recordTVarSnapshot()`; `builtinAtomically`/`builtinOrElse` snapshot/restore on abort; nested `atomically` merges write-log into parent transaction
+- **Polymorphic builtins (HM)** — `registerPolyBuiltin` with fresh type variable instantiation per call site; HM let-polymorphism for user-defined functions
+- **Pretty-print layer** — `internal/pretty/` with `transform.go` and `expansion.go`; `clank pretty`/`clank terse` subcommands; `--pretty` flag on all commands
+- **Package manager** — `clank pkg init|add|remove|resolve|verify` with `clank.pkg` manifest, `clank.lock` lockfile
+- **Deriving Default** — `default(None)` type-checks correctly; derivable interfaces include Default
+- Row polymorphism in records (row variables in TRecord, unification support)
+- Async spawn/await/cancel in tree-walking evaluator (`internal/eval/async.go`)
+- FFI via `CALL_EXTERN` opcode in compiler and VM
+- CLI tooling: `run`, `check`, `eval`, `fmt`, `lint`, `doc`, `test`, `pkg`, `pretty`, `terse`
+- Linter, formatter, doc search/show, test runner with `--filter`
+
+### 🔲 Remaining Gaps (Go Port)
+
+- **Full effect row unification** — effect annotations checked as flat sets; row-variable unification not performed; effect subtyping not enforced
+- **WASM compilation backend** — not started; requires WASM 3.0 GC
+- **Workspace orchestration** — `clank.workspace` manifest, `clank build`, parallel member builds, workspace lockfile not in Go port
+- **Full async VM runtime** — VM has opcode stubs (`OpTASK_SPAWN`, `OpTASK_AWAIT`, etc.) but cooperative goroutine scheduling is not implemented; async works in tree-walker only
+- **Embedding API** — no `ClankRuntime` host-language interop equivalent in Go port
+- **Extended package registry** — `pkg search`, `pkg publish`, GitHub-backed registry not in Go port
+- **Composite literal type inference** — some composite literals fall through to `TAny`; Clone checking only works on annotated types
+- **`ref-swap` builtin** — spec says CAS-loop but no builtin entry
+- **`http.stream-lines` / `proc.stream` / `io.stdin-lines`** — true demand-driven streaming not implemented in Go port
+
+---
+
+## TypeScript Reference Implementation (Archived)
+
+The following describes the TypeScript implementation history. The Go port supersedes it.
+
+---
+
 ## What's Complete and Working
 
 ### Core Language Pipeline
