@@ -1,5 +1,0 @@
-### [TASK-186] (high)
-### [TASK-182] (high)
-### [TASK-183] (high)
-### [TASK-184] (normal)
-### [TASK-185] (normal)

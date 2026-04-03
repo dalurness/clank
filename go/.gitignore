@@ -1,0 +1,9 @@
+clank
+state.json
+queue/
+work/
+history/
+done.md
+log/
+inbox/
+outbox/
