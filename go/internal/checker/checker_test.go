@@ -604,3 +604,314 @@ func TestParameterizedConstraintMatchingTypeArgsPass(t *testing.T) {
 		}
 	}
 }
+
+// ── Effect row variable unification ──
+
+func TestEffectRowVariableOpenRow(t *testing.T) {
+	// A function with effect row variable <E, io> should accept a body
+	// performing io without W401 errors. The E is an open tail.
+	loc := token.Loc{Line: 1, Col: 1}
+	program := &ast.Program{
+		TopLevels: []ast.TopLevel{
+			ast.TopEffectDecl{
+				Name: "io",
+				Ops: []ast.OpSig{
+					{Name: "print_line", Sig: ast.TypeSig{
+						Params:     []ast.TypeSigParam{{Name: "msg", Type: ast.TypeName{Name: "Str"}}},
+						ReturnType: ast.TypeName{Name: "()"},
+					}},
+				},
+				Loc: loc,
+			},
+			ast.TopEffectDecl{
+				Name: "exn",
+				Ops: []ast.OpSig{
+					{Name: "raise", Sig: ast.TypeSig{
+						Params:     []ast.TypeSigParam{{Name: "msg", Type: ast.TypeName{Name: "Str"}}},
+						ReturnType: ast.TypeName{Name: "()"},
+					}},
+				},
+				Loc: loc,
+			},
+			ast.TopDefinition{
+				Name: "greet",
+				Sig: ast.TypeSig{
+					Params:     []ast.TypeSigParam{{Name: "name", Type: ast.TypeName{Name: "Str"}}},
+					Effects:    []ast.EffectRef{{Name: "E"}, {Name: "io"}},
+					ReturnType: ast.TypeName{Name: "()"},
+				},
+				Body: ast.ExprPerform{
+					Expr: ast.ExprApply{
+						Fn:   ast.ExprVar{Name: "print_line", Loc: loc},
+						Args: []ast.Expr{ast.ExprVar{Name: "name", Loc: loc}},
+						Loc:  loc,
+					},
+					Loc: loc,
+				},
+				Loc: loc,
+			},
+			ast.TopDefinition{
+				Name: "main",
+				Sig: ast.TypeSig{
+					Params:     nil,
+					Effects:    []ast.EffectRef{{Name: "io"}},
+					ReturnType: ast.TypeName{Name: "()"},
+				},
+				Body: ast.ExprLiteral{Value: ast.LitUnit{}, Loc: loc},
+				Loc:  loc,
+			},
+		},
+	}
+
+	errors := TypeCheck(program)
+	for _, e := range errors {
+		if e.Code == "W401" {
+			t.Errorf("effect row variable <E, io> should allow io in body, got: %s", e.Error())
+		}
+	}
+}
+
+func TestEffectRowVariableAbsorbsExtra(t *testing.T) {
+	// A function with <E, io> should also allow performing exn (absorbed by E).
+	loc := token.Loc{Line: 1, Col: 1}
+	program := &ast.Program{
+		TopLevels: []ast.TopLevel{
+			ast.TopEffectDecl{
+				Name: "io",
+				Ops: []ast.OpSig{
+					{Name: "print_line", Sig: ast.TypeSig{
+						Params:     []ast.TypeSigParam{{Name: "msg", Type: ast.TypeName{Name: "Str"}}},
+						ReturnType: ast.TypeName{Name: "()"},
+					}},
+				},
+				Loc: loc,
+			},
+			ast.TopEffectDecl{
+				Name: "exn",
+				Ops: []ast.OpSig{
+					{Name: "raise", Sig: ast.TypeSig{
+						Params:     []ast.TypeSigParam{{Name: "msg", Type: ast.TypeName{Name: "Str"}}},
+						ReturnType: ast.TypeName{Name: "()"},
+					}},
+				},
+				Loc: loc,
+			},
+			ast.TopDefinition{
+				Name: "risky_greet",
+				Sig: ast.TypeSig{
+					Params:     []ast.TypeSigParam{{Name: "name", Type: ast.TypeName{Name: "Str"}}},
+					Effects:    []ast.EffectRef{{Name: "E"}, {Name: "io"}},
+					ReturnType: ast.TypeName{Name: "()"},
+				},
+				Body: ast.ExprLet{
+					Name: "_",
+					Value: ast.ExprPerform{
+						Expr: ast.ExprApply{
+							Fn:   ast.ExprVar{Name: "print_line", Loc: loc},
+							Args: []ast.Expr{ast.ExprVar{Name: "name", Loc: loc}},
+							Loc:  loc,
+						},
+						Loc: loc,
+					},
+					Body: ast.ExprPerform{
+						Expr: ast.ExprApply{
+							Fn:   ast.ExprVar{Name: "raise", Loc: loc},
+							Args: []ast.Expr{ast.ExprLiteral{Value: ast.LitStr{Value: "error"}, Loc: loc}},
+							Loc:  loc,
+						},
+						Loc: loc,
+					},
+					Loc: loc,
+				},
+				Loc: loc,
+			},
+			ast.TopDefinition{
+				Name: "main",
+				Sig: ast.TypeSig{
+					Params:     nil,
+					Effects:    []ast.EffectRef{{Name: "io"}},
+					ReturnType: ast.TypeName{Name: "()"},
+				},
+				Body: ast.ExprLiteral{Value: ast.LitUnit{}, Loc: loc},
+				Loc:  loc,
+			},
+		},
+	}
+
+	errors := TypeCheck(program)
+	for _, e := range errors {
+		if e.Code == "W401" {
+			t.Errorf("effect row variable <E, io> should absorb exn via E, got: %s", e.Error())
+		}
+	}
+}
+
+func TestEffectSubtypingSubsetAllowed(t *testing.T) {
+	// A closed row <io> should be accepted where <io, exn> is expected (subset).
+	// Declaring <io, exn> but only performing io should pass (already worked).
+	loc := token.Loc{Line: 1, Col: 1}
+	program := &ast.Program{
+		TopLevels: []ast.TopLevel{
+			ast.TopEffectDecl{
+				Name: "io",
+				Ops: []ast.OpSig{
+					{Name: "print_line", Sig: ast.TypeSig{
+						Params:     []ast.TypeSigParam{{Name: "msg", Type: ast.TypeName{Name: "Str"}}},
+						ReturnType: ast.TypeName{Name: "()"},
+					}},
+				},
+				Loc: loc,
+			},
+			ast.TopEffectDecl{
+				Name: "exn",
+				Ops: []ast.OpSig{
+					{Name: "raise", Sig: ast.TypeSig{
+						Params:     []ast.TypeSigParam{{Name: "msg", Type: ast.TypeName{Name: "Str"}}},
+						ReturnType: ast.TypeName{Name: "()"},
+					}},
+				},
+				Loc: loc,
+			},
+			ast.TopDefinition{
+				Name: "safe_fn",
+				Sig: ast.TypeSig{
+					Params:     nil,
+					Effects:    []ast.EffectRef{{Name: "io"}, {Name: "exn"}},
+					ReturnType: ast.TypeName{Name: "()"},
+				},
+				Body: ast.ExprPerform{
+					Expr: ast.ExprApply{
+						Fn:   ast.ExprVar{Name: "print_line", Loc: loc},
+						Args: []ast.Expr{ast.ExprLiteral{Value: ast.LitStr{Value: "hello"}, Loc: loc}},
+						Loc:  loc,
+					},
+					Loc: loc,
+				},
+				Loc: loc,
+			},
+			ast.TopDefinition{
+				Name: "main",
+				Sig: ast.TypeSig{
+					Params:     nil,
+					Effects:    []ast.EffectRef{{Name: "io"}},
+					ReturnType: ast.TypeName{Name: "()"},
+				},
+				Body: ast.ExprLiteral{Value: ast.LitUnit{}, Loc: loc},
+				Loc:  loc,
+			},
+		},
+	}
+
+	errors := TypeCheck(program)
+	for _, e := range errors {
+		if e.Code == "W401" {
+			t.Errorf("declaring <io, exn> but only performing io should be fine, got: %s", e.Error())
+		}
+	}
+}
+
+func TestEffectRowUnification(t *testing.T) {
+	// Test that unifyEffectRows correctly binds row variables.
+	ResetVarCounter()
+	s := &checkerState{
+		effectRowSubst: make(map[int]*effectRowSubstEntry),
+		rowSubst:       make(map[int]*rowSubstEntry),
+		typeSubst:      make(map[int]Type),
+		knownTypes:     make(map[string]bool),
+	}
+
+	// Row a: <E, io> where E is var 100
+	rowA := []Effect{EVar{ID: 100}, ENamed{Name: "io"}}
+	// Row b: <io, exn> (closed)
+	rowB := []Effect{ENamed{Name: "io"}, ENamed{Name: "exn"}}
+
+	var errs []TypeError
+	ok := s.unifyEffectRows(rowA, rowB, &errs, token.Loc{})
+	if !ok {
+		t.Fatalf("unifyEffectRows should succeed, got errors: %v", errs)
+	}
+
+	// E (var 100) should now be bound to contain exn
+	sub, exists := s.effectRowSubst[100]
+	if !exists {
+		t.Fatal("expected effect row var 100 to be substituted")
+	}
+	foundExn := false
+	for _, e := range sub.effects {
+		if n, ok := e.(ENamed); ok && n.Name == "exn" {
+			foundExn = true
+		}
+	}
+	if !foundExn {
+		t.Errorf("expected E to absorb 'exn', got: %v", sub.effects)
+	}
+}
+
+func TestEffectRowSubsetCheck(t *testing.T) {
+	// <io> is a subset of <io, exn>
+	s := &checkerState{
+		effectRowSubst: make(map[int]*effectRowSubstEntry),
+	}
+
+	sub := []Effect{ENamed{Name: "io"}}
+	sup := []Effect{ENamed{Name: "io"}, ENamed{Name: "exn"}}
+
+	if !s.effectRowIsSubset(sub, sup) {
+		t.Error("<io> should be a subset of <io, exn>")
+	}
+
+	// <io, exn> is NOT a subset of <io>
+	if s.effectRowIsSubset(sup, sub) {
+		t.Error("<io, exn> should NOT be a subset of <io>")
+	}
+}
+
+func TestExtractTypeBindingsCompositeWithTAny(t *testing.T) {
+	// Regression: composites containing tAny (e.g. {x: Int, y: ?}) should still
+	// produce a binding via showType fallback, not silently skip.
+
+	// Record with a tAny field: {x: Int, y: ?}
+	recType := TRecord{
+		Fields: []RecordField{
+			{Name: "x", Type: TPrimitive{Name: "int"}},
+			{Name: "y", Type: TGeneric{Name: "?"}},
+		},
+		RowVar: -1,
+	}
+	paramExpr := ast.TypeName{Name: "T"}
+	bindings := map[string]string{}
+	extractTypeBindings(paramExpr, recType, bindings)
+
+	if val, ok := bindings["T"]; !ok {
+		t.Error("expected T to be bound for record containing tAny, but it was not")
+	} else if val == "" {
+		t.Error("expected T binding to be non-empty")
+	} else {
+		// showType should produce something like "{x: Int, y: ?}"
+		if !strings.Contains(val, "x:") {
+			t.Errorf("expected T binding to contain field name, got: %s", val)
+		}
+	}
+
+	// List with tAny element: [?]
+	listType := TList{Element: TGeneric{Name: "?"}}
+	bindings2 := map[string]string{}
+	extractTypeBindings(paramExpr, listType, bindings2)
+
+	if val, ok := bindings2["T"]; !ok {
+		t.Error("expected T to be bound for list containing tAny, but it was not")
+	} else if val == "" {
+		t.Error("expected T binding to be non-empty")
+	}
+
+	// Tuple with tAny element: (Int, ?)
+	tupleType := TTuple{Elements: []Type{TPrimitive{Name: "int"}, TGeneric{Name: "?"}}}
+	bindings3 := map[string]string{}
+	extractTypeBindings(paramExpr, tupleType, bindings3)
+
+	if val, ok := bindings3["T"]; !ok {
+		t.Error("expected T to be bound for tuple containing tAny, but it was not")
+	} else if val == "" {
+		t.Error("expected T binding to be non-empty")
+	}
+}

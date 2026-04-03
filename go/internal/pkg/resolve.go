@@ -7,6 +7,82 @@ import (
 	"strings"
 )
 
+// globalCacheDirOverride allows tests to redirect the cache to a temp directory.
+var globalCacheDirOverride string
+
+// GlobalCacheDir returns the machine-level package cache directory (~/.clank/cache/).
+func GlobalCacheDir() string {
+	if globalCacheDirOverride != "" {
+		return globalCacheDirOverride
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".clank", "cache")
+}
+
+// CachedPackagePath returns the path for a specific package version in the global cache.
+func CachedPackagePath(name, version string) string {
+	cacheDir := GlobalCacheDir()
+	if cacheDir == "" {
+		return ""
+	}
+	return filepath.Join(cacheDir, fmt.Sprintf("%s@%s", name, version))
+}
+
+// InstallToCache copies a package from sourcePath into the global cache.
+// Returns the cache path. If the package is already cached, returns immediately.
+func InstallToCache(name, version, sourcePath string) (string, error) {
+	cachePath := CachedPackagePath(name, version)
+	if cachePath == "" {
+		return "", fmt.Errorf("cannot determine cache directory")
+	}
+
+	// Already cached — check for clank.pkg
+	if _, err := os.Stat(filepath.Join(cachePath, "clank.pkg")); err == nil {
+		return cachePath, nil
+	}
+
+	// Copy source into cache
+	if err := os.MkdirAll(cachePath, 0755); err != nil {
+		return "", fmt.Errorf("creating cache dir: %w", err)
+	}
+	if err := copyDir(sourcePath, cachePath); err != nil {
+		os.RemoveAll(cachePath)
+		return "", fmt.Errorf("copying to cache: %w", err)
+	}
+	return cachePath, nil
+}
+
+func copyDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		if entry.IsDir() {
+			if err := os.MkdirAll(dstPath, 0755); err != nil {
+				return err
+			}
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				return err
+			}
+			if err := os.WriteFile(dstPath, data, 0644); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ResolvedDep is a resolved local dependency with its discovered modules.
 type ResolvedDep struct {
 	Name     string
@@ -128,6 +204,48 @@ func resolveLocalDep(dep Dependency, baseDir string, resolved *[]ResolvedDep, vi
 	return nil
 }
 
+// resolveCachedDep looks up a dependency in the global cache directory.
+// It scans for entries matching <name>@<version> and picks the first match
+// that satisfies the dependency's constraint.
+func resolveCachedDep(dep Dependency, cacheDir string, resolved *[]ResolvedDep, resolvedNames map[string]bool) error {
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return err
+	}
+
+	prefix := dep.Name + "@"
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		version := strings.TrimPrefix(entry.Name(), prefix)
+		if !VersionSatisfies(version, dep.Constraint) {
+			continue
+		}
+
+		depPath := filepath.Join(cacheDir, entry.Name())
+		depManifestPath := filepath.Join(depPath, "clank.pkg")
+		if _, err := os.Stat(depManifestPath); os.IsNotExist(err) {
+			continue
+		}
+		depManifest, err := LoadManifest(depManifestPath)
+		if err != nil {
+			continue
+		}
+		modules := DiscoverModules(depPath, depManifest.Name)
+		*resolved = append(*resolved, ResolvedDep{
+			Name:     depManifest.Name,
+			Manifest: depManifest,
+			Path:     depPath,
+			Modules:  modules,
+		})
+		resolvedNames[depManifest.Name] = true
+		return nil
+	}
+
+	return fmt.Errorf("package %s not found in cache", dep.Name)
+}
+
 // ── Module discovery ──
 
 // DiscoverModules finds all .clk files in a package's src/ directory.
@@ -181,38 +299,33 @@ func ResolvePackages(manifestPath string, includeDev bool) (*PackageResolution, 
 		return nil, err
 	}
 
-	// Also pick up installed deps from .clank/deps/
-	depsDir := filepath.Join(manifestDir, ".clank", "deps")
-	if info, err := os.Stat(depsDir); err == nil && info.IsDir() {
+	// Also pick up installed deps from ~/.clank/cache/
+	cacheDir := GlobalCacheDir()
+	if cacheDir != "" {
 		resolvedNames := make(map[string]bool)
 		for _, p := range packages {
 			resolvedNames[p.Name] = true
 		}
-		entries, _ := os.ReadDir(depsDir)
-		for _, entry := range entries {
-			if resolvedNames[entry.Name()] {
-				continue
+
+		// Collect all non-local deps from manifest
+		allDeps := make(map[string]Dependency)
+		for k, v := range manifest.Deps {
+			allDeps[k] = v
+		}
+		if includeDev {
+			for k, v := range manifest.DevDeps {
+				allDeps[k] = v
 			}
-			depPath := filepath.Join(depsDir, entry.Name())
-			realPath, err := filepath.EvalSymlinks(depPath)
-			if err != nil {
-				continue
+		}
+
+		for _, dep := range sortedDeps(allDeps) {
+			if dep.Path != "" || resolvedNames[dep.Name] {
+				continue // skip local and already-resolved deps
 			}
-			depManifestPath := filepath.Join(realPath, "clank.pkg")
-			if _, err := os.Stat(depManifestPath); os.IsNotExist(err) {
-				continue
+			// Check global cache for this dep
+			if err := resolveCachedDep(dep, cacheDir, &packages, resolvedNames); err != nil {
+				continue // silently skip unresolvable cached deps
 			}
-			depManifest, err := LoadManifest(depManifestPath)
-			if err != nil {
-				continue
-			}
-			modules := DiscoverModules(realPath, depManifest.Name)
-			packages = append(packages, ResolvedDep{
-				Name:     depManifest.Name,
-				Manifest: depManifest,
-				Path:     realPath,
-				Modules:  modules,
-			})
 		}
 	}
 

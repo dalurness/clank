@@ -149,16 +149,19 @@ func ParseLockfile(source string) (*Lockfile, error) {
 
 // GenerateLockfile creates a lockfile from the resolved dependencies.
 func GenerateLockfile(manifestPath string, includeDev bool) (*Lockfile, error) {
-	manifest, err := LoadManifest(manifestPath)
+	resolution, err := ResolvePackages(manifestPath, includeDev)
 	if err != nil {
 		return nil, err
 	}
-	manifestDir := filepath.Dir(manifestPath)
-	packages, err := ResolveLocalDeps(manifest, manifestDir, includeDev)
-	if err != nil {
-		return nil, err
-	}
+	return GenerateLockfileFromResolution(manifestPath, resolution)
+}
 
+// GenerateLockfileFromResolution creates a lockfile from an already-resolved package set.
+func GenerateLockfileFromResolution(manifestPath string, resolution *PackageResolution) (*Lockfile, error) {
+	manifestDir := filepath.Dir(manifestPath)
+	packages := resolution.Packages
+
+	cacheDir := GlobalCacheDir()
 	lockPackages := make(map[string]LockPackage)
 	for _, p := range packages {
 		key := fmt.Sprintf("%s@%s", p.Name, p.Manifest.Version)
@@ -173,10 +176,18 @@ func GenerateLockfile(manifestPath string, includeDev bool) (*Lockfile, error) {
 			}
 		}
 
-		relPath, _ := filepath.Rel(manifestDir, p.Path)
+		// Determine resolved source: cache: if under global cache, path: otherwise
+		resolved := ""
+		if cacheDir != "" && strings.HasPrefix(p.Path, cacheDir) {
+			resolved = "cache:" + filepath.Base(p.Path)
+		} else {
+			relPath, _ := filepath.Rel(manifestDir, p.Path)
+			resolved = "path:" + relPath
+		}
+
 		lockPackages[key] = LockPackage{
 			Version:   p.Manifest.Version,
-			Resolved:  "path:" + relPath,
+			Resolved:  resolved,
 			Integrity: computeIntegrity(p.Path),
 			Deps:      deps,
 			Effects:   effects,

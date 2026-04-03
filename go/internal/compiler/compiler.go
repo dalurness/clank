@@ -48,7 +48,7 @@ var vmBuiltins = map[string]int{
 	"show$List": 250, "eq$List": 251, "clone$List": 252,
 	"show$Tuple": 253, "eq$Tuple": 254, "clone$Tuple": 255,
 	"cmp$List": 256, "cmp$Tuple": 257,
-	"clone$Ref": 258, "clone$TVar": 259,
+	"clone$Ref": 258, "clone$TVar": 259, "ref-swap": 260,
 	// Tier 2
 	"http.get": 120, "http.post": 121, "http.put": 122, "http.del": 123,
 	"http.patch": 124, "http.req": 125, "http.hdr": 126, "http.json": 127, "http.ok?": 128,
@@ -330,13 +330,18 @@ func (c *Compiler) firstPass(tl ast.TopLevel) {
 		c.allocWordID(t.Name)
 	case ast.TopTypeDecl:
 		for _, v := range t.Variants {
-			tag := c.nextVarTag
-			c.nextVarTag++
-			c.variantInfos[v.Name] = variantInfo{tag: tag, arity: len(v.Fields)}
-			for len(c.variantNames) <= tag {
-				c.variantNames = append(c.variantNames, "")
+			if existing, ok := c.variantInfos[v.Name]; ok {
+				// Reuse existing tag, update arity from user definition
+				c.variantInfos[v.Name] = variantInfo{tag: existing.tag, arity: len(v.Fields)}
+			} else {
+				tag := c.nextVarTag
+				c.nextVarTag++
+				c.variantInfos[v.Name] = variantInfo{tag: tag, arity: len(v.Fields)}
+				for len(c.variantNames) <= tag {
+					c.variantNames = append(c.variantNames, "")
+				}
+				c.variantNames[tag] = v.Name
 			}
-			c.variantNames[tag] = v.Name
 		}
 		if len(t.Deriving) > 0 {
 			c.registerDerivedImplIDs(t.Variants, t.Deriving)

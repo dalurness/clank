@@ -31,11 +31,13 @@ type checkerState struct {
 	fnParamTypeExps map[string][]ast.TypeExpr
 
 	// Row/type variable substitution
-	rowSubst      map[int]*rowSubstEntry
-	namedRowVars  map[string]int
-	typeSubst     map[int]Type
-	knownTypes    map[string]bool
-	fnTypeParamVs map[string]map[string]Type
+	rowSubst         map[int]*rowSubstEntry
+	effectRowSubst   map[int]*effectRowSubstEntry
+	namedRowVars     map[string]int
+	namedEffectVars  map[string]int
+	typeSubst        map[int]Type
+	knownTypes       map[string]bool
+	fnTypeParamVs    map[string]map[string]Type
 
 	// Registries
 	implRegistry map[string][]implEntry
@@ -71,6 +73,11 @@ type fnConstraintInfo struct {
 type rowSubstEntry struct {
 	fields []RecordField
 	tail   int // -1 if none
+}
+
+type effectRowSubstEntry struct {
+	effects []Effect // concrete named effects
+	tail    int      // -1 if none
 }
 
 type implEntry struct {
@@ -473,7 +480,14 @@ func (s *checkerState) unifyTypes(a, b Type) bool {
 		return false
 	case TFn:
 		if rb, ok := rb.(TFn); ok {
-			return s.unifyTypes(ra.Param, rb.Param) && s.unifyTypes(ra.Result, rb.Result)
+			if !s.unifyTypes(ra.Param, rb.Param) || !s.unifyTypes(ra.Result, rb.Result) {
+				return false
+			}
+			// Unify effect rows if either side has effects
+			if len(ra.Effects) > 0 || len(rb.Effects) > 0 {
+				return s.unifyEffectRows(ra.Effects, rb.Effects, &[]TypeError{}, token.Loc{})
+			}
+			return true
 		}
 		return false
 	case TList:
@@ -653,7 +667,11 @@ func (s *checkerState) applyRowSubst(t Type) Type {
 		}
 		return TRecord{Fields: resolvedFields, RowVar: -1}
 	case TFn:
-		return TFn{Param: s.applyRowSubst(t.Param), Result: s.applyRowSubst(t.Result), Effects: t.Effects}
+		resolvedEffects, tail := s.applyEffectRowSubst(t.Effects)
+		if tail >= 0 {
+			resolvedEffects = append(resolvedEffects, EVar{ID: tail})
+		}
+		return TFn{Param: s.applyRowSubst(t.Param), Result: s.applyRowSubst(t.Result), Effects: resolvedEffects}
 	case TList:
 		return TList{Element: s.applyRowSubst(t.Element)}
 	case TTuple:
@@ -717,7 +735,15 @@ func (s *checkerState) freshenRowVars(t Type, mapping map[int]int) Type {
 		}
 		return TRecord{Fields: fields, RowVar: rv}
 	case TFn:
-		return TFn{Param: s.freshenRowVars(t.Param, mapping), Result: s.freshenRowVars(t.Result, mapping), Effects: t.Effects}
+		var freshEffects []Effect
+		for _, e := range t.Effects {
+			if ev, ok := e.(EVar); ok {
+				freshEffects = append(freshEffects, EVar{ID: freshenID(ev.ID)})
+			} else {
+				freshEffects = append(freshEffects, e)
+			}
+		}
+		return TFn{Param: s.freshenRowVars(t.Param, mapping), Result: s.freshenRowVars(t.Result, mapping), Effects: freshEffects}
 	case TList:
 		return TList{Element: s.freshenRowVars(t.Element, mapping)}
 	case TTuple:
@@ -835,6 +861,161 @@ func (s *checkerState) unifyRecords(
 	return true
 }
 
+// ── Effect row unification ──
+
+// splitEffectRow separates an effect list into concrete named effects and
+// an optional row variable tail (returns -1 if closed).
+func splitEffectRow(effects []Effect) (named []ENamed, rowVar int) {
+	rowVar = -1
+	for _, e := range effects {
+		switch e := e.(type) {
+		case ENamed:
+			named = append(named, e)
+		case EVar:
+			rowVar = e.ID
+		}
+	}
+	return
+}
+
+// applyEffectRowSubst resolves effect row variable substitutions, returning
+// the fully expanded list of effects.
+func (s *checkerState) applyEffectRowSubst(effects []Effect) ([]Effect, int) {
+	named, rowVar := splitEffectRow(effects)
+	var result []Effect
+	seen := make(map[string]bool)
+	for _, n := range named {
+		if !seen[n.Name] {
+			seen[n.Name] = true
+			result = append(result, n)
+		}
+	}
+	tail := rowVar
+	for tail >= 0 {
+		sub, ok := s.effectRowSubst[tail]
+		if !ok {
+			break
+		}
+		for _, e := range sub.effects {
+			if n, ok := e.(ENamed); ok && !seen[n.Name] {
+				seen[n.Name] = true
+				result = append(result, n)
+			}
+		}
+		tail = sub.tail
+	}
+	return result, tail
+}
+
+// unifyEffectRows unifies two effect rows. Supports row variables and
+// subtyping: a closed row with fewer effects unifies with an open row.
+func (s *checkerState) unifyEffectRows(
+	a, b []Effect, errors *[]TypeError, loc token.Loc,
+) bool {
+	aEffects, aTail := s.applyEffectRowSubst(a)
+	bEffects, bTail := s.applyEffectRowSubst(b)
+
+	aSet := make(map[string]bool, len(aEffects))
+	for _, e := range aEffects {
+		if n, ok := e.(ENamed); ok {
+			aSet[n.Name] = true
+		}
+	}
+	bSet := make(map[string]bool, len(bEffects))
+	for _, e := range bEffects {
+		if n, ok := e.(ENamed); ok {
+			bSet[n.Name] = true
+		}
+	}
+
+	// Effects only in b but not in a
+	var onlyInB []Effect
+	for name := range bSet {
+		if !aSet[name] {
+			onlyInB = append(onlyInB, ENamed{Name: name})
+		}
+	}
+	// Effects only in a but not in b
+	var onlyInA []Effect
+	for name := range aSet {
+		if !bSet[name] {
+			onlyInA = append(onlyInA, ENamed{Name: name})
+		}
+	}
+
+	// If b has effects not in a, a needs a row var to absorb them
+	if len(onlyInB) > 0 {
+		if aTail >= 0 {
+			newTail := -1
+			if bTail >= 0 {
+				newTail = bTail
+			}
+			s.effectRowSubst[aTail] = &effectRowSubstEntry{effects: onlyInB, tail: newTail}
+		} else {
+			// Closed row a doesn't contain all effects in b — subtyping:
+			// a ⊆ b is OK (fewer effects is fine), b ⊆ a is not.
+			// This is handled below in the subtyping direction check.
+		}
+	}
+
+	// If a has effects not in b, b needs a row var to absorb them
+	if len(onlyInA) > 0 {
+		if bTail >= 0 {
+			newTail := -1
+			if aTail >= 0 {
+				newTail = aTail
+			}
+			s.effectRowSubst[bTail] = &effectRowSubstEntry{effects: onlyInA, tail: newTail}
+		} else if aTail < 0 {
+			// Both closed, different concrete sets — not unifiable
+			return false
+		}
+	}
+
+	// Both empty extras: link row vars if both open
+	if len(onlyInA) == 0 && len(onlyInB) == 0 {
+		if aTail >= 0 && bTail >= 0 && aTail != bTail {
+			s.effectRowSubst[aTail] = &effectRowSubstEntry{tail: bTail}
+		}
+	}
+
+	return true
+}
+
+// effectRowIsSubset checks if 'sub' effect row is a subset of 'sup' — i.e.
+// every concrete effect in sub appears in sup. Used for subtyping at call sites.
+func (s *checkerState) effectRowIsSubset(sub, sup []Effect) bool {
+	_, subTail := s.applyEffectRowSubst(sub)
+	supEffects, _ := s.applyEffectRowSubst(sup)
+
+	supSet := make(map[string]bool, len(supEffects))
+	for _, e := range supEffects {
+		if n, ok := e.(ENamed); ok {
+			supSet[n.Name] = true
+		}
+	}
+
+	subEffects, _ := s.applyEffectRowSubst(sub)
+	for _, e := range subEffects {
+		if n, ok := e.(ENamed); ok {
+			if !supSet[n.Name] {
+				return false
+			}
+		}
+	}
+
+	// If sub has a row variable, it could contain anything — not a guaranteed subset
+	// unless the sup also has a row variable
+	if subTail >= 0 {
+		_, supTail := s.applyEffectRowSubst(sup)
+		if supTail < 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
 // ── Type environment ──
 
 type typeEnv struct {
@@ -928,6 +1109,21 @@ func (s *checkerState) isTypeParam(name string) bool {
 	return len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'
 }
 
+func (s *checkerState) isEffectRowVar(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	// Effect names are lowercase (io, exn, async). Uppercase names that
+	// aren't known types/effects are effect row variables (E, F, ...).
+	if name[0] < 'A' || name[0] > 'Z' {
+		return false
+	}
+	if s.knownTypes[name] {
+		return false
+	}
+	return true
+}
+
 func (s *checkerState) collectTypeParams(te ast.TypeExpr) map[string]bool {
 	params := make(map[string]bool)
 	s.walkTypeParams(te, params)
@@ -996,9 +1192,18 @@ func resolveType(te ast.TypeExpr, s *checkerState) Type {
 		}
 		return TTuple{Elements: elems}
 	case ast.TypeFn:
-		effects := make([]Effect, len(t.Effects))
-		for i, e := range t.Effects {
-			effects[i] = ENamed{Name: e.Name}
+		var effects []Effect
+		for _, e := range t.Effects {
+			if s.isEffectRowVar(e.Name) {
+				id, ok := s.namedEffectVars[e.Name]
+				if !ok {
+					id = FreshVar()
+					s.namedEffectVars[e.Name] = id
+				}
+				effects = append(effects, EVar{ID: id})
+			} else {
+				effects = append(effects, ENamed{Name: e.Name})
+			}
 		}
 		return TFn{
 			Param:   resolveType(t.Param, s),
@@ -1114,9 +1319,18 @@ func resolveTypeWithVars(te ast.TypeExpr, varMapping map[string]Type, s *checker
 		}
 		return TTuple{Elements: elems}
 	case ast.TypeFn:
-		effects := make([]Effect, len(t.Effects))
-		for i, e := range t.Effects {
-			effects[i] = ENamed{Name: e.Name}
+		var effects []Effect
+		for _, e := range t.Effects {
+			if s.isEffectRowVar(e.Name) {
+				id, ok := s.namedEffectVars[e.Name]
+				if !ok {
+					id = FreshVar()
+					s.namedEffectVars[e.Name] = id
+				}
+				effects = append(effects, EVar{ID: id})
+			} else {
+				effects = append(effects, ENamed{Name: e.Name})
+			}
 		}
 		return TFn{
 			Param:   resolveTypeWithVars(t.Param, varMapping, s),
@@ -1168,9 +1382,12 @@ func showType(t Type) string {
 		if len(t.Effects) > 0 {
 			names := make([]string, len(t.Effects))
 			for i, e := range t.Effects {
-				if en, ok := e.(ENamed); ok {
-					names[i] = en.Name
-				} else {
+				switch e := e.(type) {
+				case ENamed:
+					names[i] = e.Name
+				case EVar:
+					names[i] = fmt.Sprintf("e%d", e.ID)
+				default:
 					names[i] = "?"
 				}
 			}
@@ -1549,6 +1766,11 @@ func (a *affineCtx) implementsClone(typeName string) bool {
 }
 
 func (a *affineCtx) isTypeCloneable(t Type) bool {
+	// tAny (unknown type) is permissively cloneable — avoids false E602 when
+	// some fields/elements are unresolved (e.g. empty list [])
+	if g, ok := t.(TGeneric); ok && g.Name == "?" {
+		return true
+	}
 	switch t := t.(type) {
 	case TList:
 		return a.isTypeCloneable(t.Element)
@@ -1771,10 +1993,12 @@ func extractTypeBindings(paramExpr ast.TypeExpr, argType Type, bindings map[stri
 				bindings[name] = at.Name
 			}
 		default:
+			// Fall back to showType when canonicalTypeName returns empty (e.g. composites containing tAny)
 			cn := canonicalTypeName(argType)
-			if cn != "" {
-				bindings[name] = cn
+			if cn == "" {
+				cn = showType(argType)
 			}
+			bindings[name] = cn
 		}
 	case ast.TypeList:
 		if at, ok := argType.(TList); ok {
@@ -2515,8 +2739,11 @@ func (s *checkerState) inferExpr(
 		} else {
 			ownedType = innerType
 		}
-		typeName := canonicalTypeName(ownedType)
-		if typeName != "" && !aff.isTypeCloneable(ownedType) {
+		if !aff.isTypeCloneable(ownedType) {
+			typeName := canonicalTypeName(ownedType)
+			if typeName == "" {
+				typeName = showType(ownedType)
+			}
 			*errors = append(*errors, TypeError{
 				Code:     "E602",
 				Message:  fmt.Sprintf("type '%s' does not implement Clone", typeName),
@@ -3234,7 +3461,9 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 		fnConstraints:              make(map[string]*fnConstraintInfo),
 		fnParamTypeExps:            make(map[string][]ast.TypeExpr),
 		rowSubst:                   make(map[int]*rowSubstEntry),
+		effectRowSubst:             make(map[int]*effectRowSubstEntry),
 		namedRowVars:               make(map[string]int),
+		namedEffectVars:            make(map[string]int),
 		typeSubst:                  make(map[int]Type),
 		knownTypes:                 make(map[string]bool),
 		fnTypeParamVs:              make(map[string]map[string]Type),
@@ -3777,18 +4006,31 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 		expandedEffects := expandEffects(def.Sig.Effects, effectAliases, &errors, def.Loc)
 		expandedSubtracted := expandEffects(def.Sig.Subtracted, effectAliases, &errors, def.Loc)
 		resolvedEffects := resolveEffectSubtraction(expandedEffects, expandedSubtracted, &errors, def.Loc)
-		bodyEffects := collectEffects(def.Body, opMap, make(map[string]bool))
-		declaredEffects := make(map[string]bool, len(resolvedEffects))
+
+		// Check if the declared effect row has a row variable (open tail).
+		// If so, body effects are unrestricted — the row var absorbs extras.
+		hasEffectRowVar := false
 		for _, r := range resolvedEffects {
-			declaredEffects[r.Name] = true
+			if s.isEffectRowVar(r.Name) {
+				hasEffectRowVar = true
+				break
+			}
 		}
-		for eff := range bodyEffects {
-			if !declaredEffects[eff] {
-				errors = append(errors, TypeError{
-					Code:     "W401",
-					Message:  fmt.Sprintf("function '%s' performs effect '%s' not declared in signature", def.Name, eff),
-					Location: def.Loc,
-				})
+
+		if !hasEffectRowVar {
+			bodyEffects := collectEffects(def.Body, opMap, make(map[string]bool))
+			declaredEffects := make(map[string]bool, len(resolvedEffects))
+			for _, r := range resolvedEffects {
+				declaredEffects[r.Name] = true
+			}
+			for eff := range bodyEffects {
+				if !declaredEffects[eff] {
+					errors = append(errors, TypeError{
+						Code:     "W401",
+						Message:  fmt.Sprintf("function '%s' performs effect '%s' not declared in signature", def.Name, eff),
+						Location: def.Loc,
+					})
+				}
 			}
 		}
 	}

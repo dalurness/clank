@@ -827,6 +827,304 @@ func TestVerifyLockfileMissing(t *testing.T) {
 	}
 }
 
+// ── Global cache ──
+
+func TestResolvePackagesFromGlobalCache(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Create a cached package at cache/http-client@1.2.0/
+	cachedPkg := filepath.Join(cacheDir, "http-client@1.2.0")
+	os.MkdirAll(filepath.Join(cachedPkg, "src"), 0755)
+	os.WriteFile(filepath.Join(cachedPkg, "clank.pkg"),
+		[]byte("name = \"http-client\"\nversion = \"1.2.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(cachedPkg, "src", "client.clk"),
+		[]byte("mod http-client.client\n"), 0644)
+
+	// Create root project that depends on http-client (registry dep)
+	rootDir := filepath.Join(tmp, "root")
+	os.MkdirAll(rootDir, 0755)
+	os.WriteFile(filepath.Join(rootDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nhttp-client = \"1.2\"\n"), 0644)
+
+	resolution, err := ResolvePackages(filepath.Join(rootDir, "clank.pkg"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolution.Packages) != 1 {
+		t.Fatalf("expected 1 package, got %d", len(resolution.Packages))
+	}
+	if resolution.Packages[0].Name != "http-client" {
+		t.Errorf("name: %q", resolution.Packages[0].Name)
+	}
+	if resolution.Packages[0].Path != cachedPkg {
+		t.Errorf("path: %q, want %q", resolution.Packages[0].Path, cachedPkg)
+	}
+	if _, ok := resolution.Packages[0].Modules["http-client.client"]; !ok {
+		t.Error("expected http-client.client module")
+	}
+}
+
+func TestResolvePackagesCacheSkipsAlreadyCached(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Two cached versions
+	for _, ver := range []string{"1.0.0", "1.2.0"} {
+		pkg := filepath.Join(cacheDir, "my-lib@"+ver)
+		os.MkdirAll(pkg, 0755)
+		os.WriteFile(filepath.Join(pkg, "clank.pkg"),
+			[]byte("name = \"my-lib\"\nversion = \""+ver+"\"\n"), 0644)
+	}
+
+	rootDir := filepath.Join(tmp, "root")
+	os.MkdirAll(rootDir, 0755)
+	os.WriteFile(filepath.Join(rootDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nmy-lib = \">= 1.2.0\"\n"), 0644)
+
+	resolution, err := ResolvePackages(filepath.Join(rootDir, "clank.pkg"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolution.Packages) != 1 {
+		t.Fatalf("expected 1 package, got %d", len(resolution.Packages))
+	}
+	if resolution.Packages[0].Manifest.Version != "1.2.0" {
+		t.Errorf("version: %q, want 1.2.0", resolution.Packages[0].Manifest.Version)
+	}
+}
+
+func TestResolvePackagesLocalDepTakesPriorityOverCache(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Cached version
+	cachedPkg := filepath.Join(cacheDir, "my-lib@0.1.0")
+	os.MkdirAll(cachedPkg, 0755)
+	os.WriteFile(filepath.Join(cachedPkg, "clank.pkg"),
+		[]byte("name = \"my-lib\"\nversion = \"0.1.0\"\n"), 0644)
+
+	// Local version
+	localLib := filepath.Join(tmp, "my-lib")
+	os.MkdirAll(filepath.Join(localLib, "src"), 0755)
+	os.WriteFile(filepath.Join(localLib, "clank.pkg"),
+		[]byte("name = \"my-lib\"\nversion = \"0.2.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(localLib, "src", "core.clk"),
+		[]byte("mod my-lib.core\n"), 0644)
+
+	rootDir := filepath.Join(tmp, "root")
+	os.MkdirAll(rootDir, 0755)
+	os.WriteFile(filepath.Join(rootDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nmy-lib = { path = \"../my-lib\" }\n"), 0644)
+
+	resolution, err := ResolvePackages(filepath.Join(rootDir, "clank.pkg"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolution.Packages) != 1 {
+		t.Fatalf("expected 1 package, got %d", len(resolution.Packages))
+	}
+	// Should use local, not cache
+	if resolution.Packages[0].Manifest.Version != "0.2.0" {
+		t.Errorf("expected local version 0.2.0, got %q", resolution.Packages[0].Manifest.Version)
+	}
+	if resolution.Packages[0].Path != localLib {
+		t.Errorf("expected local path, got cache path")
+	}
+}
+
+func TestTwoProjectsShareCachedPackage(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// One cached package
+	cachedPkg := filepath.Join(cacheDir, "shared-lib@1.0.0")
+	os.MkdirAll(filepath.Join(cachedPkg, "src"), 0755)
+	os.WriteFile(filepath.Join(cachedPkg, "clank.pkg"),
+		[]byte("name = \"shared-lib\"\nversion = \"1.0.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(cachedPkg, "src", "lib.clk"),
+		[]byte("mod shared-lib.lib\n"), 0644)
+
+	// Project A
+	projA := filepath.Join(tmp, "project-a")
+	os.MkdirAll(projA, 0755)
+	os.WriteFile(filepath.Join(projA, "clank.pkg"),
+		[]byte("name = \"proj-a\"\nversion = \"1.0.0\"\n\n[deps]\nshared-lib = \"1\"\n"), 0644)
+
+	// Project B
+	projB := filepath.Join(tmp, "project-b")
+	os.MkdirAll(projB, 0755)
+	os.WriteFile(filepath.Join(projB, "clank.pkg"),
+		[]byte("name = \"proj-b\"\nversion = \"2.0.0\"\n\n[deps]\nshared-lib = \"1.0\"\n"), 0644)
+
+	resA, err := ResolvePackages(filepath.Join(projA, "clank.pkg"), false)
+	if err != nil {
+		t.Fatal("project-a:", err)
+	}
+	resB, err := ResolvePackages(filepath.Join(projB, "clank.pkg"), false)
+	if err != nil {
+		t.Fatal("project-b:", err)
+	}
+
+	if len(resA.Packages) != 1 || len(resB.Packages) != 1 {
+		t.Fatalf("expected 1 package each, got %d and %d", len(resA.Packages), len(resB.Packages))
+	}
+	// Both should resolve to the same cache path
+	if resA.Packages[0].Path != resB.Packages[0].Path {
+		t.Errorf("projects should share the same cached path: %q vs %q", resA.Packages[0].Path, resB.Packages[0].Path)
+	}
+	if resA.Packages[0].Path != cachedPkg {
+		t.Errorf("path should be cache: %q", resA.Packages[0].Path)
+	}
+}
+
+func TestInstallToCache(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Create source package
+	srcDir := filepath.Join(tmp, "source-pkg")
+	os.MkdirAll(filepath.Join(srcDir, "src"), 0755)
+	os.WriteFile(filepath.Join(srcDir, "clank.pkg"),
+		[]byte("name = \"my-pkg\"\nversion = \"1.0.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(srcDir, "src", "main.clk"),
+		[]byte("mod my-pkg.main\n"), 0644)
+
+	// Install to cache
+	cachePath, err := InstallToCache("my-pkg", "1.0.0", srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join(cacheDir, "my-pkg@1.0.0")
+	if cachePath != expected {
+		t.Errorf("cache path: %q, want %q", cachePath, expected)
+	}
+	if _, err := os.Stat(filepath.Join(cachePath, "clank.pkg")); os.IsNotExist(err) {
+		t.Error("clank.pkg not copied to cache")
+	}
+	if _, err := os.Stat(filepath.Join(cachePath, "src", "main.clk")); os.IsNotExist(err) {
+		t.Error("src/main.clk not copied to cache")
+	}
+
+	// Second install should skip (already cached)
+	cachePath2, err := InstallToCache("my-pkg", "1.0.0", srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cachePath2 != cachePath {
+		t.Errorf("second install should return same path")
+	}
+}
+
+func TestLockfileUseCachePrefix(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Cached package
+	cachedPkg := filepath.Join(cacheDir, "http-client@1.2.0")
+	os.MkdirAll(filepath.Join(cachedPkg, "src"), 0755)
+	os.WriteFile(filepath.Join(cachedPkg, "clank.pkg"),
+		[]byte("name = \"http-client\"\nversion = \"1.2.0\"\n"), 0644)
+
+	// Root project
+	rootDir := filepath.Join(tmp, "root")
+	os.MkdirAll(rootDir, 0755)
+	os.WriteFile(filepath.Join(rootDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nhttp-client = \"1.2\"\n"), 0644)
+
+	lock, err := GenerateLockfile(filepath.Join(rootDir, "clank.pkg"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, ok := lock.Packages["http-client@1.2.0"]
+	if !ok {
+		t.Fatal("missing http-client@1.2.0 in lockfile")
+	}
+	if pkg.Resolved != "cache:http-client@1.2.0" {
+		t.Errorf("resolved: %q, want cache:http-client@1.2.0", pkg.Resolved)
+	}
+}
+
+func TestLockfileLocalDepStillUsesPathPrefix(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Local lib
+	os.MkdirAll(filepath.Join(tmp, "my-lib", "src"), 0755)
+	os.WriteFile(filepath.Join(tmp, "my-lib", "clank.pkg"),
+		[]byte("name = \"my-lib\"\nversion = \"0.1.0\"\n"), 0644)
+
+	rootDir := filepath.Join(tmp, "root")
+	os.MkdirAll(rootDir, 0755)
+	os.WriteFile(filepath.Join(rootDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nmy-lib = { path = \"../my-lib\" }\n"), 0644)
+
+	lock, err := GenerateLockfile(filepath.Join(rootDir, "clank.pkg"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, ok := lock.Packages["my-lib@0.1.0"]
+	if !ok {
+		t.Fatal("missing my-lib@0.1.0 in lockfile")
+	}
+	if !strings.HasPrefix(pkg.Resolved, "path:") {
+		t.Errorf("resolved: %q, should start with path:", pkg.Resolved)
+	}
+}
+
+func TestVerifyLockfileWithCachedDep(t *testing.T) {
+	tmp := t.TempDir()
+	cacheDir := filepath.Join(tmp, "cache")
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Cached package
+	cachedPkg := filepath.Join(cacheDir, "http-client@1.0.0")
+	os.MkdirAll(filepath.Join(cachedPkg, "src"), 0755)
+	os.WriteFile(filepath.Join(cachedPkg, "clank.pkg"),
+		[]byte("name = \"http-client\"\nversion = \"1.0.0\"\n"), 0644)
+	os.WriteFile(filepath.Join(cachedPkg, "src", "client.clk"),
+		[]byte("mod http-client.client\n"), 0644)
+
+	rootDir := filepath.Join(tmp, "root")
+	os.MkdirAll(rootDir, 0755)
+	os.WriteFile(filepath.Join(rootDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nhttp-client = \"1\"\n"), 0644)
+
+	// Write lockfile
+	WriteLockfile(filepath.Join(rootDir, "clank.pkg"), false)
+
+	// Verify should be OK
+	result := VerifyLockfile(filepath.Join(rootDir, "clank.pkg"), false)
+	if !result.Ok {
+		t.Errorf("expected ok, got stale=%v missing=%v extra=%v", result.Stale, result.Missing, result.Extra)
+	}
+
+	// Modify cached package
+	os.WriteFile(filepath.Join(cachedPkg, "src", "client.clk"),
+		[]byte("mod http-client.client\n# changed\n"), 0644)
+
+	// Verify should be stale
+	result = VerifyLockfile(filepath.Join(rootDir, "clank.pkg"), false)
+	if result.Ok {
+		t.Error("expected stale after modifying cached package")
+	}
+}
+
 func TestLockfileSorted(t *testing.T) {
 	tmp := t.TempDir()
 

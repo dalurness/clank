@@ -821,7 +821,7 @@ func cmdTest(args []string, jsonOut bool, rawArgs []string) int {
 // cmdPkg implements: clank pkg <init|resolve|add|remove|verify> [flags]
 func cmdPkg(args []string, jsonOut bool, rawArgs []string) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: clank pkg <init|resolve|add|remove|verify>\n")
+		fmt.Fprintf(os.Stderr, "usage: clank pkg <init|resolve|add|remove|install|verify>\n")
 		return 1
 	}
 
@@ -838,6 +838,8 @@ func cmdPkg(args []string, jsonOut bool, rawArgs []string) int {
 		return cmdPkgResolve(jsonOut)
 	case "verify":
 		return cmdPkgVerify(jsonOut)
+	case "install":
+		return cmdPkgInstall(jsonOut, rawArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown pkg subcommand: %s\n", subCmd)
 		return 1
@@ -1047,6 +1049,49 @@ func cmdPkgVerify(jsonOut bool) int {
 				fmt.Fprintf(os.Stderr, "Extra in lockfile: %s\n", strings.Join(result.Extra, ", "))
 			}
 			fmt.Fprintf(os.Stderr, "Run 'clank pkg resolve' to update the lockfile.\n")
+			return 1
+		}
+	}
+	return 0
+}
+
+func cmdPkgInstall(jsonOut bool, rawArgs []string) int {
+	name := getFlagValue(rawArgs, "--name")
+
+	result := pkg.PkgInstall(pkg.PkgInstallOptions{
+		Name: name,
+		Dev:  hasFlag(rawArgs, "--dev"),
+		Dir:  ".",
+	})
+
+	if jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		installed := make([]map[string]interface{}, len(result.Installed))
+		for i, p := range result.Installed {
+			installed[i] = map[string]interface{}{
+				"name":    p.Name,
+				"version": p.Version,
+				"github":  p.GitHub,
+				"path":    p.Path,
+			}
+		}
+		enc.Encode(map[string]interface{}{
+			"ok":        result.Ok,
+			"installed": installed,
+			"error":     result.Error,
+		})
+	} else {
+		if result.Ok {
+			if len(result.Installed) == 0 {
+				fmt.Println("No GitHub dependencies to install.")
+			} else {
+				for _, p := range result.Installed {
+					fmt.Printf("Installed %s@%s from %s -> %s\n", p.Name, p.Version, p.GitHub, p.Path)
+				}
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
 			return 1
 		}
 	}

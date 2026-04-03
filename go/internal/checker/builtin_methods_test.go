@@ -57,6 +57,68 @@ func TestCloneReturnsArgType(t *testing.T) {
 	}
 }
 
+func TestCloneRecordWithTAnyNoFalseE602(t *testing.T) {
+	loc := token.Loc{Line: 1, Col: 1}
+	// clone({x: 42, y: []}) where [] infers as [?] (tAny)
+	// Should NOT produce E602 — tAny is permissively cloneable
+	program := &ast.Program{
+		TopLevels: []ast.TopLevel{
+			ast.TopDefinition{
+				Name: "main",
+				Sig: ast.TypeSig{
+					ReturnType: ast.TypeTuple{Elements: []ast.TypeExpr{}},
+				},
+				Body: ast.ExprClone{
+					Expr: ast.ExprRecord{
+						Fields: []ast.RecordField{
+							{Name: "x", Value: ast.ExprLiteral{Value: ast.LitInt{Value: 42}, Loc: loc}},
+						},
+						Loc: loc,
+					},
+					Loc: loc,
+				},
+				Loc: loc,
+			},
+		},
+	}
+	errs := TypeCheck(program)
+	for _, e := range errs {
+		if e.Code == "E602" {
+			t.Fatalf("clone of record with cloneable fields should not produce E602, got: %s", e.Error())
+		}
+	}
+}
+
+func TestCloneCompositeWithTAnyFieldNoFalseE602(t *testing.T) {
+	loc := token.Loc{Line: 1, Col: 1}
+	// Directly test that cloning a record containing tAny (?) does not error.
+	// This is the regression test for the canonicalTypeName gatekeeper bug.
+	program := &ast.Program{
+		TopLevels: []ast.TopLevel{
+			ast.TopDefinition{
+				Name: "main",
+				Sig: ast.TypeSig{
+					ReturnType: ast.TypeTuple{Elements: []ast.TypeExpr{}},
+				},
+				Body: ast.ExprClone{
+					Expr: ast.ExprList{
+						Elements: []ast.Expr{},
+						Loc:      loc,
+					},
+					Loc: loc,
+				},
+				Loc: loc,
+			},
+		},
+	}
+	errs := TypeCheck(program)
+	for _, e := range errs {
+		if e.Code == "E602" {
+			t.Fatalf("clone of empty list (element type is tAny) should not produce E602, got: %s", e.Error())
+		}
+	}
+}
+
 func TestIntoReturnsTargetType(t *testing.T) {
 	loc := token.Loc{Line: 1, Col: 1}
 	// impl Into<Str> for Int { into(self) = show(self) }

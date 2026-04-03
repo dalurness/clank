@@ -981,9 +981,15 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 	case compiler.OpTASK_AWAIT:
 		return vm.opTaskAwait()
 	case compiler.OpTASK_YIELD:
+		if err := vm.checkCancellation(); err != nil {
+			return err
+		}
 		vm.push(ValUnit())
 	case compiler.OpTASK_SLEEP:
 		vm.pop()
+		if err := vm.checkCancellation(); err != nil {
+			return err
+		}
 		vm.push(ValUnit())
 	case compiler.OpTASK_GROUP_ENTER:
 		vm.opTaskGroupEnter()
@@ -1004,9 +1010,27 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 	case compiler.OpSELECT_WAIT:
 		return vm.opSelectWait(code)
 	case compiler.OpTASK_CANCEL_CHECK:
-		vm.push(ValBool(false))
-	case compiler.OpTASK_SHIELD_ENTER, compiler.OpTASK_SHIELD_EXIT:
-		// no-op stubs
+		cancelled := false
+		if vm.currentTaskID != 0 {
+			if t, ok := vm.tasks[vm.currentTaskID]; ok {
+				cancelled = t.cancelFlag && t.shieldDepth == 0
+			}
+		}
+		vm.push(ValBool(cancelled))
+	case compiler.OpTASK_SHIELD_ENTER:
+		if vm.currentTaskID != 0 {
+			if t, ok := vm.tasks[vm.currentTaskID]; ok {
+				t.shieldDepth++
+			}
+		}
+	case compiler.OpTASK_SHIELD_EXIT:
+		if vm.currentTaskID != 0 {
+			if t, ok := vm.tasks[vm.currentTaskID]; ok {
+				if t.shieldDepth > 0 {
+					t.shieldDepth--
+				}
+			}
+		}
 
 	// ── STM stubs ──
 	case compiler.OpTVAR_NEW:
@@ -1897,15 +1921,46 @@ func (vm *VM) builtinTaskGroup() error {
 	vm.activeGroups = append(vm.activeGroups, groupID)
 	vm.asyncMode = true
 
-	result, err := vm.callBuiltinFn(bodyFn, nil)
+	result, bodyErr := vm.callBuiltinFn(bodyFn, nil)
 
 	// Pop group
 	if len(vm.activeGroups) > 0 {
 		vm.activeGroups = vm.activeGroups[:len(vm.activeGroups)-1]
 	}
+
+	// Cancel still-pending children
+	for childID := range group.childTaskIDs {
+		if child, ok := vm.tasks[childID]; ok && child.status == "suspended" {
+			child.cancelFlag = true
+		}
+	}
+	// Run remaining children (they'll observe cancellation)
+	for childID := range group.childTaskIDs {
+		if child, ok := vm.tasks[childID]; ok && child.status == "suspended" {
+			vm.runTaskToCompletion(child)
+		}
+	}
+	// Check for child failures
+	var firstChildErr string
+	for childID := range group.childTaskIDs {
+		if child, ok := vm.tasks[childID]; ok && child.status == "failed" {
+			firstChildErr = child.errMsg
+			if firstChildErr == "" {
+				firstChildErr = "child task failed"
+			}
+			break
+		}
+	}
+
 	delete(vm.taskGroups, groupID)
-	if err != nil {
-		return err
+	if bodyErr != nil {
+		return bodyErr
+	}
+	if firstChildErr != "" {
+		if !vm.doRaise(firstChildErr) {
+			return vm.trap("E014", firstChildErr)
+		}
+		return nil
 	}
 	vm.push(result)
 	return nil
@@ -1913,6 +1968,12 @@ func (vm *VM) builtinTaskGroup() error {
 
 func (vm *VM) builtinShield() error {
 	bodyFn, _ := vm.pop()
+	if vm.currentTaskID != 0 {
+		if t, ok := vm.tasks[vm.currentTaskID]; ok {
+			t.shieldDepth++
+			defer func() { t.shieldDepth-- }()
+		}
+	}
 	result, err := vm.callBuiltinFn(bodyFn, nil)
 	if err != nil {
 		return err
@@ -2614,6 +2675,19 @@ func (vm *VM) builtinForFold() error {
 	return vm.builtinFold()
 }
 
+// checkCancellation checks if the current task has been cancelled and is unshielded.
+func (vm *VM) checkCancellation() error {
+	if vm.currentTaskID != 0 {
+		if t, ok := vm.tasks[vm.currentTaskID]; ok {
+			if t.cancelFlag && t.shieldDepth == 0 {
+				t.status = "cancelled"
+				return vm.trap("E011", "task cancelled")
+			}
+		}
+	}
+	return nil
+}
+
 // ── Async stubs (minimal implementations for task spawning) ──
 
 func (vm *VM) opTaskSpawn() error {
@@ -2666,6 +2740,10 @@ func (vm *VM) opTaskAwait() error {
 	if futureVal.Tag != TagHEAP || futureVal.Heap.Kind != KindFuture {
 		return vm.trap("E002", "TASK_AWAIT: expected Future")
 	}
+	// Check cancellation of current task before running awaited task
+	if err := vm.checkCancellation(); err != nil {
+		return err
+	}
 	taskID := futureVal.Heap.TaskID
 	task, ok := vm.tasks[taskID]
 	if !ok {
@@ -2681,6 +2759,10 @@ func (vm *VM) opTaskAwait() error {
 			vm.push(*task.result)
 		} else {
 			vm.push(ValUnit())
+		}
+	} else if task.status == "cancelled" {
+		if !vm.doRaise("awaited task was cancelled") {
+			return vm.trap("E011", "awaited task was cancelled")
 		}
 	} else if task.status == "failed" {
 		if !vm.doRaise(task.errMsg) {

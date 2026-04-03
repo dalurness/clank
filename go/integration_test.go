@@ -11,12 +11,14 @@ import (
 
 	"github.com/dalurness/clank/internal/ast"
 	"github.com/dalurness/clank/internal/checker"
+	"github.com/dalurness/clank/internal/compiler"
 	"github.com/dalurness/clank/internal/desugar"
 	"github.com/dalurness/clank/internal/eval"
 	"github.com/dalurness/clank/internal/lexer"
 	"github.com/dalurness/clank/internal/linter"
 	"github.com/dalurness/clank/internal/parser"
 	"github.com/dalurness/clank/internal/pretty"
+	"github.com/dalurness/clank/internal/vm"
 )
 
 // testRoot returns the path to the project test/ directory.
@@ -498,6 +500,108 @@ func TestIntegration(t *testing.T) {
 					}
 
 					// Compare output line by line
+					actualLines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+					if output == "" {
+						actualLines = nil
+					}
+
+					if len(actualLines) != len(expected) {
+						t.Fatalf("output line count mismatch:\nexpected %d lines: %v\ngot %d lines: %v",
+							len(expected), expected, len(actualLines), actualLines)
+					}
+
+					for i := range expected {
+						if actualLines[i] != expected[i] {
+							t.Errorf("line %d:\n  expected: %q\n  got:      %q", i+1, expected[i], actualLines[i])
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// runProgramVM compiles and executes a program through the bytecode VM pipeline.
+func runProgramVM(source string) (string, error) {
+	tokens, lexErr := lexer.Lex(source)
+	if lexErr != nil {
+		return "", fmt.Errorf("lex error: %s", lexErr.Message)
+	}
+
+	program, parseErr := parser.Parse(tokens)
+	if parseErr != nil {
+		return "", fmt.Errorf("parse error: %s", parseErr.Message)
+	}
+
+	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
+	for i, tl := range program.TopLevels {
+		switch d := tl.(type) {
+		case ast.TopDefinition:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopTestDecl:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopImplBlock:
+			methods := make([]ast.ImplMethod, len(d.Methods))
+			for j, m := range d.Methods {
+				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
+			}
+			d.Methods = methods
+			desugared.TopLevels[i] = d
+		default:
+			desugared.TopLevels[i] = tl
+		}
+	}
+
+	mod := compiler.CompileProgram(desugared)
+	_, stdout, err := vm.Execute(mod)
+	if err != nil {
+		return strings.Join(stdout, "\n"), err
+	}
+	return strings.Join(stdout, "\n"), nil
+}
+
+func TestVMIntegration(t *testing.T) {
+	root := testRoot(t)
+
+	dirs := []struct {
+		name string
+		path string
+	}{
+		{"phase7", filepath.Join(root, "phase7")},
+	}
+
+	for _, dir := range dirs {
+		t.Run(dir.name, func(t *testing.T) {
+			files := collectTestFiles(t, dir.path)
+			if len(files) == 0 {
+				t.Skipf("no .clk files in %s", dir.path)
+			}
+
+			for _, file := range files {
+				base := filepath.Base(file)
+				t.Run(base, func(t *testing.T) {
+					source, err := os.ReadFile(file)
+					if err != nil {
+						t.Fatalf("read error: %v", err)
+					}
+					src := string(source)
+
+					if usesImports(src) || isErrorTest(src) {
+						t.Skip("skipping (imports or error test)")
+					}
+
+					expected, hasExpected := parseExpected(src)
+					if !hasExpected {
+						t.Skip("no expected output")
+					}
+
+					output, runErr := runProgramVM(src)
+					if runErr != nil {
+						t.Fatalf("VM runtime error: %v", runErr)
+					}
+
 					actualLines := strings.Split(strings.TrimRight(output, "\n"), "\n")
 					if output == "" {
 						actualLines = nil
