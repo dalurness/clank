@@ -1,0 +1,56 @@
+# Test: JSON operations — comprehensive
+# Expected output:
+# {"x":1,"y":2}
+# 42
+# not found
+# [name, age]
+# []
+# {name: Ada, age: 37}
+# {a: 1, b: 2, c: 3}
+# [1, [2, 3], nested]
+# {a: 1}
+
+main : () -> <io> () =
+  # Encode a record
+  let obj = {x: 1, y: 2}
+  let _ = print(json.enc(obj))
+
+  # Decode and get existing key
+  let decoded = json.dec("{\"value\": 42}")
+  match json.get(decoded, "value") {
+    Some(v) => print(show(v))
+    None => print("not found")
+  }
+
+  # Get missing key returns None
+  match json.get(decoded, "missing") {
+    Some(v) => print(show(v))
+    None => print("not found")
+  }
+
+  # Keys from a record
+  let person = {name: "Ada", age: 36}
+  let _ = print(show(json.keys(person)))
+
+  # Keys from empty record
+  let _ = print(show(json.keys({})))
+
+  # Set a field (update existing)
+  let updated = json.set(person, "age", 37)
+  let _ = print(show(updated))
+
+  # Merge two records (right wins on conflict)
+  let a = {a: 1, b: 0}
+  let b = {b: 2, c: 3}
+  let merged = json.merge(a, b)
+  let _ = print(show(merged))
+
+  # Encode nested structures
+  let nested = {items: [1, [2, 3]], tag: "nested"}
+  let _ = print(show(cat(nested.items, [nested.tag])))
+
+  # Get on non-record returns None
+  match json.get(42, "key") {
+    Some(v) => print(show(v))
+    None => print(show({a: 1}))
+  }

@@ -211,6 +211,10 @@ func ValSelectSet(arms []SelectArm) Value {
 
 // ── Display ──
 
+// activeVariantNames is set by the VM before formatting, so ValueToString
+// can look up variant names. This avoids threading variantNames through every call.
+var activeVariantNames []string
+
 func (v Value) String() string {
 	return ValueToString(v)
 }
@@ -255,25 +259,32 @@ func heapToString(o *HeapObject) string {
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
 	case KindRecord:
-		keys := make([]string, 0, len(o.Fields))
-		for k := range o.Fields {
-			keys = append(keys, k)
+		order := o.FieldOrder
+		if len(order) == 0 {
+			// Fallback: collect keys from map (unordered)
+			for k := range o.Fields {
+				order = append(order, k)
+			}
+			sort.Strings(order)
 		}
-		sort.Strings(keys)
-		parts := make([]string, len(keys))
-		for i, k := range keys {
+		parts := make([]string, len(order))
+		for i, k := range order {
 			parts[i] = k + ": " + ValueToString(o.Fields[k])
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	case KindUnion:
+		name := fmt.Sprintf("variant:%d", o.VariantTag)
+		if o.VariantTag < len(activeVariantNames) && activeVariantNames[o.VariantTag] != "" {
+			name = activeVariantNames[o.VariantTag]
+		}
 		if len(o.UFields) == 0 {
-			return fmt.Sprintf("variant:%d", o.VariantTag)
+			return name
 		}
 		parts := make([]string, len(o.UFields))
 		for i, f := range o.UFields {
 			parts[i] = ValueToString(f)
 		}
-		return fmt.Sprintf("variant:%d(%s)", o.VariantTag, strings.Join(parts, ", "))
+		return fmt.Sprintf("%s(%s)", name, strings.Join(parts, ", "))
 	case KindClosure:
 		return fmt.Sprintf("<closure:%d>", o.WordID)
 	case KindContinuation:

@@ -116,8 +116,6 @@ func formatTopLevel(tl ast.TopLevel) string {
 		return formatInterfaceDecl(d)
 	case ast.TopImplBlock:
 		return formatImplBlock(d)
-	case ast.TopExternDecl:
-		return formatExternDecl(d)
 	}
 	return ""
 }
@@ -212,29 +210,6 @@ func formatImplBlock(d ast.TopImplBlock) string {
 		methods = append(methods, fmt.Sprintf("  %s = %s", m.Name, strings.TrimSpace(body)))
 	}
 	return fmt.Sprintf("impl %s%s for %s%s {\n%s\n}", d.Interface, typeArgs, forType, constraints, strings.Join(methods, "\n"))
-}
-
-func formatExternDecl(d ast.TopExternDecl) string {
-	pub := ""
-	if d.Pub {
-		pub = "pub "
-	}
-	sig := formatTypeSig(d.Sig)
-	where := ""
-	var attrs []string
-	if d.Host != "" {
-		attrs = append(attrs, fmt.Sprintf("host = %q", d.Host))
-	}
-	if d.Symbol != "" {
-		attrs = append(attrs, fmt.Sprintf("symbol = %q", d.Symbol))
-	}
-	if d.Unsafe {
-		attrs = append(attrs, "unsafe")
-	}
-	if len(attrs) > 0 {
-		where = "\n  where " + strings.Join(attrs, ", ")
-	}
-	return fmt.Sprintf("%sextern %q %s : %s%s", pub, d.Library, d.Name, sig, where)
 }
 
 func formatTypeDecl(d ast.TopTypeDecl) string {

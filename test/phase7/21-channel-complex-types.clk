@@ -1,0 +1,21 @@
+# Test: channels with complex types (records, lists)
+# Expected output:
+# Ada
+# [1, 2, 3]
+
+main : () -> <io, async> () =
+  # Send a record through a channel
+  let (tx, rx) = channel(1)
+  let _ = send(tx, {name: "Ada", age: 36})
+  let person = recv(rx)
+  let _ = print(person.name)
+  let _ = close-sender(tx)
+  let _ = close-receiver(rx)
+
+  # Send a list through a channel
+  let (tx2, rx2) = channel(1)
+  let _ = send(tx2, [1, 2, 3])
+  let items = recv(rx2)
+  let _ = print(show(items))
+  let _ = close-sender(tx2)
+  close-receiver(rx2)

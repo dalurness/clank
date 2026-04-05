@@ -1,9 +1,7 @@
 package clank_test
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +11,9 @@ import (
 	"github.com/dalurness/clank/internal/checker"
 	"github.com/dalurness/clank/internal/compiler"
 	"github.com/dalurness/clank/internal/desugar"
-	"github.com/dalurness/clank/internal/eval"
 	"github.com/dalurness/clank/internal/lexer"
 	"github.com/dalurness/clank/internal/linter"
+	"github.com/dalurness/clank/internal/loader"
 	"github.com/dalurness/clank/internal/parser"
 	"github.com/dalurness/clank/internal/pretty"
 	"github.com/dalurness/clank/internal/vm"
@@ -65,19 +63,32 @@ func isErrorTest(source string) bool {
 	return false
 }
 
-// usesImports returns true if the file uses `use` (module imports).
-func usesImports(source string) bool {
-	for _, line := range strings.Split(source, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "use ") {
-			return true
+// desugarAll desugars all top-level definition bodies.
+func desugarAll(program *ast.Program) *ast.Program {
+	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
+	for i, tl := range program.TopLevels {
+		switch d := tl.(type) {
+		case ast.TopDefinition:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopTestDecl:
+			d.Body = desugar.Desugar(d.Body)
+			desugared.TopLevels[i] = d
+		case ast.TopImplBlock:
+			methods := make([]ast.ImplMethod, len(d.Methods))
+			for j, m := range d.Methods {
+				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
+			}
+			d.Methods = methods
+			desugared.TopLevels[i] = d
+		default:
+			desugared.TopLevels[i] = tl
 		}
 	}
-	return false
+	return desugared
 }
 
 // checkProgram lexes, parses, desugars, and type-checks a program.
-// Returns type errors (nil if none) and any pipeline error.
 func checkProgram(source string) ([]checker.TypeError, error) {
 	tokens, lexErr := lexer.Lex(source)
 	if lexErr != nil {
@@ -89,34 +100,14 @@ func checkProgram(source string) ([]checker.TypeError, error) {
 		return nil, fmt.Errorf("parse error: %s", parseErr.Message)
 	}
 
-	// Desugar before type checking (checker expects desugared AST)
-	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
-	for i, tl := range program.TopLevels {
-		switch d := tl.(type) {
-		case ast.TopDefinition:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopTestDecl:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopImplBlock:
-			methods := make([]ast.ImplMethod, len(d.Methods))
-			for j, m := range d.Methods {
-				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
-			}
-			d.Methods = methods
-			desugared.TopLevels[i] = d
-		default:
-			desugared.TopLevels[i] = tl
-		}
-	}
-
+	desugared := desugarAll(program)
 	typeErrors := checker.TypeCheck(desugared)
 	return typeErrors, nil
 }
 
-// runProgram lexes, parses, desugars, and evaluates a program, returning captured stdout.
-func runProgram(source string) (string, error) {
+// runProgram lexes, parses, desugars, links, compiles and executes a program via the VM.
+// baseDir is used to resolve module imports. If empty, no import resolution is done.
+func runProgram(source string, baseDir string) (string, error) {
 	tokens, lexErr := lexer.Lex(source)
 	if lexErr != nil {
 		return "", fmt.Errorf("lex error: %s", lexErr.Message)
@@ -127,49 +118,24 @@ func runProgram(source string) (string, error) {
 		return "", fmt.Errorf("parse error: %s", parseErr.Message)
 	}
 
-	// Desugar all top-level definition bodies
-	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
-	for i, tl := range program.TopLevels {
-		switch d := tl.(type) {
-		case ast.TopDefinition:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopTestDecl:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopImplBlock:
-			methods := make([]ast.ImplMethod, len(d.Methods))
-			for j, m := range d.Methods {
-				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
-			}
-			d.Methods = methods
-			desugared.TopLevels[i] = d
-		default:
-			desugared.TopLevels[i] = tl
+	desugared := desugarAll(program)
+
+	// Link imports if baseDir is set
+	linked := desugared
+	if baseDir != "" {
+		result := loader.Link(desugared, baseDir)
+		if result.Error != nil {
+			return "", result.Error
 		}
+		linked = result.Program
 	}
 
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
+	mod := compiler.CompileProgram(linked)
+	_, stdout, err := vm.Execute(mod)
 	if err != nil {
-		return "", err
+		return strings.Join(stdout, "\n"), err
 	}
-	os.Stdout = w
-
-	_, runErr := eval.Run(desugared)
-
-	w.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	r.Close()
-
-	if runErr != nil {
-		return buf.String(), runErr
-	}
-	return buf.String(), nil
+	return strings.Join(stdout, "\n"), nil
 }
 
 // prettyPipeline applies --pretty expansion then lex/parse/desugar.
@@ -187,32 +153,11 @@ func prettyPipeline(terseSource string) (*ast.Program, error) {
 		return nil, fmt.Errorf("parse error: %s", parseErr.Message)
 	}
 
-	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
-	for i, tl := range program.TopLevels {
-		switch d := tl.(type) {
-		case ast.TopDefinition:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopTestDecl:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopImplBlock:
-			methods := make([]ast.ImplMethod, len(d.Methods))
-			for j, m := range d.Methods {
-				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
-			}
-			d.Methods = methods
-			desugared.TopLevels[i] = d
-		default:
-			desugared.TopLevels[i] = tl
-		}
-	}
-	return desugared, nil
+	return desugarAll(program), nil
 }
 
 // TestPrettyFlagCheck verifies --pretty expansion works with type-checking.
 func TestPrettyFlagCheck(t *testing.T) {
-	// Terse source that should type-check after --pretty expansion
 	terseSource := `main : () -> <io> () =
   let x = 42
   print(show(x))
@@ -242,19 +187,17 @@ func TestPrettyFlagLint(t *testing.T) {
 	}
 
 	diags := linter.Lint(program, linter.LintOptions{})
-	// Should lint without panicking; diagnostics are informational
 	_ = diags
 }
 
 // TestPrettyFlagEval verifies --pretty expansion works with evaluation.
 func TestPrettyFlagEval(t *testing.T) {
-	// Terse source using str.len (terse) which expands to string.length (verbose)
 	terseSource := `main : () -> <io> () =
   let x = 42
   print(show(x))
 `
 	result := pretty.Transform(terseSource, pretty.Pretty)
-	output, err := runProgram(result.Source)
+	output, err := runProgram(result.Source, "")
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
@@ -274,16 +217,15 @@ func TestPrettyFlagPreservesSemantics(t *testing.T) {
 main : () -> <io> () =
   print(show(factorial(5)))
 `
-	// Convert to terse then back through --pretty pipeline
 	terseResult := pretty.Transform(verboseSource, pretty.Terse)
 	prettyResult := pretty.Transform(terseResult.Source, pretty.Pretty)
 
-	outputDirect, err := runProgram(verboseSource)
+	outputDirect, err := runProgram(verboseSource, "")
 	if err != nil {
 		t.Fatalf("direct run error: %v", err)
 	}
 
-	outputPretty, err := runProgram(prettyResult.Source)
+	outputPretty, err := runProgram(prettyResult.Source, "")
 	if err != nil {
 		t.Fatalf("pretty run error: %v", err)
 	}
@@ -296,10 +238,8 @@ main : () -> <io> () =
 // TestCrossModuleEffectAliasResolution verifies that a pub effect alias exported
 // from one module is resolved during type checking of the importing module.
 func TestCrossModuleEffectAliasResolution(t *testing.T) {
-	// Create temp directory with two module files
 	dir := t.TempDir()
 
-	// Library module: exports a pub effect alias
 	libSource := `mod myeffects
 
 pub effect logger {
@@ -312,7 +252,6 @@ pub effect alias WithLog = <logger, io>
 		t.Fatalf("write lib: %v", err)
 	}
 
-	// Main module: imports and uses the alias
 	mainSource := `use myeffects (WithLog, log_msg)
 
 greet : () -> <WithLog> () =
@@ -325,7 +264,6 @@ main : () -> <io> () =
     log_msg msg resume k -> k(())
   }
 `
-	// Parse and type-check the main module with the resolver
 	tokens, lexErr := lexer.Lex(mainSource)
 	if lexErr != nil {
 		t.Fatalf("lex: %s", lexErr.Message)
@@ -334,20 +272,10 @@ main : () -> <io> () =
 	if parseErr != nil {
 		t.Fatalf("parse: %s", parseErr.Message)
 	}
-	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
-	for i, tl := range program.TopLevels {
-		switch d := tl.(type) {
-		case ast.TopDefinition:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		default:
-			desugared.TopLevels[i] = tl
-		}
-	}
+	desugared := desugarAll(program)
 
-	// Build resolver that reads module files from temp dir
 	aliasResolver := func(modulePath []string) map[string]*checker.EffectAliasInfo {
-		modPath, err := eval.ResolveModulePath(modulePath, dir)
+		modPath, err := loader.ResolveModulePath(modulePath, dir)
 		if err != nil {
 			return nil
 		}
@@ -380,7 +308,6 @@ main : () -> <io> () =
 
 	typeErrors := checker.TypeCheckWithResolvers(desugared, nil, aliasResolver)
 
-	// Filter to real errors (not warnings)
 	var realErrors []checker.TypeError
 	for _, te := range typeErrors {
 		if !strings.HasPrefix(te.Code, "W") {
@@ -395,7 +322,6 @@ main : () -> <io> () =
 		t.Fatalf("unexpected type errors:\n%s", strings.Join(msgs, "\n"))
 	}
 
-	// Also verify that logger is recognized via the alias (no W401 for it)
 	for _, te := range typeErrors {
 		if te.Code == "W401" && strings.Contains(te.Message, "logger") {
 			t.Errorf("W401 for 'logger' — alias should have propagated from myeffects module")
@@ -419,7 +345,7 @@ func TestIntegration(t *testing.T) {
 	dirs := []struct {
 		name     string
 		path     string
-		useCheck bool // run type checker
+		useCheck bool
 	}{
 		{"phase1", filepath.Join(root, "phase1"), false},
 		{"phase2", filepath.Join(root, "phase2"), false},
@@ -427,8 +353,8 @@ func TestIntegration(t *testing.T) {
 		{"phase5", filepath.Join(root, "phase5"), false},
 		{"phase6", filepath.Join(root, "phase6"), true},
 		{"phase7", filepath.Join(root, "phase7"), false},
-		{"phase8", filepath.Join(root, "phase8"), true},
 		{"examples", filepath.Join(root, "examples"), false},
+		{"stdlib", filepath.Join(root, "stdlib"), false},
 	}
 
 	for _, dir := range dirs {
@@ -446,24 +372,20 @@ func TestIntegration(t *testing.T) {
 						t.Fatalf("read error: %v", err)
 					}
 					src := string(source)
-
-					// Set BaseDir for module imports
-					eval.BaseDir = filepath.Dir(file)
+					baseDir := filepath.Dir(file)
 
 					if dir.useCheck {
-						// Error tests: run checker and verify errors are reported
 						if isErrorTest(src) {
 							typeErrors, pipeErr := checkProgram(src)
 							if pipeErr != nil {
 								t.Fatalf("pipeline error: %v", pipeErr)
 							}
 							if len(typeErrors) > 0 {
-								return // type error found as expected
+								return
 							}
-							// No type errors — try running; expect a runtime error
-							_, runErr := runProgram(src)
+							_, runErr := runProgram(src, baseDir)
 							if runErr != nil {
-								return // runtime error found as expected
+								return
 							}
 							t.Fatalf("expected error but neither checker nor runtime reported one")
 							return
@@ -480,7 +402,6 @@ func TestIntegration(t *testing.T) {
 					}
 
 					if dir.useCheck {
-						// Run checker (should report no errors for pass tests)
 						typeErrors, pipeErr := checkProgram(src)
 						if pipeErr != nil {
 							t.Fatalf("pipeline error: %v", pipeErr)
@@ -494,112 +415,9 @@ func TestIntegration(t *testing.T) {
 						}
 					}
 
-					output, runErr := runProgram(src)
+					output, runErr := runProgram(src, baseDir)
 					if runErr != nil {
 						t.Fatalf("runtime error: %v", runErr)
-					}
-
-					// Compare output line by line
-					actualLines := strings.Split(strings.TrimRight(output, "\n"), "\n")
-					if output == "" {
-						actualLines = nil
-					}
-
-					if len(actualLines) != len(expected) {
-						t.Fatalf("output line count mismatch:\nexpected %d lines: %v\ngot %d lines: %v",
-							len(expected), expected, len(actualLines), actualLines)
-					}
-
-					for i := range expected {
-						if actualLines[i] != expected[i] {
-							t.Errorf("line %d:\n  expected: %q\n  got:      %q", i+1, expected[i], actualLines[i])
-						}
-					}
-				})
-			}
-		})
-	}
-}
-
-// runProgramVM compiles and executes a program through the bytecode VM pipeline.
-func runProgramVM(source string) (string, error) {
-	tokens, lexErr := lexer.Lex(source)
-	if lexErr != nil {
-		return "", fmt.Errorf("lex error: %s", lexErr.Message)
-	}
-
-	program, parseErr := parser.Parse(tokens)
-	if parseErr != nil {
-		return "", fmt.Errorf("parse error: %s", parseErr.Message)
-	}
-
-	desugared := &ast.Program{TopLevels: make([]ast.TopLevel, len(program.TopLevels))}
-	for i, tl := range program.TopLevels {
-		switch d := tl.(type) {
-		case ast.TopDefinition:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopTestDecl:
-			d.Body = desugar.Desugar(d.Body)
-			desugared.TopLevels[i] = d
-		case ast.TopImplBlock:
-			methods := make([]ast.ImplMethod, len(d.Methods))
-			for j, m := range d.Methods {
-				methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
-			}
-			d.Methods = methods
-			desugared.TopLevels[i] = d
-		default:
-			desugared.TopLevels[i] = tl
-		}
-	}
-
-	mod := compiler.CompileProgram(desugared)
-	_, stdout, err := vm.Execute(mod)
-	if err != nil {
-		return strings.Join(stdout, "\n"), err
-	}
-	return strings.Join(stdout, "\n"), nil
-}
-
-func TestVMIntegration(t *testing.T) {
-	root := testRoot(t)
-
-	dirs := []struct {
-		name string
-		path string
-	}{
-		{"phase7", filepath.Join(root, "phase7")},
-	}
-
-	for _, dir := range dirs {
-		t.Run(dir.name, func(t *testing.T) {
-			files := collectTestFiles(t, dir.path)
-			if len(files) == 0 {
-				t.Skipf("no .clk files in %s", dir.path)
-			}
-
-			for _, file := range files {
-				base := filepath.Base(file)
-				t.Run(base, func(t *testing.T) {
-					source, err := os.ReadFile(file)
-					if err != nil {
-						t.Fatalf("read error: %v", err)
-					}
-					src := string(source)
-
-					if usesImports(src) || isErrorTest(src) {
-						t.Skip("skipping (imports or error test)")
-					}
-
-					expected, hasExpected := parseExpected(src)
-					if !hasExpected {
-						t.Skip("no expected output")
-					}
-
-					output, runErr := runProgramVM(src)
-					if runErr != nil {
-						t.Fatalf("VM runtime error: %v", runErr)
 					}
 
 					actualLines := strings.Split(strings.TrimRight(output, "\n"), "\n")

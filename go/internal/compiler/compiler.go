@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/dalurness/clank/internal/ast"
 )
@@ -85,6 +84,19 @@ var vmBuiltins = map[string]int{
 	"proc.stream": 192, "io.stdin-lines": 193,
 	// Runtime-dispatched for-loop
 	"__for_each": 113, "__for_filter": 114, "__for_fold": 115,
+	// Filesystem
+	"fs.read": 200, "fs.write": 201, "fs.exists": 202,
+	"fs.ls": 203, "fs.mkdir": 204, "fs.rm": 205,
+	// JSON
+	"json.enc": 207, "json.dec": 208, "json.get": 209,
+	"json.set": 210, "json.keys": 211, "json.merge": 212,
+	// Environment
+	"env.get": 214, "env.set": 215, "env.has": 216, "env.all": 217,
+	// Regex
+	"rx.ok": 220, "rx.find": 221, "rx.replace": 222, "rx.split": 223,
+	// Math
+	"math.abs": 224, "math.min": 225, "math.max": 226,
+	"math.floor": 227, "math.ceil": 228, "math.sqrt": 229,
 }
 
 // ── Code Emitter ──
@@ -189,8 +201,6 @@ type Compiler struct {
 	variantNames []string
 	nextVarTag   int
 	effectOps    map[string]int
-	externNames  map[string]int
-	externs      []ExternEntry
 	interfaceMethods     map[string]bool
 	interfaceMethodParam map[string]int
 	dispatchTable        map[string]map[string]int
@@ -206,7 +216,6 @@ func NewCompiler() *Compiler {
 		resumeVars:           make(map[string]int),
 		variantInfos:         make(map[string]variantInfo),
 		effectOps:            make(map[string]int),
-		externNames:          make(map[string]int),
 		interfaceMethods:     make(map[string]bool),
 		interfaceMethodParam: make(map[string]int),
 		dispatchTable:        make(map[string]map[string]int),
@@ -320,7 +329,6 @@ func (c *Compiler) Compile(program *ast.Program) *BytecodeModule {
 		VariantNames:  c.variantNames,
 		EntryWordID:   entryID,
 		DispatchTable: c.dispatchTable,
-		Externs:       c.externs,
 	}
 }
 
@@ -379,18 +387,6 @@ func (c *Compiler) firstPass(tl ast.TopLevel) {
 				c.dispatchTable["into"][sourceTag] = fromWordID
 			}
 		}
-	case ast.TopExternDecl:
-		c.allocWordID(t.Name)
-		symbol := t.Symbol
-		if symbol == "" {
-			symbol = strings.ReplaceAll(t.Name, "-", "_")
-		}
-		externIdx := len(c.externs)
-		c.externs = append(c.externs, ExternEntry{
-			Name: t.Name, Library: t.Library, Symbol: symbol,
-			Host: t.Host, ArgCount: len(t.Sig.Params),
-		})
-		c.externNames[t.Name] = externIdx
 	case ast.TopUseDecl:
 		for _, imp := range t.Imports {
 			if imp.Alias != "" {
@@ -432,18 +428,6 @@ func (c *Compiler) compileTopLevel(tl ast.TopLevel) {
 		if len(t.Deriving) > 0 {
 			c.compileDerivedImpls(t.Variants, t.Deriving)
 		}
-
-	case ast.TopExternDecl:
-		wordID := c.wordIDs[t.Name]
-		externIdx := c.externNames[t.Name]
-		e := &codeEmitter{}
-		argCount := len(t.Sig.Params)
-		e.emitU16(OpCALL_EXTERN, externIdx)
-		e.code = append(e.code, byte(argCount&0xFF))
-		e.emit(OpRET)
-		c.words = append(c.words, BytecodeWord{
-			Name: t.Name, WordID: wordID, Code: e.code, IsPublic: t.Pub,
-		})
 
 	case ast.TopImplBlock:
 		typeTag := c.typeExprToTag(t.ForType)

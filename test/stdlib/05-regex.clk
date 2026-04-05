@@ -1,0 +1,37 @@
+# Test: regex operations — comprehensive
+# Expected output:
+# true
+# false
+# [123, 456]
+# []
+# hello world
+# hello_world
+# [a, b, c]
+# [hello]
+# true
+
+main : () -> <io> () =
+  # Match
+  let _ = print(show(rx.ok("hello", "^h.*o$")))
+  let _ = print(show(rx.ok("hello", "^xyz")))
+
+  # Find all matches
+  let _ = print(show(rx.find("abc123def456", "[0-9]+")))
+
+  # Find with no matches returns empty list
+  let _ = print(show(rx.find("hello", "xyz")))
+
+  # Replace
+  let _ = print(rx.replace("hello_world", "_", " "))
+
+  # Replace with no matches returns unchanged string
+  let _ = print(rx.replace("hello_world", "xyz", "abc"))
+
+  # Split
+  let _ = print(show(rx.split("a,b,c", ",")))
+
+  # Split with no matches returns single-element list
+  let _ = print(show(rx.split("hello", ",")))
+
+  # Case-insensitive via (?i) flag
+  print(show(rx.ok("Hello", "(?i)^hello$")))

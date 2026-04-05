@@ -1,0 +1,37 @@
+# Test: environment variable operations — comprehensive
+# Expected output:
+# true
+# clank_value
+# true
+# updated
+# false
+# true
+
+main : () -> <io> () =
+  # Set and check
+  let _ = env.set("CLANK_TEST_X", "clank_value")
+  let _ = print(show(env.has("CLANK_TEST_X")))
+
+  # Get existing
+  match env.get("CLANK_TEST_X") {
+    Some(v) => print(v)
+    None => print("missing")
+  }
+
+  # Overwrite
+  let _ = env.set("CLANK_TEST_X", "updated")
+  let _ = print(show(env.has("CLANK_TEST_X")))
+  match env.get("CLANK_TEST_X") {
+    Some(v) => print(v)
+    None => print("missing")
+  }
+
+  # Nonexistent variable
+  let _ = print(show(env.has("__CLANK_NONEXISTENT_VAR__")))
+
+  # env.all includes our var
+  let all = env.all()
+  let found = fold(all, false, fn(acc, pair) =>
+    if fst(pair) == "CLANK_TEST_X" then true else acc
+  )
+  print(show(found))

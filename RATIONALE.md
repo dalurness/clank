@@ -1,5 +1,7 @@
 # Clank Design Rationale
 
+> **Note (2026-04):** The implementation language changed from TypeScript to Go. The architecture is now VM-only (tree-walking evaluator removed). FFI/extern was removed (agents use stdlib, not C bindings). Core design decisions remain unchanged — this document's reasoning about language design, type system, and agent optimization is still current.
+
 This document explains *why* each major design decision was made in Clank. Every choice is grounded in the project's core hypothesis: a programming language designed for AI agents faces fundamentally different constraints than one designed for humans. Agent bottlenecks — context window pressure, token cost, generation reliability, and cold-start learning — replace the human concerns of readability, scannability, and naming ergonomics that shaped every prior language.
 
 ---
@@ -97,30 +99,30 @@ Each mechanism handles a distinct class of contract. Together, they cover the va
 
 ---
 
-## 3. TypeScript Implementation
+## 3. Implementation Language (Go)
 
-**Decision:** The Clank reference implementation (compiler, VM, tooling) is written in TypeScript.
+**Decision:** The Clank implementation is written in Go. The original TypeScript prototype has been archived.
 
 **Alternatives considered:**
 - **Rust:** Maximum performance, strong typing, but slow compile times and high complexity.
 - **Go:** Fast compilation, simple language, but limited type expressiveness.
 - **OCaml/Haskell:** Traditional PL implementation languages with ADTs and pattern matching.
 - **C:** Maximum control, but manual memory management and no ADTs.
-- **TypeScript (chosen):** Dynamic enough for rapid iteration, typed enough for correctness, runs everywhere.
+- **Go (chosen):** Strong standard library, compiles to single binary, good AST ergonomics, GC built-in.
 
-**Why TypeScript:**
+**Why Go:**
 
-1. **Agent familiarity.** TypeScript is among the most-generated languages by current LLMs. Agents working on the Clank toolchain can read, understand, and modify TypeScript code reliably. This matters because a core design principle (elevated from TASK-006) is that the **toolchain must fit in agent context** — an agent that cannot read and modify its own compiler is not truly agent-native.
+1. **Single binary distribution.** `go build` produces a standalone executable with no runtime dependencies. Agents can use Clank without installing Node.js or any other runtime.
 
-2. **Rapid iteration.** Clank is a design-first project. The research phase produced multiple spec revisions (core syntax went from v0.1 concatenative to v0.2 applicative after DECISION-001). TypeScript's dynamic typing at the boundaries, combined with its structural type system, allows fast refactoring without fighting the compiler.
+2. **Standard library coverage.** Go's `os`, `net/http`, `encoding/json`, `os/exec`, and `regexp` packages provide everything Clank's stdlib needs (file I/O, HTTP, JSON, process execution, regex) without external dependencies.
 
-3. **Ecosystem.** Node.js provides file I/O, process execution, HTTP, and JSON handling out of the box — exactly the capabilities the Clank stdlib needs to wrap. The test infrastructure (the custom test runner) is straightforward in TypeScript.
+3. **Performance.** The bytecode VM runs significantly faster in Go than in a TypeScript/Node.js interpreter. This matters for compute-heavy agent workloads.
 
 4. **Codebase size.** The full implementation is ~5000 lines across 11 source files. This fits the agent context constraint. A Rust or C implementation of equivalent functionality would likely be 2-3x larger due to explicit memory management, error handling boilerplate, and build configuration.
 
-5. **Platform portability.** TypeScript/Node.js runs on every platform agents operate on. No cross-compilation required.
+4. **Agent maintainability.** The VM's flat instruction dispatch loop (switch on opcode) is mechanically extendable — agents can add new builtins by following the pattern of existing ones. The bytecode compiler's two-pass architecture (allocate IDs, then compile) is straightforward to modify.
 
-**What TypeScript is NOT for:** TypeScript is the implementation language for the reference toolchain, not a compilation target. Clank programs are compiled to custom bytecode (Phase 1) and eventually WASM (Phase 2).
+**Why not TypeScript (original choice):** TypeScript was used for the initial prototype because of rapid iteration speed and agent familiarity. Once the language design stabilized, Go was chosen for production because of single-binary distribution, native performance, and comprehensive standard library. The TypeScript prototype has been archived — its history is preserved in git.
 
 **Static binary strategy (open research question):** When the reference implementation is stable, a dedicated research task should determine the best path to a distributable static binary. The evaluation criteria should follow Clank's own design goals: does the toolchain source still fit in agent context? Does the implementation language remain one agents can read and modify reliably? Is there a meaningful performance gain, and does that gain matter for the actual workloads Clank targets? Performance improvement is not a reason to avoid a rewrite — but it should be weighed against the real costs. The answer should be derived, not assumed.
 

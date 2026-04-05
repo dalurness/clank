@@ -3182,6 +3182,53 @@ func registerBuiltins(env *typeEnv) {
 	env.set("try-recv", NewTFn(TAny, TAny))
 	env.set("close-sender", NewTFn(TAny, TUnit))
 	env.set("close-receiver", NewTFn(TAny, TUnit))
+
+	// Filesystem (std.fs)
+	env.set("fs.read", NewTFn(TStr, TStr))
+	env.set("fs.write", NewTFn(TStr, NewTFn(TStr, TUnit)))
+	env.set("fs.exists", NewTFn(TStr, TBool))
+	env.set("fs.ls", NewTFn(TStr, TList{Element: TStr}))
+	env.set("fs.mkdir", NewTFn(TStr, TUnit))
+	env.set("fs.rm", NewTFn(TStr, TUnit))
+
+	// JSON (std.json)
+	env.set("json.enc", NewTFn(TAny, TStr))
+	env.set("json.dec", NewTFn(TStr, TAny))
+	env.set("json.get", NewTFn(TAny, NewTFn(TStr, TAny)))
+	env.set("json.set", NewTFn(TAny, NewTFn(TStr, NewTFn(TAny, TAny))))
+	env.set("json.keys", NewTFn(TAny, TList{Element: TStr}))
+	env.set("json.merge", NewTFn(TAny, NewTFn(TAny, TAny)))
+
+	// Environment (std.env)
+	env.set("env.get", NewTFn(TStr, TAny))
+	env.set("env.set", NewTFn(TStr, NewTFn(TStr, TUnit)))
+	env.set("env.has", NewTFn(TStr, TBool))
+	env.set("env.all", NewTFn(TUnit, TAny))
+
+	// Process execution (std.proc)
+	env.set("proc.run", NewTFn(TStr, NewTFn(TList{Element: TStr}, TAny)))
+	env.set("proc.sh", NewTFn(TStr, TStr))
+	env.set("proc.exit", NewTFn(TInt, TUnit))
+
+	// HTTP (std.http)
+	env.set("http.get", NewTFn(TStr, TAny))
+	env.set("http.post", NewTFn(TStr, NewTFn(TStr, TAny)))
+	env.set("http.put", NewTFn(TStr, NewTFn(TStr, TAny)))
+	env.set("http.del", NewTFn(TStr, TAny))
+
+	// Regex (std.rx)
+	env.set("rx.ok", NewTFn(TStr, NewTFn(TStr, TBool)))
+	env.set("rx.find", NewTFn(TStr, NewTFn(TStr, TList{Element: TStr})))
+	env.set("rx.replace", NewTFn(TStr, NewTFn(TStr, NewTFn(TStr, TStr))))
+	env.set("rx.split", NewTFn(TStr, NewTFn(TStr, TList{Element: TStr})))
+
+	// Math (std.math)
+	env.set("math.abs", NewTFn(TInt, TInt))
+	env.set("math.min", NewTFn(TInt, NewTFn(TInt, TInt)))
+	env.set("math.max", NewTFn(TInt, NewTFn(TInt, TInt)))
+	env.set("math.floor", NewTFn(TAny, TInt))
+	env.set("math.ceil", NewTFn(TAny, TInt))
+	env.set("math.sqrt", NewTFn(TAny, TAny))
 }
 
 // ── Effect collection ──
@@ -3857,59 +3904,6 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 					paramTypeExps: paramTEs,
 				}
 			}
-		case ast.TopExternDecl:
-			s.namedRowVars = make(map[string]int)
-			// Validate effect annotations
-			builtinEffects := map[string]bool{"io": true, "exn": true, "async": true}
-			for _, eff := range d.Sig.Effects {
-				if !builtinEffects[eff.Name] && effectAliases[eff.Name] == nil {
-					if len(eff.Name) == 1 && eff.Name[0] >= 'a' && eff.Name[0] <= 'z' {
-						continue
-					}
-					errors = append(errors, TypeError{
-						Code:     "E803",
-						Message:  fmt.Sprintf("extern function '%s' cannot declare user-defined effect '%s' (only io, exn, async allowed)", d.Name, eff.Name),
-						Location: d.Loc,
-					})
-				}
-			}
-			retType := resolveType(d.Sig.ReturnType, s)
-			var fnType Type
-			if len(d.Sig.Params) == 0 {
-				fnType = NewTFn(TUnit, retType)
-			} else {
-				fnType = retType
-				for i := len(d.Sig.Params) - 1; i >= 0; i-- {
-					fnType = NewTFn(resolveType(d.Sig.Params[i].Type, s), fnType)
-				}
-			}
-			env.set(d.Name, fnType)
-			// Refinement info for externs
-			paramPreds := make([]string, len(d.Sig.Params))
-			for i, p := range d.Sig.Params {
-				if tr, ok := p.Type.(ast.TypeRefined); ok {
-					paramPreds[i] = tr.Predicate
-				}
-			}
-			var returnPred string
-			if tr, ok := d.Sig.ReturnType.(ast.TypeRefined); ok {
-				returnPred = tr.Predicate
-			}
-			hasPreds := returnPred != ""
-			for _, p := range paramPreds {
-				if p != "" {
-					hasPreds = true
-					break
-				}
-			}
-			if hasPreds {
-				s.fnRefInfo[d.Name] = &fnRefInfo{paramPreds: paramPreds, returnPred: returnPred}
-			}
-			paramTEs := make([]ast.TypeExpr, len(d.Sig.Params))
-			for i, p := range d.Sig.Params {
-				paramTEs[i] = p.Type
-			}
-			s.fnParamTypeExps[d.Name] = paramTEs
 		}
 	}
 

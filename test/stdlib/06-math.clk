@@ -1,0 +1,43 @@
+# Test: math operations — comprehensive
+# Expected output:
+# 5
+# 5
+# 0
+# 3
+# 7
+# 5
+# 5
+# 3
+# -3
+# -4
+# -3
+# 5
+# 4
+
+main : () -> <io> () =
+  # abs on negative
+  let _ = print(show(math.abs(0 - 5)))
+  # abs on positive (identity)
+  let _ = print(show(math.abs(5)))
+  # abs on zero
+  let _ = print(show(math.abs(0)))
+
+  # min/max basic
+  let _ = print(show(math.min(3, 7)))
+  let _ = print(show(math.max(3, 7)))
+
+  # min/max with equal values
+  let _ = print(show(math.min(5, 5)))
+  let _ = print(show(math.max(5, 5)))
+
+  # floor/ceil basic
+  let _ = print(show(math.floor(3.7)))
+  let _ = print(show(math.ceil(0 - 3.7)))
+
+  # floor/ceil on negative
+  let _ = print(show(math.floor(0 - 3.2)))
+  let _ = print(show(math.ceil(0 - 3.2)))
+
+  # floor/ceil on integer (identity)
+  let _ = print(show(math.floor(5)))
+  print(show(math.ceil(4)))

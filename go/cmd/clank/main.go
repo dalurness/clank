@@ -13,10 +13,10 @@ import (
 	"github.com/dalurness/clank/internal/compiler"
 	"github.com/dalurness/clank/internal/desugar"
 	"github.com/dalurness/clank/internal/doc"
-	"github.com/dalurness/clank/internal/eval"
 	"github.com/dalurness/clank/internal/formatter"
 	"github.com/dalurness/clank/internal/lexer"
 	"github.com/dalurness/clank/internal/linter"
+	"github.com/dalurness/clank/internal/loader"
 	"github.com/dalurness/clank/internal/parser"
 	"github.com/dalurness/clank/internal/pkg"
 	"github.com/dalurness/clank/internal/pretty"
@@ -40,7 +40,7 @@ func main() {
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [--pretty] [command] [flags] <file.clk>\n\n")
 	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  run [--vm]  Run a program (default)\n")
+	fmt.Fprintf(os.Stderr, "  run         Run a program (default)\n")
 	fmt.Fprintf(os.Stderr, "  check       Type-check a program\n")
 	fmt.Fprintf(os.Stderr, "  eval        Evaluate and print the result\n")
 	fmt.Fprintf(os.Stderr, "  fmt         Format source code\n")
@@ -76,7 +76,6 @@ func run() int {
 	// Manual arg parsing to support: clank [--json] [cmd] [--vm] file.clk
 	rawArgs := os.Args[1:]
 	jsonOut := false
-	useVM := false
 	checkMode := false
 	stdinMode := false
 	prettyMode := false
@@ -89,8 +88,6 @@ func run() int {
 		switch rawArgs[i] {
 		case "--json":
 			jsonOut = true
-		case "--vm":
-			useVM = true
 		case "--check":
 			checkMode = true
 		case "--stdin":
@@ -175,10 +172,11 @@ func run() int {
 		source = []byte(result.Source)
 	}
 
-	// Set BaseDir for module imports
+	// Set baseDir for module imports
+	var baseDir string
 	if file != "" {
 		absPath, _ := filepath.Abs(file)
-		eval.BaseDir = filepath.Dir(absPath)
+		baseDir = filepath.Dir(absPath)
 	}
 
 	// Lex
@@ -214,12 +212,12 @@ func run() int {
 	case "lint":
 		return cmdLint(program, file, jsonOut, ruleFlags)
 	case "check":
-		return cmdCheck(desugared, jsonOut)
+		return cmdCheck(desugared, baseDir, jsonOut)
 	case "eval":
-		return cmdEval(desugared, jsonOut)
+		return cmdEval(desugared, baseDir, jsonOut)
 	case "run":
 		// Type-check before running (parity with TS reference)
-		typeErrors := checker.TypeCheckWithResolvers(desugared, nil, makeEffectAliasResolver(eval.BaseDir))
+		typeErrors := checker.TypeCheckWithResolvers(desugared, nil, makeEffectAliasResolver(baseDir))
 		hasErrors := false
 		for _, te := range typeErrors {
 			if !strings.HasPrefix(te.Code, "W") {
@@ -253,10 +251,15 @@ func run() int {
 			}
 			return 1
 		}
-		if useVM {
-			return cmdRunVM(desugared, jsonOut)
+		// Link imports and execute via VM
+		linked := loader.Link(desugared, baseDir)
+		if linked.Error != nil {
+			return reportError(jsonOut, structuredError{
+				Stage:   "link",
+				Message: linked.Error.Error(),
+			})
 		}
-		return cmdRun(desugared, jsonOut)
+		return cmdRun(linked.Program, jsonOut)
 	}
 	return 0
 }
@@ -265,7 +268,7 @@ func run() int {
 // imported module files and extracts their pub effect alias declarations.
 func makeEffectAliasResolver(baseDir string) checker.ModuleEffectAliasResolver {
 	return func(modulePath []string) map[string]*checker.EffectAliasInfo {
-		absPath, err := eval.ResolveModulePath(modulePath, baseDir)
+		absPath, err := loader.ResolveModulePath(modulePath, baseDir)
 		if err != nil {
 			return nil
 		}
@@ -326,17 +329,8 @@ func desugarProgram(program *ast.Program) *ast.Program {
 	return out
 }
 
-// cmdRun executes the program via the tree-walking evaluator.
+// cmdRun compiles and executes via the bytecode VM.
 func cmdRun(program *ast.Program, jsonOut bool) int {
-	_, err := eval.Run(program)
-	if err != nil {
-		return reportRuntimeError(jsonOut, err)
-	}
-	return 0
-}
-
-// cmdRunVM compiles and executes via the bytecode VM.
-func cmdRunVM(program *ast.Program, jsonOut bool) int {
 	mod := compiler.CompileProgram(program)
 	if mod.EntryWordID == nil {
 		return 0 // no main function
@@ -346,25 +340,15 @@ func cmdRunVM(program *ast.Program, jsonOut bool) int {
 		fmt.Println(line)
 	}
 	if err != nil {
-		if trap, ok := err.(*vm.VMTrap); ok {
-			return reportError(jsonOut, structuredError{
-				Stage:   "vm",
-				Code:    trap.Code,
-				Message: trap.Message,
-			})
-		}
-		return reportError(jsonOut, structuredError{
-			Stage:   "vm",
-			Message: err.Error(),
-		})
+		return reportVMError(jsonOut, err)
 	}
 	_ = result
 	return 0
 }
 
 // cmdCheck runs the type checker and reports errors.
-func cmdCheck(program *ast.Program, jsonOut bool) int {
-	typeErrors := checker.TypeCheckWithResolvers(program, nil, makeEffectAliasResolver(eval.BaseDir))
+func cmdCheck(program *ast.Program, baseDir string, jsonOut bool) int {
+	typeErrors := checker.TypeCheckWithResolvers(program, nil, makeEffectAliasResolver(baseDir))
 	if len(typeErrors) == 0 {
 		if !jsonOut {
 			fmt.Println("ok")
@@ -394,13 +378,30 @@ func cmdCheck(program *ast.Program, jsonOut bool) int {
 	return 1
 }
 
-// cmdEval runs the program and prints the final result value.
-func cmdEval(program *ast.Program, jsonOut bool) int {
-	result, err := eval.Run(program)
-	if err != nil {
-		return reportRuntimeError(jsonOut, err)
+// cmdEval compiles, links, and runs the program, printing the final result value.
+func cmdEval(program *ast.Program, baseDir string, jsonOut bool) int {
+	linked := loader.Link(program, baseDir)
+	if linked.Error != nil {
+		return reportError(jsonOut, structuredError{
+			Stage:   "link",
+			Message: linked.Error.Error(),
+		})
 	}
-	fmt.Println(eval.ShowValue(result))
+	mod := compiler.CompileProgram(linked.Program)
+	if mod.EntryWordID == nil {
+		fmt.Println("()")
+		return 0
+	}
+	result, stdout, err := vm.Execute(mod)
+	for _, line := range stdout {
+		fmt.Println(line)
+	}
+	if err != nil {
+		return reportVMError(jsonOut, err)
+	}
+	if result != nil {
+		fmt.Println(vm.ValueToString(*result))
+	}
 	return 0
 }
 
@@ -425,19 +426,17 @@ func reportError(jsonOut bool, se structuredError) int {
 	return 1
 }
 
-// reportRuntimeError converts a runtime error to structured output.
-func reportRuntimeError(jsonOut bool, err error) int {
-	if re, ok := err.(*eval.RuntimeError); ok {
+// reportVMError converts a VM error to structured output.
+func reportVMError(jsonOut bool, err error) int {
+	if trap, ok := err.(*vm.VMTrap); ok {
 		return reportError(jsonOut, structuredError{
-			Stage:   "runtime",
-			Code:    re.Code,
-			Message: re.Message,
-			Line:    re.Location.Line,
-			Col:     re.Location.Col,
+			Stage:   "vm",
+			Code:    trap.Code,
+			Message: trap.Message,
 		})
 	}
 	return reportError(jsonOut, structuredError{
-		Stage:   "runtime",
+		Stage:   "vm",
 		Message: err.Error(),
 	})
 }
@@ -735,28 +734,48 @@ func cmdTest(args []string, jsonOut bool, rawArgs []string) int {
 			continue
 		}
 
-		// Set up evaluator environment for this file
+		// Link imports for this test file
 		absFile, _ := filepath.Abs(file)
-		eval.BaseDir = filepath.Dir(absFile)
-		env := eval.InitGlobalEnv()
-		eval.LoadTopLevels(env, program)
+		fileDir := filepath.Dir(absFile)
+		linked := loader.Link(program, fileDir)
+		if linked.Error != nil {
+			fmt.Fprintf(os.Stderr, "warning: %s: link error: %v\n", file, linked.Error)
+			continue
+		}
 
-		evalFn := func(expr ast.Expr) (retErr error) {
-			defer func() {
-				if r := recover(); r != nil {
-					if re, ok := r.(*eval.RuntimeError); ok {
-						retErr = re
-						return
+		// For each test, we compile and execute a program where the test body
+		// replaces main. All other top-levels (definitions, types, impls) are kept.
+		baseTops := linked.Program.TopLevels
+		evalFn := func(expr ast.Expr) error {
+			// Build a program with all definitions + a main that runs the test body
+			var testTops []ast.TopLevel
+			for _, tl := range baseTops {
+				switch tl.(type) {
+				case ast.TopTestDecl:
+					continue // skip all test declarations
+				case ast.TopDefinition:
+					d := tl.(ast.TopDefinition)
+					if d.Name == "main" {
+						continue // skip existing main
 					}
-					if ps, ok := r.(*eval.PerformSignal); ok {
-						retErr = fmt.Errorf("unhandled effect: %s", ps.Op)
-						return
-					}
-					retErr = fmt.Errorf("%v", r)
+					testTops = append(testTops, tl)
+				default:
+					testTops = append(testTops, tl)
 				}
-			}()
-			eval.Evaluate(expr, env)
-			return nil
+			}
+			// Add a synthetic main that executes the test expression
+			testTops = append(testTops, ast.TopDefinition{
+				Name: "main",
+				Sig:  ast.TypeSig{},
+				Body: expr,
+			})
+			testProgram := &ast.Program{TopLevels: testTops}
+			mod := compiler.CompileProgram(testProgram)
+			if mod.EntryWordID == nil {
+				return nil
+			}
+			_, _, err := vm.Execute(mod)
+			return err
 		}
 
 		result := testrunner.RunTests(tests, evalFn)

@@ -1,0 +1,34 @@
+# Test: record edge cases
+# Expected output:
+# {}
+# true
+# 37
+# {a: 10}
+# true
+# {x: 1, y: 2, z: 3}
+
+main : () -> <io> () =
+  # Empty record
+  let _ = print(show({}))
+
+  # Record equality regardless of definition order
+  let a = {x: 1, y: 2}
+  let b = {y: 2, x: 1}
+  let _ = print(show(a == b))
+
+  # Record spread with override
+  let base = {name: "Ada", age: 36}
+  let updated = {age: 37, ..base}
+  let _ = print(show(updated.age))
+
+  # Single-field record
+  let _ = print(show({a: 10}))
+
+  # Nested record access
+  let nested = {inner: {val: 42}}
+  let _ = print(show(nested.inner.val == 42))
+
+  # Record spread with NEW field added
+  let r = {x: 1, y: 2}
+  let extended = {z: 3, ..r}
+  print(show(extended))

@@ -153,9 +153,6 @@ func OpcodeRegistry() []OpcodeEntry {
 		{"REF_MODIFY", OpREF_MODIFY, "ref"},
 		{"REF_CLOSE", OpREF_CLOSE, "ref"},
 
-		// Foreign (0xE0)
-		{"CALL_EXTERN", OpCALL_EXTERN, "foreign"},
-
 		// System (0xF0-0xF2)
 		{"HALT", OpHALT, "system"},
 		{"TRAP", OpTRAP, "system"},

@@ -240,6 +240,24 @@ func desugarDo(steps []ast.DoStep, loc token.Loc) ast.Expr {
 	}
 	head := steps[0]
 	rest := desugarDo(steps[1:], loc)
+
+	// If the step is a bare `let x = e` (no `in`, no `<-` bind), lift the
+	// let so the remainder of the block becomes its body. This makes
+	//   do { let x = e1; e2 }
+	// equivalent to
+	//   do { x <- e1; e2 }
+	// i.e. `x` is in scope for all subsequent steps.
+	if head.Bind == "" {
+		if letExpr, ok := head.Expr.(ast.ExprLet); ok && letExpr.Body == nil {
+			return ast.ExprLet{
+				Name:  letExpr.Name,
+				Value: Desugar(letExpr.Value),
+				Body:  rest,
+				Loc:   letExpr.Loc,
+			}
+		}
+	}
+
 	name := head.Bind
 	if name == "" {
 		name = "_"

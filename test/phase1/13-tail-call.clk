@@ -1,0 +1,11 @@
+# Test: tail call optimization prevents stack overflow
+# Expected output:
+# 1250025000
+
+# Tail-recursive sum: should NOT overflow with 50000 iterations
+sum-tail : (n: Int, acc: Int) -> <> Int =
+  if n == 0 then acc
+  else sum-tail(n - 1, acc + n)
+
+main : () -> <io> () =
+  print(show(sum-tail(50000, 0)))

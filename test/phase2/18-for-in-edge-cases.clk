@@ -1,0 +1,28 @@
+# Test: for-in edge cases
+# Expected output:
+# []
+# 0
+# [10]
+# [1, 2, 3]
+# []
+
+main : () -> <io> () =
+  # for on empty list
+  let r1 = for x in [] do x * 2
+  let _ = print(show(r1))
+
+  # fold on empty list
+  let r2 = for x in [] fold acc = 0 do acc + x
+  let _ = print(show(r2))
+
+  # for on single-element list
+  let r3 = for x in [5] do x * 2
+  let _ = print(show(r3))
+
+  # for filter that matches everything
+  let r4 = for x in [1, 2, 3] if x > 0 do x
+  let _ = print(show(r4))
+
+  # for filter that matches nothing
+  let r5 = for x in [1, 2, 3] if x > 10 do x
+  print(show(r5))

@@ -1,0 +1,24 @@
+# Test: range edge cases
+# Expected output:
+# [0]
+# []
+# [0, 1, 2, 3, 4]
+# [-2, -1, 0, 1, 2]
+# []
+
+main : () -> <io> () =
+  # Single-element range
+  let _ = print(show(range(0, 0)))
+
+  # Empty range (start > end)
+  let _ = print(show(range(5, 3)))
+
+  # Range from zero
+  let _ = print(show(range(0, 4)))
+
+  # Negative range
+  let _ = print(show(range(0 - 2, 2)))
+
+  # Flat-map on empty list
+  let r = flat-map([], fn(x) => [x, x])
+  print(show(r))

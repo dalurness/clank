@@ -33,7 +33,7 @@ func TestKeywords(t *testing.T) {
 		"let", "in", "for", "fn", "if", "then", "else", "match", "do", "type",
 		"effect", "affine", "handle", "resume", "perform", "mod", "use", "pub",
 		"clone", "true", "false", "interface", "impl", "Self", "deriving",
-		"where", "opaque", "return", "test", "alias", "discard", "extern",
+		"where", "opaque", "return", "test", "alias", "discard",
 	}
 	for _, kw := range expected {
 		if !token.Keywords[kw] {

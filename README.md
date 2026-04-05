@@ -18,7 +18,7 @@ Every existing language optimizes for humans. Clank optimizes for agents:
 | Opaque optimizing backends (LLVM) | Transparent toolchain that fits in context |
 | Spec as reference manual (read on demand) | Spec fits in one load (cold-start learning) |
 
-The full language spec fits in ~2300 tokens — readable in a single context window. See [RATIONALE.md](RATIONALE.md) for the reasoning behind every design decision.
+The full language spec fits in ~2500 tokens — readable in a single context window. See [RATIONALE.md](RATIONALE.md) for the reasoning behind every design decision.
 
 ## Quick Start
 
@@ -36,11 +36,7 @@ go build ./cmd/clank
 ### Run a program
 
 ```bash
-# Tree-walking interpreter (default)
-./clank test/examples/01-factorial.clk
-
-# Bytecode compiler + VM
-./clank --vm test/examples/01-factorial.clk
+./clank run test/examples/01-factorial.clk
 ```
 
 ### Run the test suite
@@ -58,19 +54,15 @@ factorial : (n: Int) -> <> Int =
   if n == 0 then 1 else n * factorial(n - 1)
 
 main : () -> <io> () =
-  print(show(factorial(0)))
-  print(show(factorial(5)))
   print(show(factorial(10)))
 ```
 
-Every function declares its effect row. `<>` means pure; `<io>` means performs I/O. The type system tracks this statically.
+Every function declares its effect row. `<>` means pure; `<io>` means performs I/O.
 
 ### Sum types and pattern matching
 
 ```clank
-type Shape
-  = Circle(Rat)
-  | Rect(Rat, Rat)
+type Shape = Circle(Rat) | Rect(Rat, Rat)
 
 area : (s: Shape) -> <> Rat =
   match s {
@@ -79,30 +71,28 @@ area : (s: Shape) -> <> Rat =
   }
 
 main : () -> <io> () =
-  print(show(area(Circle(5.0))))
-  print(show(area(Rect(3.0, 4.0))))
+  let shapes = [Circle(5.0), Rect(3.0, 4.0)]
+  for s in shapes do print(show(area(s)))
 ```
 
-### Pipelines and lambdas
+### Pipelines, lambdas, and stdlib
 
 ```clank
-evens-as-strings : (xs: [Int]) -> <> [Str] =
-  xs |> filter(fn(x) => x % 2 == 0) |> map(show)
-
 main : () -> <io> () =
-  print(show(evens-as-strings([1, 2, 3, 4, 5, 6])))
-```
+  # Read a JSON config file
+  let data = fs.read("config.json")
+  let config = json.dec(data)
 
-The pipeline operator `|>` provides left-to-right composition: `a |> f(b)` desugars to `f(a, b)`. Simple data transformations read naturally without nesting.
+  # Extract and display a field
+  match json.get(config, "name") {
+    Some(name) => print("Hello, " ++ show(name))
+    None => print("no name found")
+  }
 
-### Do-blocks
-
-```clank
-process : (input: Str) -> <io> () = do {
-  contents <- input
-  length <- len(split(contents, ""))
-  print("Processed: " ++ contents ++ " (length: " ++ show(length) ++ ")")
-}
+  # Filter and transform a list
+  let nums = range(1, 20)
+  let evens = nums |> filter(fn(x) => x % 2 == 0) |> map(show)
+  print(join(evens, ", "))
 ```
 
 More examples in [`test/examples/`](test/examples/).
@@ -114,185 +104,135 @@ More examples in [`test/examples/`](test/examples/).
 - **Applicative-primary** with pipeline sugar (`|>`)
 - All tokens are ASCII; each operator has exactly one meaning
 - Short keywords: `fn`, `let`, `mod`, `pub`, `match`, `do`, `handle`
-- All operators desugar to function calls (`++` = `str.cat`, `+` = addition)
+- All operators desugar to function calls (`++` = `str.cat`, `+` = `add`)
 - Comments: `# line comment`
 
 ### Type System
 
-Clank combines three orthogonal mechanisms:
+Three orthogonal mechanisms:
 
-**Refinement types** — value contracts verified by SMT solver:
+**Refinement types** — value contracts verified at compile time:
 ```clank
 div : (n: Int, d: Int{> 0}) -> <> Int
-mean : (xs: [Rat]{len > 0}) -> <> Rat
 ```
 
-**Algebraic effects** (Koka-style) — behavioral contracts in function signatures:
+**Algebraic effects** (Koka-style) — behavioral contracts in signatures:
 ```clank
 <>                  # pure
 <io>                # I/O
 <exn[E]>            # may raise E
-<state[S]>          # mutable state S
 <async>             # async operations
-<io, exn | e>       # open row (polymorphic tail)
-```
-
-User-defined effects with handlers:
-```clank
-effect DivError { div-by-zero : () -> <> () }
-
-safe-div : (a: Int, b: Int) -> <DivError> Int =
-  if b == 0 then div-by-zero() else a / b
-
-handle safe-div(10, 0) {
-  return(x) => Some(x),
-  div-by-zero(_, k) => None
-}
 ```
 
 **Affine types** — resource protocols (files, connections must be consumed):
 ```clank
-affine type File
-# Using a File consumes it; further use is a compile error
-# &x borrows read-only; clone &x duplicates explicitly
+affine type File = File(Int)
 ```
 
-**Row polymorphism** — open records:
-```clank
-{name: Str | r}     # at least name, r = rest
-```
+Plus: row polymorphism for records, interfaces with `deriving`, pattern matching with exhaustiveness checking.
 
-**Interfaces** (typeclasses):
-```clank
-interface Show { show : (Self) -> <> Str }
-type Color = Red | Green | Blue deriving (Eq, Show, Clone)
-```
+### Standard Library (implemented)
 
-### Standard Library
+All stdlib functions are available without imports, using module-qualified names:
 
-Tier 1 (auto-imported, covers ~90% of agent tasks):
+| Module | Functions | Purpose |
+|--------|-----------|---------|
+| `fs` | `read`, `write`, `exists`, `ls`, `mkdir`, `rm` | File I/O |
+| `json` | `enc`, `dec`, `get`, `set`, `keys`, `merge` | JSON encode/decode |
+| `env` | `get`, `set`, `has`, `all` | Environment variables |
+| `proc` | `run`, `sh`, `exit` | Process execution |
+| `http` | `get`, `post`, `put`, `del` | HTTP client |
+| `rx` | `ok`, `find`, `replace`, `split` | Regex |
+| `math` | `abs`, `min`, `max`, `floor`, `ceil`, `sqrt` | Math |
 
-| Module | Key functions |
-|--------|---------------|
-| `std.str` | `len get slc has split join trim up lo rep cat fmt` |
-| `std.json` | `enc dec get set path keys merge` |
-| `std.fs` | `open close read write lines exists ls mkdir with` |
-| `std.col` | `rev sort zip flat flatmap take drop find any all range group scan` |
-| `std.http` | `get post put del req json` |
-| `std.err` | `ok fail unwrap try throw some none` |
-| `std.proc` | `run sh ok pipe bg wait kill exit` |
-| `std.env` | `get set rm all has` |
-
-Tier 2 (requires `use`): `std.srv`, `std.cli`, `std.dt`, `std.csv`, `std.log`, `std.test`, `std.rx`, `std.math`
-
-All function names are terse (2-6 chars). All functions declare their effects. File/server/process handles are affine.
+Plus core builtins: arithmetic, comparison, logic, string ops, list ops (`map`, `filter`, `fold`, `flat-map`, `range`, `zip`, etc.), tuples, effects, async (`spawn`, `await`, `channel`, `send`, `recv`).
 
 ### Module System
 
 ```clank
 mod math.stats
-use std.io (print, read)
-use std.list (map, filter)
+use mathlib (double, triple)
 
-pub mean : (xs: [Rat]{len > 0}) -> <> Rat = ...
+pub mean : (xs: [Rat]) -> <> Rat = ...
 ```
 
-1:1 file mapping (`src/math/stats.clk` = `mod math.stats`). Explicit imports only, no globs. Private by default, `pub` to export.
+1:1 file mapping. Explicit imports only. Private by default, `pub` to export.
 
-## CLI Usage
+## CLI
 
 ```bash
-clank <file>                         # Run a .clk file (tree-walker)
-clank --vm <file>                    # Run via bytecode compiler + VM
-clank eval <file>                    # Evaluate and print the result
-clank check <file>                   # Type-check without running
-clank lint <file>                    # Lint beyond type-checking
-clank lint --rule +name <file>       # Enable/disable specific rules
-clank fmt <file>                     # Canonical formatting
-clank fmt --check <file>             # Check formatting (no write)
-clank doc search <query>             # Search documentation
-clank doc show <name>                # Show docs for a name
-clank test [files...]                # Run test modules
-clank test --filter <pattern>        # Filter tests by pattern
-clank pretty <file>                  # Expand terse identifiers to verbose form
-clank terse <file>                   # Compress verbose identifiers to terse form
-clank pkg init|add|remove|resolve|verify  # Package management
+clank run <file>                # Run a .clk file
+clank check <file>              # Type-check without running
+clank eval <file>               # Evaluate and print result
+clank fmt <file>                # Canonical formatting
+clank lint <file>               # Lint source code
+clank doc search <query>        # Search documentation
+clank test [files...]           # Run tests
+clank pkg init|add|remove       # Package management
+clank pretty <file>             # Expand terse identifiers
+clank terse <file>              # Compress to terse form
 ```
 
-Use `--json` for structured JSON output (agent-native). Use `--pretty` flag to expand terse source before processing.
+All commands support `--json` for structured output.
 
 ## Project Structure
 
 ```
 go/
-  cmd/clank/main.go          CLI entry point (subcommands: run, check, eval, fmt, lint, doc, test, pkg, pretty, terse)
+  cmd/clank/main.go          CLI entry point
   internal/
     lexer/                   Tokenizer
     parser/                  Recursive descent parser
     ast/                     AST type definitions
     desugar/                 Pipeline/operator/do-block desugaring
-    checker/                 Type checker (HM inference, affine, refinement, interfaces, effect aliases)
-    eval/                    Tree-walking interpreter (including async spawn/await/cancel)
+    checker/                 Type checker (HM, affine, refinement, interfaces, effects)
     compiler/                AST-to-bytecode compiler
-    vm/                      Stack-based bytecode VM with STM, Ref, TVar, channel/async stubs
+    vm/                      Stack-based bytecode VM + stdlib builtins
+    loader/                  Module resolution and import linking
     pretty/                  Terse/verbose identifier transformation
     formatter/               Source code formatter
     linter/                  Lint rules
     doc/                     Documentation extraction and search
-    pkg/                     Package manifest parsing and local dependency resolution
+    pkg/                     Package manifest and dependency resolution
     testrunner/              Test discovery and execution
     token/                   Token types and source locations
+test/
+  phase1-7/                  Language feature tests by phase
+  stdlib/                    Standard library tests
+  examples/                  Example programs
 ```
 
 ## Documentation
 
-- **[SPEC.md](SPEC.md)** — Complete language specification (~2300 tokens, fits in one context window)
+- **[SPEC.md](SPEC.md)** — Complete language specification (~2500 tokens, fits in one context window)
 - **[RATIONALE.md](RATIONALE.md)** — Design decisions and the reasoning behind them
-- **[docs/](docs/)** — Feature deep-dives:
-  - [effect-system.md](docs/effect-system.md), [affine-types.md](docs/affine-types.md), [refinement-types.md](docs/refinement-types.md) — Type system details
-  - [vm-instruction-set.md](docs/vm-instruction-set.md) — Complete 87-opcode VM spec
-  - [gc-strategy.md](docs/gc-strategy.md) — Mark-sweep GC design
-  - [module-system.md](docs/module-system.md) — Module and visibility rules
-  - [stdlib-catalog.md](docs/stdlib-catalog.md) — Full standard library catalog
-  - [tooling-spec.md](docs/tooling-spec.md) — Agent-native CLI design
-  - [implementation-plan.md](docs/implementation-plan.md) — Phased build plan
 - **[ROADMAP.md](ROADMAP.md)** — What's done, what's next
+- **[docs/](docs/)** — Feature deep-dives (effect system, affine types, refinement types, VM instruction set, etc.)
 
 ## Current Status
 
-The Go implementation (`go/`) is the active codebase. All items below refer to it.
+The Go implementation is the sole active codebase. Architecture: bytecode compiler + stack VM.
 
 **Working:**
-- Full pipeline: lexer, parser, desugarer, type checker, tree-walking interpreter
-- Bytecode compiler + stack VM (via `--vm` flag)
-- Algebraic data types, pattern matching, recursion, closures
-- Pipeline operator (`|>`) and operator desugaring
-- Algebraic effects and effect handlers
-- Effect aliases with cross-module resolution (`makeEffectAliasResolver`)
-- Module system with imports and visibility
-- Records, tuples, lists
-- Do-blocks
-- **Refinement type checking** — QF_LIA micro-solver with path condition tracking and arithmetic expression inference (E310/E311)
-- **Affine type enforcement** — move/borrow/clone tracking with `affineCtx`; use-after-move and resource-leak errors (E600/E601/W600)
-- **Interface constraints** — impl registry, `where`-clause validation, 7 built-in interfaces (Clone, Show, Eq, Ord, Default, Into, From), `deriving` auto-generation, blanket From→Into impls
-- **Software transactional memory** — `atomically`/`or-else` with write-log snapshot/restore; nested transactions merge into parent write-log
-- **FFI** — `extern` declarations compiled to `CALL_EXTERN` opcode
-- **Package manager** — `clank pkg init|add|remove|resolve|verify` with `clank.pkg` manifest and lockfile
-- **Pretty-print layer** — `clank pretty`/`clank terse` bidirectional terse/verbose transformation; `--pretty` flag on all commands
-- Row polymorphism in records (row variables unified in TRecord types)
-- HM type schemes — polymorphic builtin registration with fresh type variable instantiation per call site
-- Async spawn/await/cancel (tree-walking evaluator)
-- CLI tooling: run, eval, check, lint, fmt, doc, test, pkg, pretty, terse
-- Structured JSON diagnostics throughout
+- Full pipeline: lexer, parser, desugarer, type checker, bytecode compiler, VM
+- Algebraic data types, pattern matching, recursion, closures, pipelines
+- Algebraic effects and handlers with resumptions
+- Module system with imports, visibility, and transitive resolution
+- Records with row polymorphism, tuples, lists, for-in loops
+- Refinement type checking (QF_LIA micro-solver)
+- Affine type enforcement (move/borrow/clone tracking)
+- Interfaces with `deriving` (Show, Eq, Ord, Clone, Default, From, Into)
+- Software transactional memory (atomically/or-else)
+- Async: spawn, await, task groups, cancellation, channels
+- Standard library: fs, json, env, proc, http, rx, math
+- Package manager with manifest and lockfile
+- CLI tooling with structured JSON diagnostics
 
-**Specced but not yet implemented (Go port):**
+**Specced but not yet implemented:**
 - WASM compilation backend
-- Workspace orchestration (`clank.workspace`, `clank build`)
-- Full async runtime in the bytecode VM (VM has opcode stubs; full scheduling requires cooperative goroutine support)
-- Full effect row unification (effects are currently checked as flat sets; row-variable unification not performed)
-- `pkg search`, `pkg publish`, GitHub-backed registry
-
-See [ROADMAP.md](ROADMAP.md) for details and priorities.
+- Full effect row unification (effects checked as flat sets currently)
+- Tier 2 stdlib: srv (HTTP server), cli (arg parsing), dt (datetime), csv, log
+- `pkg search`, `pkg publish`, registry protocol
 
 ## License
 

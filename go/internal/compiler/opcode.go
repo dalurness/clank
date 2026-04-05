@@ -143,9 +143,6 @@ const (
 	OpREF_MODIFY byte = 0xD4
 	OpREF_CLOSE  byte = 0xD5
 
-	// Foreign
-	OpCALL_EXTERN byte = 0xE0
-
 	// System
 	OpHALT  byte = 0xF0
 	OpTRAP  byte = 0xF1

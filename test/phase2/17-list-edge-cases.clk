@@ -1,0 +1,49 @@
+# Test: list operations on empty and single-element lists
+# Expected output:
+# []
+# []
+# 0
+# []
+# []
+# [1]
+# 1
+# []
+# [3, 2, 1]
+# 1
+# [2, 3]
+# true
+# true
+
+main : () -> <io> () =
+  # map on empty list
+  let _ = print(show(map([], fn(x) => x * 2)))
+
+  # filter on empty list
+  let _ = print(show(filter([], fn(x) => x > 0)))
+
+  # fold on empty list
+  let _ = print(show(fold([], 0, fn(acc, x) => acc + x)))
+
+  # rev on empty list
+  let _ = print(show(rev([])))
+
+  # cat with empties
+  let _ = print(show(cat([], [])))
+
+  # cons on empty list
+  let _ = print(show(cons(1, [])))
+
+  # Single-element list operations
+  let _ = print(show(head([1])))
+  let _ = print(show(tail([1])))
+
+  # rev on multi-element
+  let _ = print(show(rev([1, 2, 3])))
+
+  # head/tail on multi
+  let _ = print(show(head([1, 2, 3])))
+  let _ = print(show(tail([1, 2, 3])))
+
+  # len on empty and non-empty
+  let _ = print(show(len([]) == 0))
+  print(show(len([1, 2, 3]) == 3))

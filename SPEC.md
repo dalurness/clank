@@ -1,20 +1,19 @@
-# Clank Language Specification v1.0
+# Clank Language Specification v1.1
 
-Clank is a strongly-typed, applicative-primary language designed for AI agent authorship. Pipeline syntax (`|>`) provides left-to-right composition sugar. All tokens are ASCII. Algebraic effects provide extensible control flow.
+Clank is a strongly-typed, applicative-primary language designed for AI agent authorship. Pipeline syntax (`|>`) provides left-to-right composition sugar. All tokens are ASCII. Algebraic effects provide extensible control flow. Execution is via bytecode compiler + stack VM.
 
 ## 1. Lexical Structure
 
 ```
 ident       = alpha { alpha | digit | '_' | '-' }
-keywords    = let in fn if then else match do type effect
-              handle resume mod use pub true false
-reserved    = affine clone interface impl Self deriving where opaque
+keywords    = let in fn if then else match do type effect affine
+              handle resume perform mod use pub clone true false
+              interface impl Self deriving where opaque return test
+              alias discard
 comment     = '#' ... newline
 ```
 
-Reserved keywords are lexed but have no semantic meaning in the current implementation. They exist to prevent collision with planned features (see ROADMAP.md).
-
-Primitives: `Int` (arbitrary-precision), `Rat` (rational), `Bool`, `Str` (UTF-8), `Byte`, `()` (unit).
+Primitives: `Int` (64-bit signed, overflow traps), `Rat` (IEEE 754 double, overflow traps), `Bool`, `Str` (UTF-8), `Byte`, `()` (unit).
 
 Compounds: `[T]` (list), `(T, U)` (tuple), `{k: T}` (record), `T | U` (tagged union), `T -> <E> U` (function with effects E).
 
@@ -22,29 +21,37 @@ Compounds: `[T]` (list), `(T, U)` (tuple), `{k: T}` (record), `T | U` (tagged un
 
 ```ebnf
 program     = { top-level } ;
-top-level   = definition | type-decl | effect-decl | mod-decl | use-decl ;
+top-level   = definition | type-decl | effect-decl | effect-alias
+            | mod-decl | use-decl | test-decl
+            | interface-decl | impl-block ;
 
 definition  = ['pub'] ident ':' type-sig '=' expr ;
 type-sig    = '(' params ')' '->' effect-ann type-expr ;
 
-type-decl   = ['pub'] 'type' ident [type-params] '=' type-body ;
-type-body   = type-expr | variant { '|' variant } ;
+type-decl   = ['pub'] ['affine'] 'type' ident [type-params] '=' variant { '|' variant }
+              ['deriving' '(' ident { ',' ident } ')'] ;
 variant     = ident ['(' type-expr { ',' type-expr } ')'] ;
 
-effect-decl = ['pub'] 'effect' ident [type-params] '{' { op-sig } '}' ;
+effect-decl = ['pub'] 'effect' ident '{' { op-sig } '}' ;
+effect-alias = ['pub'] 'effect' 'alias' ident '=' '<' effects '>' ;
+
+interface-decl = ['pub'] 'interface' ident [type-params] '{' { method-sig } '}' ;
+impl-block  = ['pub'] 'impl' ident [type-args] 'for' type-expr '{' { method } '}' ;
+
+test-decl   = 'test' string '=' expr ;
 ```
 
 ### Expressions (precedence low→high)
 
 ```ebnf
 expr        = let-expr | if-expr | match-expr | do-block
-            | handle-expr | pipe-expr ;
+            | handle-expr | for-expr | pipe-expr ;
 
 pipe-expr   = or-expr { '|>' or-expr } ;
 or-expr     = and-expr { '||' and-expr } ;
 and-expr    = cmp-expr { '&&' cmp-expr } ;
-cmp-expr    = concat-expr [ cmp-op concat-expr ] ;      (* non-assoc *)
-concat-expr = add-expr { '++' concat-expr } ;           (* right-assoc *)
+cmp-expr    = concat-expr [ cmp-op concat-expr ] ;
+concat-expr = add-expr { '++' add-expr } ;
 add-expr    = mul-expr { ('+' | '-') mul-expr } ;
 mul-expr    = unary-expr { ('*' | '/' | '%') unary-expr } ;
 unary-expr  = ['-' | '!'] postfix-expr ;
@@ -52,31 +59,31 @@ postfix-expr = atom { '(' args ')' | '.' ident } ;
 
 atom        = literal | ident | lambda | '(' expr ')' | tuple | list | record ;
 lambda      = 'fn' '(' params ')' '=>' expr ;
-let-expr    = 'let' ident '=' expr ['in' expr] ;
+let-expr    = 'let' pattern '=' expr ['in' expr] ;
 if-expr     = 'if' expr 'then' expr 'else' expr ;
 match-expr  = 'match' expr '{' { pattern '=>' expr } '}' ;
 do-block    = 'do' '{' { [ident '<-'] expr } '}' ;
-handle-expr = 'handle' expr '{' { handler-arm } '}' ;
+handle-expr = 'handle' expr '{' handler-arms '}' ;
+for-expr    = 'for' pattern 'in' expr ['if' expr] ['fold' ident '=' expr] 'do' expr ;
 ```
 
-All operators desugar to function calls. `a |> f(b)` = `f(a, b)`. `a ++ b` = `str.cat(a, b)`. Comparison is non-associative.
+All operators desugar to function calls: `a + b` → `add(a, b)`, `a |> f(b)` → `f(a, b)`, `a ++ b` → `str.cat(a, b)`.
 
 ## 3. Type System
 
-### 3.1 Effect System
-
+### 3.1 Effects
 Every function type includes an effect annotation: `T -> <effects> U`.
 
 ```
-<>                  -- pure
-<io>                -- I/O
-<exn[E]>            -- may raise E
+<>              -- pure
+<io>            -- I/O (print, fs, http, proc, env)
+<exn[E]>        -- may raise E
+<async>         -- async operations (spawn, await, channels)
 ```
 
-Built-in effects: `io` (not handleable), `exn[E]`. User-defined effects via `effect Name { op : T -> U }`.
+Built-in effects: `io`, `exn[E]`, `async`. User-defined via `effect Name { op : T -> U }`. Effect aliases: `effect alias Pure = <>`.
 
-**Handlers** interpret effects:
-
+Handlers interpret effects:
 ```
 handle computation {
   return(x) => ...,
@@ -84,94 +91,109 @@ handle computation {
 }
 ```
 
-Continuations are one-shot: `k` may be called 0 or 1 times. A second call raises error E211.
-
-The type checker collects effects from expressions and warns on undeclared effects, but does not perform full row-polymorphic unification or effect subtyping. Effect annotations are checked as flat sets.
-
 ### 3.2 Records
-
-Records are structural key-value maps:
-
+Structural key-value maps with row polymorphism:
 ```
-{name: "Alice", age: 30}    -- record literal
-rec.name                     -- field access
-rec{age: 31}                 -- record update (new record with field replaced)
+{name: "Ada", age: 30}         -- literal
+rec.name                        -- access
+{age: 31, ..rec}                -- spread (new record, override age)
 ```
 
-Operations: `rec.field` (access), `rec{field: val}` (update), `{f: v, ..base}` (spread). Records are structurally typed. The type checker does not enforce row polymorphism — record types are not open or closed, and there is no row-variable unification.
+### 3.3 Interfaces & Deriving
+```
+interface Show { show : (Self) -> Str }
+impl Show for MyType { show = fn(self) => ... }
+type Color = Red | Green | Blue deriving (Show, Eq, Ord)
+```
+Built-in interfaces: `Show`, `Eq`, `Ord`, `Clone`, `Default`, `From`, `Into`.
 
-### 3.3 Type Inference
+### 3.4 Refinement Types
+Predicates on numeric types verified at compile time (QF_LIA micro-solver):
+```
+div : (n: Int, d: Int{> 0}) -> <> Int
+```
 
-The type checker performs basic Hindley-Milner-style inference:
+### 3.5 Affine Types
+Resources that must be used at most once:
+```
+affine type File = File(Int)
+```
+Tracked via move semantics. Explicit `clone` required for reuse.
 
-- Literal types (Int, Rat, Bool, Str, Unit)
-- Variable lookup and scoping
-- Let-binding with type propagation
-- If-then-else branch unification
-- Lambda and function application
-- Match expressions with pattern binding
-- List and tuple construction
-- Exhaustiveness checking for match (variant registry)
-
-The checker enforces: refinement predicates (QF_LIA micro-solver with path condition tracking), affine use-at-most-once (move/borrow/clone tracking via `affineCtx`, errors E600/E601/W600), and interface constraints (impl registry, `where`-clause validation, derived-impl verification). The checker does **not** currently enforce: full effect row unification — effect annotations are checked as flat sets; row-variable unification is not performed.
+### 3.6 Type Inference
+Hindley-Milner with: literal types, let-binding, if/match branch unification, lambda/application, exhaustiveness checking, path-sensitive refinement tracking.
 
 ## 4. Module System
 
 ```
 mod math.stats
 use std.io (print)
-use std.list (map, filter)
+use mathlib (double, triple)
 
 pub mean : (xs: [Rat]) -> <> Rat = ...
 ```
 
-- **1:1 file mapping**: `src/math/stats.clk` → `mod math.stats`
+- **1:1 file mapping**: `math/stats.clk` → `mod math.stats`
 - **Explicit imports**: every name listed, no globs
 - **Visibility**: private by default, `pub` to export
-- **Public functions must have explicit effect annotations**
 
-## 5. Built-in Functions
+## 5. Built-in Functions (always available)
 
-Core operations are available without imports. These are the actually implemented builtins:
+### Core
+| Category | Functions |
+|----------|-----------|
+| Arithmetic | `add`, `sub`, `mul`, `div`, `mod`, `negate` |
+| Comparison | `eq`, `neq`, `lt`, `gt`, `lte`, `gte` |
+| Logic | `and`, `or`, `not` |
+| Strings | `str.cat`, `show`, `print`, `split`, `join`, `trim` |
+| Lists | `len`, `head`, `tail`, `cons`, `cat`, `rev`, `get`, `map`, `filter`, `fold`, `flat-map`, `range`, `zip` |
+| Tuples | `fst`, `snd`, `tuple.get` |
+| Effects | `raise` |
+| For-loops | `for x in list do expr`, `for x in list if pred do expr`, `for x in list fold acc = init do expr` |
 
-### Arithmetic
-`add`, `sub`, `mul`, `div`, `mod`, `negate`
+### Standard Library (module-qualified, always available)
 
-### Comparison
-`eq`, `neq`, `lt`, `gt`, `lte`, `gte`
+| Module | Functions | Purpose |
+|--------|-----------|---------|
+| `fs` | `fs.read`, `fs.write`, `fs.exists`, `fs.ls`, `fs.mkdir`, `fs.rm` | File I/O |
+| `json` | `json.enc`, `json.dec`, `json.get`, `json.set`, `json.keys`, `json.merge` | JSON encode/decode |
+| `env` | `env.get`, `env.set`, `env.has`, `env.all` | Environment variables |
+| `proc` | `proc.run`, `proc.sh`, `proc.exit` | Process execution |
+| `http` | `http.get`, `http.post`, `http.put`, `http.del` | HTTP client |
+| `rx` | `rx.ok`, `rx.find`, `rx.replace`, `rx.split` | Regex |
+| `math` | `math.abs`, `math.min`, `math.max`, `math.floor`, `math.ceil`, `math.sqrt` | Math |
 
-### Logic
-`and`, `or`, `not`
+### Async & Concurrency
+| Function | Signature | Purpose |
+|----------|-----------|---------|
+| `spawn` | `(() -> a) -> <async> Future[a]` | Spawn task |
+| `await` | `Future[a] -> <async> a` | Wait for result |
+| `channel` | `Int -> <async> (Sender[a], Receiver[a])` | Create channel |
+| `send` | `(Sender[a], a) -> <async> ()` | Send value |
+| `recv` | `Receiver[a] -> <async> a` | Receive value |
+| `try-recv` | `Receiver[a] -> <async> Option[a]` | Non-blocking receive |
+| `sleep` | `Int -> <async> ()` | Sleep milliseconds |
+| `task-group` | `(() -> a) -> <async> a` | Structured concurrency |
+| `shield` | `(() -> a) -> <async> a` | Cancellation protection |
 
-### Strings
-`str.cat` (concatenation), `show` (value to string), `split`, `trim`, `join`, `print` (I/O)
+## 6. CLI
 
-### Lists
-`len`, `head`, `tail`, `cons`, `cat`, `rev`, `get`, `map`, `filter`, `fold`, `flat-map`, `range`, `zip`
+```bash
+clank <file>                    # Run a .clk file
+clank check <file>              # Type-check only
+clank eval <file>               # Evaluate and print result
+clank fmt <file>                # Format source code
+clank lint <file>               # Lint source code
+clank doc search <query>        # Search documentation
+clank test [dir]                # Run tests
+clank pkg <init|add|remove>     # Package management
+```
 
-### Tuples
-`fst`, `snd`, `tuple.get`
+All commands support `--json` for structured output.
 
-### Effects
-`raise` (trigger `exn` effect)
-
-The full standard library catalog (std.str, std.json, std.fs, std.http, std.proc, etc.) described in `docs/stdlib-catalog.md` is not yet implemented. See ROADMAP.md.
-
-## 6. Example
+## 7. Example
 
 ```
-mod app.main
-
-use std.io (print)
-
-factorial : (n: Int) -> <> Int =
-  if n == 0 then 1 else n * factorial(n - 1)
-
-effect DivError { div-by-zero : () -> <> () }
-
-safe-div : (a: Int, b: Int) -> <DivError> Int =
-  if b == 0 then div-by-zero() else a / b
-
 type Shape = Circle(Rat) | Rect(Rat, Rat)
 
 area : (s: Shape) -> <> Rat =
@@ -180,12 +202,15 @@ area : (s: Shape) -> <> Rat =
     Rect(w, h) => w * h
   }
 
-greet : (rec: {name: Str}) -> <io> () =
-  rec.name |> str.cat("Hello, ") |> print
-
 main : () -> <io> () =
-  do {
-    print(show(factorial(10)))
-    greet({name: "Agent"})
+  let shapes = [Circle(5.0), Rect(3.0, 4.0)]
+  let areas = map(shapes, fn(s) => area(s))
+  for a in areas do print(show(a))
+
+  let data = fs.read("config.json")
+  let config = json.dec(data)
+  match json.get(config, "name") {
+    Some(name) => print("Hello, " ++ show(name))
+    None => print("no name found")
   }
 ```

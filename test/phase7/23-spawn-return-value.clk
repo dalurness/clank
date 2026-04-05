@@ -1,0 +1,15 @@
+# Test: spawn returns a value via await
+# Expected output:
+# 42
+# hello
+
+main : () -> <io, async> () =
+  # Spawn task that computes and returns a value
+  let f1 = spawn(fn() => 42)
+  let result1 = await(f1)
+  let _ = print(show(result1))
+
+  # Spawn task that returns a string
+  let f2 = spawn(fn() => "hello")
+  let result2 = await(f2)
+  print(result2)

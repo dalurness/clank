@@ -71,7 +71,6 @@ var Keywords = map[string]bool{
 	"true": true, "false": true, "interface": true, "impl": true,
 	"Self": true, "deriving": true, "where": true, "opaque": true,
 	"return": true, "test": true, "alias": true, "discard": true,
-	"extern": true,
 }
 
 // MultiOps are multi-character operators in longest-match order.

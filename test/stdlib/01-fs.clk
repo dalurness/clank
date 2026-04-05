@@ -1,0 +1,49 @@
+# Test: filesystem operations — comprehensive
+# Expected output:
+# hello from clank
+# true
+# false
+# true
+# 1
+# true
+# false
+# true
+# overwritten
+
+main : () -> <io> () =
+  # Write and read a file
+  let _ = fs.write("_test_out.txt", "hello from clank")
+  let _ = print(fs.read("_test_out.txt"))
+
+  # Exists checks
+  let _ = print(show(fs.exists("_test_out.txt")))
+  let _ = print(show(fs.exists("__nonexistent_xyz__")))
+
+  # mkdir (including idempotent re-create)
+  let _ = fs.mkdir("_test_dir")
+  let _ = fs.mkdir("_test_dir")
+  let _ = print(show(fs.exists("_test_dir")))
+
+  # Write file inside dir and list it
+  let _ = fs.write("_test_dir/a.txt", "a")
+  let files = fs.ls("_test_dir")
+  let _ = print(show(len(files)))
+
+  # Nested mkdir
+  let _ = fs.mkdir("_test_dir/sub/deep")
+  let _ = print(show(fs.exists("_test_dir/sub/deep")))
+
+  # rm on nonexistent path is silent
+  let _ = fs.rm("__does_not_exist_xyz__")
+  let _ = print(show(false))
+
+  # Overwrite file
+  let _ = fs.write("_test_out.txt", "overwritten")
+  let _ = print(show(fs.read("_test_out.txt") == "overwritten"))
+
+  # Read back to verify
+  let _ = print(fs.read("_test_out.txt"))
+
+  # Cleanup
+  let _ = fs.rm("_test_dir")
+  fs.rm("_test_out.txt")

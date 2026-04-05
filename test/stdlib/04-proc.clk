@@ -1,0 +1,17 @@
+# Test: process execution — comprehensive
+# Expected output:
+# hello
+# 0
+# hello world
+
+main : () -> <io> () =
+  # Basic run with args
+  let result = proc.run("echo", ["hello"])
+  let _ = print(trim(result.stdout))
+
+  # Check exit code
+  let _ = print(show(result.code))
+
+  # proc.sh runs a shell command
+  let out = proc.sh("echo hello world")
+  print(trim(out))

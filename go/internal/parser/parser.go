@@ -155,8 +155,6 @@ func (p *parser) parseProgram() *ast.Program {
 			topLevels = append(topLevels, p.parseImplBlock(false))
 		case p.at(token.Keyword, "test"):
 			topLevels = append(topLevels, p.parseTestDecl())
-		case p.at(token.Keyword, "extern"):
-			topLevels = append(topLevels, p.parseExternDecl(false)...)
 		default:
 			topLevels = append(topLevels, p.parseDefinition(false))
 		}
@@ -213,8 +211,6 @@ func (p *parser) parsePubDecl() []ast.TopLevel {
 		return []ast.TopLevel{p.parseInterfaceDecl(true)}
 	case p.at(token.Keyword, "impl"):
 		return []ast.TopLevel{p.parseImplBlock(true)}
-	case p.at(token.Keyword, "extern"):
-		return p.parseExternDecl(true)
 	default:
 		return []ast.TopLevel{p.parseDefinition(true)}
 	}
@@ -263,120 +259,6 @@ func (p *parser) parseTestDecl() ast.TopLevel {
 	return ast.TopTestDecl{Name: nameTok.Value, Body: body, Loc: loc}
 }
 
-// ── Extern declaration ──
-
-func derefOr(s *string, def string) string {
-	if s != nil {
-		return *s
-	}
-	return def
-}
-
-func (p *parser) parseExternDecl(pub bool) []ast.TopLevel {
-	loc := p.expect(token.Keyword, "extern").Loc
-
-	// extern mod "lib" [where ...] { members }
-	if p.at(token.Keyword, "mod") {
-		p.advance()
-		library := p.expect(token.Str).Value
-		shared := p.parseExternWhereAttrs()
-		host := shared.host
-		if host == nil {
-			if strings.HasPrefix(library, "node:") {
-				s := "js"
-				host = &s
-			} else if strings.HasPrefix(library, "lib") {
-				s := "c"
-				host = &s
-			}
-		}
-		p.expect(token.Delim, "{")
-		var decls []ast.TopLevel
-		for !p.at(token.Delim, "}") {
-			memberPub := pub
-			if p.at(token.Keyword, "pub") {
-				p.advance()
-				memberPub = true
-			}
-			memberLoc := p.peek().Loc
-			name := p.expect(token.Ident).Value
-			p.expect(token.Delim, ":")
-			sig := p.parseTypeSig()
-			memberAttrs := p.parseExternWhereAttrs()
-			mHost := memberAttrs.host
-			if mHost == nil {
-				mHost = host
-			}
-			mSymbol := memberAttrs.symbol
-			mUnsafe := memberAttrs.unsafe_ || shared.unsafe_
-			decls = append(decls, ast.TopExternDecl{
-				Name: name, Sig: sig, Library: library,
-				Host: derefOr(mHost, ""), Symbol: derefOr(mSymbol, ""), Unsafe: mUnsafe,
-				Pub: memberPub, Loc: memberLoc,
-			})
-		}
-		p.expect(token.Delim, "}")
-		return decls
-	}
-
-	// Single extern: extern "lib" name : sig [where ...]
-	library := p.expect(token.Str).Value
-	name := p.expect(token.Ident).Value
-	p.expect(token.Delim, ":")
-	sig := p.parseTypeSig()
-	attrs := p.parseExternWhereAttrs()
-	host := attrs.host
-	if host == nil {
-		if strings.HasPrefix(library, "node:") {
-			s := "js"
-			host = &s
-		} else if strings.HasPrefix(library, "lib") {
-			s := "c"
-			host = &s
-		}
-	}
-	return []ast.TopLevel{ast.TopExternDecl{
-		Name: name, Sig: sig, Library: library,
-		Host: derefOr(host, ""), Symbol: derefOr(attrs.symbol, ""), Unsafe: attrs.unsafe_,
-		Pub: pub, Loc: loc,
-	}}
-}
-
-type externAttrs struct {
-	host    *string
-	symbol  *string
-	unsafe_ bool
-}
-
-func (p *parser) parseExternWhereAttrs() externAttrs {
-	var a externAttrs
-	if p.at(token.Keyword, "where") {
-		p.advance()
-		for {
-			if p.at(token.Keyword, "unsafe") {
-				p.advance()
-				a.unsafe_ = true
-			} else {
-				attrName := p.expect(token.Ident).Value
-				p.expect(token.Op, "=")
-				attrVal := p.expect(token.Str).Value
-				switch attrName {
-				case "host":
-					a.host = &attrVal
-				case "symbol":
-					a.symbol = &attrVal
-				default:
-					p.fail(fmt.Sprintf("unknown extern attribute '%s'", attrName))
-				}
-			}
-			if !p.at(token.Delim, ",") {
-				break
-			}
-			p.advance()
-		}
-	}
-	return a
-}
 
 // ── Affine type declaration ──
 

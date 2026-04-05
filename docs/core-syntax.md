@@ -69,8 +69,8 @@ affine  handle  resume  mod  use  pub  clone  true  false
 
 | Type    | Description              | Literal examples       |
 |---------|--------------------------|------------------------|
-| `Int`   | Arbitrary-precision int  | `0` `42` `-7`         |
-| `Rat`   | Rational number          | `3.14` `-0.5`         |
+| `Int`   | 64-bit signed integer (overflow traps) | `0` `42` `-7`         |
+| `Rat`   | IEEE 754 double (overflow traps) | `3.14` `-0.5`         |
 | `Bool`  | Boolean                  | `true` `false`        |
 | `Str`   | UTF-8 string             | `"hello"` `""`        |
 | `Byte`  | 8-bit unsigned           | `0x1F` `0b1010`       |

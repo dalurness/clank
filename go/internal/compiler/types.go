@@ -9,15 +9,6 @@ type BytecodeWord struct {
 	IsPublic   bool
 }
 
-// ExternEntry describes a foreign function declaration.
-type ExternEntry struct {
-	Name     string
-	Library  string
-	Symbol   string
-	Host     string // "" if not specified
-	ArgCount int
-}
-
 // BytecodeModule is the in-memory representation of a compiled program.
 type BytecodeModule struct {
 	Words         []BytecodeWord
@@ -26,5 +17,4 @@ type BytecodeModule struct {
 	VariantNames  []string            // maps variant tag → name
 	EntryWordID   *int                // nil if no main
 	DispatchTable map[string]map[string]int // method → typeTag → wordID
-	Externs       []ExternEntry
 }

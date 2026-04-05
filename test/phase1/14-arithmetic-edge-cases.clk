@@ -1,0 +1,31 @@
+# Test: arithmetic edge cases
+# Expected output:
+# 0
+# 0
+# -3
+# true
+# 5.5
+# 1.5
+# -1
+
+main : () -> <io> () =
+  # Multiply by zero
+  let _ = print(show(42 * 0))
+
+  # Add inverse
+  let _ = print(show(5 + (0 - 5)))
+
+  # Negative results
+  let _ = print(show(2 - 5))
+
+  # Rational arithmetic
+  let _ = print(show(3.0 + 2.5 == 5.5))
+
+  # Mixed int/rat
+  let _ = print(show(3 + 2.5))
+
+  # Rat division
+  let _ = print(show(3.0 / 2.0))
+
+  # Negative division (truncation toward zero)
+  print(show(0 - 7 / 5))

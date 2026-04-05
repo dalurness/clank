@@ -232,6 +232,53 @@ func builtinRegistry() []BuiltinEntry {
 		{"split", fn(tStr, fn(tStr, tAnyList)), "Split string by separator"},
 		{"join", fn(tAnyList, fn(tStr, tStr)), "Join list of strings with separator"},
 		{"trim", fn(tStr, tStr), "Trim whitespace from both ends of a string"},
+
+		// Filesystem
+		{"fs.read", fn(tStr, tStr), "Read file contents as string"},
+		{"fs.write", fn(tStr, fn(tStr, tUnit)), "Write string to file (path, content)"},
+		{"fs.exists", fn(tStr, tBool), "Check if a file or directory exists"},
+		{"fs.ls", fn(tStr, checker.NewTList(tStr)), "List directory entries"},
+		{"fs.mkdir", fn(tStr, tUnit), "Create directory (recursive)"},
+		{"fs.rm", fn(tStr, tUnit), "Remove file or directory"},
+
+		// JSON
+		{"json.enc", fn(tAny, tStr), "Encode a value to JSON string"},
+		{"json.dec", fn(tStr, tAny), "Decode JSON string to a value"},
+		{"json.get", fn(tAny, fn(tStr, tAny)), "Get field from record by key, returns Option"},
+		{"json.set", fn(tAny, fn(tStr, fn(tAny, tAny))), "Set field on record (record, key, value)"},
+		{"json.keys", fn(tAny, checker.NewTList(tStr)), "Get list of keys from a record"},
+		{"json.merge", fn(tAny, fn(tAny, tAny)), "Merge two records (right wins on conflict)"},
+
+		// Environment
+		{"env.get", fn(tStr, tAny), "Get environment variable, returns Option[Str]"},
+		{"env.set", fn(tStr, fn(tStr, tUnit)), "Set environment variable (key, value)"},
+		{"env.has", fn(tStr, tBool), "Check if environment variable exists"},
+		{"env.all", fn(tUnit, tAny), "Get all environment variables as List[(Str, Str)]"},
+
+		// Process execution
+		{"proc.run", fn(tStr, fn(checker.NewTList(tStr), tAny)), "Run command with args, returns {stdout, stderr, code}"},
+		{"proc.sh", fn(tStr, tStr), "Run shell command, returns stdout"},
+		{"proc.exit", fn(tInt, tUnit), "Exit process with code"},
+
+		// HTTP
+		{"http.get", fn(tStr, tAny), "HTTP GET request, returns {status, body, headers}"},
+		{"http.post", fn(tStr, fn(tStr, tAny)), "HTTP POST request (url, body), returns {status, body, headers}"},
+		{"http.put", fn(tStr, fn(tStr, tAny)), "HTTP PUT request (url, body), returns {status, body, headers}"},
+		{"http.del", fn(tStr, tAny), "HTTP DELETE request, returns {status, body, headers}"},
+
+		// Regex
+		{"rx.ok", fn(tStr, fn(tStr, tBool)), "Test if string matches regex pattern"},
+		{"rx.find", fn(tStr, fn(tStr, checker.NewTList(tStr))), "Find all matches of regex pattern in string"},
+		{"rx.replace", fn(tStr, fn(tStr, fn(tStr, tStr))), "Replace all regex matches (string, pattern, replacement)"},
+		{"rx.split", fn(tStr, fn(tStr, checker.NewTList(tStr))), "Split string by regex pattern"},
+
+		// Math
+		{"math.abs", fn(tInt, tInt), "Absolute value"},
+		{"math.min", fn(tInt, fn(tInt, tInt)), "Minimum of two numbers"},
+		{"math.max", fn(tInt, fn(tInt, tInt)), "Maximum of two numbers"},
+		{"math.floor", fn(tAny, tInt), "Floor (round down to integer)"},
+		{"math.ceil", fn(tAny, tInt), "Ceiling (round up to integer)"},
+		{"math.sqrt", fn(tAny, tAny), "Square root (returns Rat)"},
 	}
 }
 

@@ -1,0 +1,30 @@
+# Test: try-recv edge cases
+# Expected output:
+# None
+# Some(42)
+# None
+
+main : () -> <io, async> () =
+  let (tx, rx) = channel(5)
+
+  # try-recv on empty channel returns None
+  match try-recv(rx) {
+    Some(v) => print("unexpected: " ++ show(v))
+    None => print(show(None))
+  }
+
+  # Send value, then try-recv succeeds
+  let _ = send(tx, 42)
+  match try-recv(rx) {
+    Some(v) => print("Some(" ++ show(v) ++ ")")
+    None => print("unexpected: None")
+  }
+
+  # try-recv again on now-empty channel returns None
+  match try-recv(rx) {
+    Some(v) => print("unexpected: " ++ show(v))
+    None => print(show(None))
+  }
+
+  let _ = close-sender(tx)
+  close-receiver(rx)

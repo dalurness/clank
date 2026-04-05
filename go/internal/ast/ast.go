@@ -594,17 +594,6 @@ type TopImplBlock struct {
 	Loc         token.Loc
 }
 
-type TopExternDecl struct {
-	Name    string
-	Sig     TypeSig
-	Library string
-	Host    string // empty if not specified
-	Symbol  string // empty if not specified
-	Unsafe  bool
-	Pub     bool
-	Loc     token.Loc
-}
-
 func (TopDefinition) topLevelNode()    {}
 func (TopTypeDecl) topLevelNode()      {}
 func (TopEffectDecl) topLevelNode()    {}
@@ -614,7 +603,6 @@ func (TopUseDecl) topLevelNode()       {}
 func (TopTestDecl) topLevelNode()      {}
 func (TopInterfaceDecl) topLevelNode() {}
 func (TopImplBlock) topLevelNode()     {}
-func (TopExternDecl) topLevelNode()    {}
 
 func (t TopDefinition) TopLoc() token.Loc    { return t.Loc }
 func (t TopTypeDecl) TopLoc() token.Loc      { return t.Loc }
@@ -625,7 +613,6 @@ func (t TopUseDecl) TopLoc() token.Loc       { return t.Loc }
 func (t TopTestDecl) TopLoc() token.Loc      { return t.Loc }
 func (t TopInterfaceDecl) TopLoc() token.Loc { return t.Loc }
 func (t TopImplBlock) TopLoc() token.Loc     { return t.Loc }
-func (t TopExternDecl) TopLoc() token.Loc    { return t.Loc }
 
 // ── Program ──
 

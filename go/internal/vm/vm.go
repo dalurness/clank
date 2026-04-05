@@ -116,6 +116,8 @@ func New(mod *compiler.BytecodeModule) *VM {
 		w := &mod.Words[i]
 		vm.wordMap[w.WordID] = w
 	}
+	// Set package-level variant names so ValueToString can resolve them
+	activeVariantNames = mod.VariantNames
 	return vm
 }
 
@@ -678,6 +680,9 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		for k, v := range rec.Heap.Fields {
 			newFields[k] = v
 		}
+		if _, exists := newFields[fieldName]; !exists {
+			newOrder = append(newOrder, fieldName)
+		}
 		newFields[fieldName] = val
 		vm.push(ValRecord(newFields, newOrder))
 
@@ -946,19 +951,6 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		}
 		return vm.doCall(wordID)
 
-	// ── FFI ──
-	case compiler.OpCALL_EXTERN:
-		externIdx := int(vm.readU16(code))
-		argCount := int(vm.readU8(code))
-		if externIdx >= len(vm.module.Externs) {
-			return vm.trap("E800", fmt.Sprintf("unknown extern index %d", externIdx))
-		}
-		// Pop and discard args for now (extern not supported in Go runtime)
-		for i := 0; i < argCount; i++ {
-			vm.pop()
-		}
-		return vm.trap("E804", "extern calls not supported in Go runtime")
-
 	// ── VM Control ──
 	case compiler.OpHALT:
 		vm.halted = true
@@ -986,11 +978,7 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		}
 		vm.push(ValUnit())
 	case compiler.OpTASK_SLEEP:
-		vm.pop()
-		if err := vm.checkCancellation(); err != nil {
-			return err
-		}
-		vm.push(ValUnit())
+		return vm.builtinSleep()
 	case compiler.OpTASK_GROUP_ENTER:
 		vm.opTaskGroupEnter()
 	case compiler.OpTASK_GROUP_EXIT:
@@ -1488,6 +1476,86 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 	case 115: // __for_fold
 		return vm.builtinForFold()
 
+	// HTTP
+	case 120: // http.get
+		return vm.builtinHttpRequest("GET")
+	case 121: // http.post
+		return vm.builtinHttpRequest("POST")
+	case 122: // http.put
+		return vm.builtinHttpRequest("PUT")
+	case 123: // http.del
+		return vm.builtinHttpRequest("DELETE")
+
+	// Process execution
+	case 155: // proc.run
+		return vm.builtinProcRun()
+	case 156: // proc.sh
+		return vm.builtinProcSh()
+	case 162: // proc.exit
+		return vm.builtinProcExit()
+
+	// Filesystem
+	case 200: // fs.read
+		return vm.builtinFsRead()
+	case 201: // fs.write
+		return vm.builtinFsWrite()
+	case 202: // fs.exists
+		return vm.builtinFsExists()
+	case 203: // fs.ls
+		return vm.builtinFsLs()
+	case 204: // fs.mkdir
+		return vm.builtinFsMkdir()
+	case 205: // fs.rm
+		return vm.builtinFsRm()
+
+	// JSON
+	case 207: // json.enc
+		return vm.builtinJsonEnc()
+	case 208: // json.dec
+		return vm.builtinJsonDec()
+	case 209: // json.get
+		return vm.builtinJsonGet()
+	case 210: // json.set
+		return vm.builtinJsonSet()
+	case 211: // json.keys
+		return vm.builtinJsonKeys()
+	case 212: // json.merge
+		return vm.builtinJsonMerge()
+
+	// Environment
+	case 214: // env.get
+		return vm.builtinEnvGet()
+	case 215: // env.set
+		return vm.builtinEnvSet()
+	case 216: // env.has
+		return vm.builtinEnvHas()
+	case 217: // env.all
+		return vm.builtinEnvAll()
+
+	// Regex
+	case 220: // rx.ok
+		return vm.builtinRxTest()
+	case 221: // rx.find
+		return vm.builtinRxFind()
+	case 222: // rx.replace
+		return vm.builtinRxReplace()
+	case 223: // rx.split
+		return vm.builtinRxSplit()
+
+	// Math
+	case 224: // math.abs
+		return vm.builtinMathAbs()
+	case 225: // math.min
+		return vm.builtinMathMin()
+	case 226: // math.max
+		return vm.builtinMathMax()
+	case 227: // math.floor
+		return vm.builtinMathFloor()
+	case 228: // math.ceil
+		return vm.builtinMathCeil()
+	case 229: // math.sqrt
+		return vm.builtinMathSqrt()
+
 	default:
 		return vm.trap("E010", fmt.Sprintf("unknown builtin word ID %d", wordID))
 	}
@@ -1604,11 +1672,20 @@ func (vm *VM) binaryArith(fn func(a, b float64) float64) error {
 	if !aok || !bok {
 		return vm.trap("E002", "expected numeric type")
 	}
-	result := fn(av, bv)
 	if a.Tag == TagRAT || b.Tag == TagRAT {
+		result := fn(av, bv)
+		if math.IsInf(result, 0) || math.IsNaN(result) {
+			return vm.trap("E003", "arithmetic overflow (rational)")
+		}
 		vm.push(ValRat(result))
 	} else {
-		vm.push(ValInt(int(result)))
+		result := fn(av, bv)
+		intResult := int(result)
+		// Overflow check: verify the float64 round-trip is exact and within int range
+		if result != float64(intResult) || result > 9.2e18 || result < -9.2e18 {
+			return vm.trap("E003", "integer overflow")
+		}
+		vm.push(ValInt(intResult))
 	}
 	return nil
 }
@@ -1880,6 +1957,10 @@ func (vm *VM) builtinRange() error {
 	startVal, _ := vm.pop()
 	start := numVal(startVal)
 	end := numVal(endVal)
+	if end < start {
+		vm.push(ValList(nil))
+		return nil
+	}
 	items := make([]Value, 0, end-start+1)
 	for i := start; i <= end; i++ {
 		items = append(items, ValInt(i))
@@ -2641,29 +2722,35 @@ func (vm *VM) builtinForEach() error {
 	collection, _ := vm.pop()
 	if collection.Tag == TagHEAP && collection.Heap.Kind == KindIterator {
 		iter := collection.Heap.Iter
+		var results []Value
 		for {
 			v := vm.iterNext(iter, collection)
 			if v == nil {
 				break
 			}
-			if _, err := vm.callBuiltinFn(fn, []Value{*v}); err != nil {
+			r, err := vm.callBuiltinFn(fn, []Value{*v})
+			if err != nil {
 				return err
 			}
+			results = append(results, r)
 		}
 		iter.Done = true
 		iter.Closed = true
-		vm.push(ValUnit())
+		vm.push(ValList(results))
 		return nil
 	}
 	if collection.Tag != TagHEAP || collection.Heap.Kind != KindList {
 		return vm.trap("E002", "expected List or Iterator")
 	}
+	results := make([]Value, 0, len(collection.Heap.Items))
 	for _, el := range collection.Heap.Items {
-		if _, err := vm.callBuiltinFn(fn, []Value{el}); err != nil {
+		r, err := vm.callBuiltinFn(fn, []Value{el})
+		if err != nil {
 			return err
 		}
+		results = append(results, r)
 	}
-	vm.push(ValUnit())
+	vm.push(ValList(results))
 	return nil
 }
 

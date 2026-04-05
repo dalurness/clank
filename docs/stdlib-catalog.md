@@ -1,8 +1,28 @@
 # Clank Standard Library — Word Catalog (Tier 1 & Tier 2)
 
-**Task:** TASK-008, updated by TASK-016
-**Status:** Draft
-**Depends on:** TASK-004 (core syntax), TASK-005 (effect system), TASK-007 (affine types)
+**Status:** Specification document. Not all functions listed below are implemented.
+
+## Implementation Status (Go port)
+
+The following modules are **fully implemented** as VM builtins:
+
+| Module | Implemented Functions |
+|--------|----------------------|
+| Core | `add sub mul div mod negate eq neq lt gt lte gte and or not str.cat show print split join trim len head tail cons cat rev get map filter fold flat-map range zip fst snd tuple.get raise` |
+| `fs` | `fs.read fs.write fs.exists fs.ls fs.mkdir fs.rm` |
+| `json` | `json.enc json.dec json.get json.set json.keys json.merge` |
+| `env` | `env.get env.set env.has env.all` |
+| `proc` | `proc.run proc.sh proc.exit` |
+| `http` | `http.get http.post http.put http.del` |
+| `rx` | `rx.ok rx.find rx.replace rx.split` |
+| `math` | `math.abs math.min math.max math.floor math.ceil math.sqrt` |
+| Async | `spawn await channel send recv try-recv close-sender close-receiver sleep task-group shield task-yield is-cancelled` |
+
+Functions listed in the catalog below but NOT in the table above are **specced but not yet implemented**. This includes most of `std.str` (beyond `str.cat`), all of `std.col`, `std.srv`, `std.cli`, `std.dt`, `std.csv`, `std.log`, `std.test`.
+
+> **Note:** FFI/extern has been removed from the language. The `extern` keyword is no longer recognized.
+
+---
 
 ---
 

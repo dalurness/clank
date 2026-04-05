@@ -99,7 +99,6 @@ func TestTopLevelInterface(t *testing.T) {
 		ast.TopTestDecl{Name: "basic", Body: ast.ExprLiteral{Value: ast.LitBool{Value: true}, Loc: loc}, Loc: loc},
 		ast.TopInterfaceDecl{Name: "Show", TypeParams: []string{"T"}, Loc: loc},
 		ast.TopImplBlock{Interface: "Show", ForType: ast.TypeName{Name: "Int", Loc: loc}, Loc: loc},
-		ast.TopExternDecl{Name: "print", Library: "std", Loc: loc},
 	}
 	for _, tl := range tops {
 		if tl.TopLoc() != loc {

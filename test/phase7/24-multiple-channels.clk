@@ -1,0 +1,27 @@
+# Test: multiple independent channels
+# Expected output:
+# 10
+# 20
+# 30
+
+main : () -> <io, async> () =
+  let (tx1, rx1) = channel(1)
+  let (tx2, rx2) = channel(1)
+  let (tx3, rx3) = channel(1)
+
+  # Send different values on different channels
+  let _ = send(tx1, 10)
+  let _ = send(tx2, 20)
+  let _ = send(tx3, 30)
+
+  # Receive in different order than sent
+  let _ = print(show(recv(rx1)))
+  let _ = print(show(recv(rx2)))
+  let _ = print(show(recv(rx3)))
+
+  let _ = close-sender(tx1)
+  let _ = close-sender(tx2)
+  let _ = close-sender(tx3)
+  let _ = close-receiver(rx1)
+  let _ = close-receiver(rx2)
+  close-receiver(rx3)
