@@ -1,0 +1,20 @@
+# An agent executes commands and reports results.
+# Demonstrates: custom types, pattern matching, process execution, string ops.
+
+type TaskResult = Ok(Str) | Fail(Str)
+
+run-task : (cmd: Str, args: [Str]) -> <io> TaskResult =
+  let result = proc.run(cmd, args)
+  if result.code == 0
+    then Ok(trim(result.stdout))
+    else Fail(trim(result.stderr))
+
+report : (name: Str, result: TaskResult) -> <io> () =
+  match result {
+    Ok(msg) => print(name ++ ": ok — " ++ msg)
+    Fail(msg) => print(name ++ ": FAIL — " ++ msg)
+  }
+
+main : () -> <io> () =
+  report("go-version", run-task("go", ["version"]))
+  report("greeting", run-task("echo", ["hello from clank"]))

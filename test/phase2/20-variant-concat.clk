@@ -1,0 +1,36 @@
+# Test: using variant match results inline with string concatenation
+# This was a bug where VARIANT_TAG used peek instead of pop,
+# leaving extra values on the stack.
+# Expected output:
+# prefix: hello
+# error: boom
+# result: 42
+
+type Status = Ok(Str) | Fail(Str)
+
+get-msg : (s: Status) -> <> Str =
+  match s {
+    Ok(msg) => msg
+    Fail(msg) => "error: " ++ msg
+  }
+
+to-str : (n: Int) -> <> Str = show(n)
+
+type MaybeInt = Some(Int) | None
+
+unwrap-or : (m: MaybeInt, default: Int) -> <> Int =
+  match m {
+    Some(v) => v
+    None => default
+  }
+
+main : () -> <io> () =
+  # Inline variant function result in string concat
+  let _ = print("prefix: " ++ get-msg(Ok("hello")))
+
+  # Variant that returns a string built with concat
+  let _ = print(get-msg(Fail("boom")))
+
+  # Nested: variant result used in another expression
+  let val = unwrap-or(Some(42), 0)
+  print("result: " ++ show(val))

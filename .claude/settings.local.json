@@ -14,7 +14,8 @@
       "Bash(grep -r \"split\\\\|join\\\\|trim\" /c/Users/dalli/code/clank/go/internal/compiler/*.go)",
       "Bash(grep -cE '--- PASS')",
       "Bash(xargs grep:*)",
-      "Bash(grep -E \"registerStdlib|\\\\\"fs\\\\\\\\.read\\\\\"|\\\\\"json\\\\\\\\.enc\\\\\"|\\\\\"http\\\\\\\\.get\\\\\"|\\\\\"proc\\\\\\\\.run\\\\\"|\\\\\"env\\\\\\\\.get\\\\\"|\\\\\"rx\\\\\\\\.match\\\\\"|\\\\\"math\\\\\\\\.\" internal/vm/vm.go)"
+      "Bash(grep -E \"registerStdlib|\\\\\"fs\\\\\\\\.read\\\\\"|\\\\\"json\\\\\\\\.enc\\\\\"|\\\\\"http\\\\\\\\.get\\\\\"|\\\\\"proc\\\\\\\\.run\\\\\"|\\\\\"env\\\\\\\\.get\\\\\"|\\\\\"rx\\\\\\\\.match\\\\\"|\\\\\"math\\\\\\\\.\" internal/vm/vm.go)",
+      "Bash(go run:*)"
     ]
   }
 }

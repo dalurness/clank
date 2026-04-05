@@ -1541,12 +1541,8 @@ func (c *Compiler) compileDerivedEq(v ast.Variant) {
 
 	e.emitU8(OpLOCAL_GET, aSlot)
 	e.emit(OpVARIANT_TAG)
-	e.emit(OpSWAP)
-	e.emit(OpDROP)
 	e.emitU8(OpLOCAL_GET, bSlot)
 	e.emit(OpVARIANT_TAG)
-	e.emit(OpSWAP)
-	e.emit(OpDROP)
 	e.emit(OpEQ)
 	tagMismatch := e.emitJumpPlaceholder(OpJMP_UNLESS)
 
@@ -1631,14 +1627,10 @@ func (c *Compiler) compileDerivedOrd(variants []ast.Variant) {
 
 		e.emitU8(OpLOCAL_GET, aSlot)
 		e.emit(OpVARIANT_TAG)
-		e.emit(OpSWAP)
-		e.emit(OpDROP)
 		e.emitU8(OpLOCAL_SET, aTagSlot)
 
 		e.emitU8(OpLOCAL_GET, bSlot)
 		e.emit(OpVARIANT_TAG)
-		e.emit(OpSWAP)
-		e.emit(OpDROP)
 		e.emitU8(OpLOCAL_SET, bTagSlot)
 
 		var doneJumps []int
@@ -1679,8 +1671,6 @@ func (c *Compiler) compileDerivedOrd(variants []ast.Variant) {
 					e.emitU8(OpLOCAL_SET, resultSlot)
 					e.emitU8(OpLOCAL_GET, resultSlot)
 					e.emit(OpVARIANT_TAG)
-					e.emit(OpSWAP)
-					e.emit(OpDROP)
 					e.emitU8(OpPUSH_INT, c.variantInfos["Eq_"].tag)
 					e.emit(OpEQ)
 					isEq := e.emitJumpPlaceholder(OpJMP_IF)

@@ -720,7 +720,7 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		vm.push(ValUnion(variantTag, fields))
 
 	case compiler.OpVARIANT_TAG:
-		val, err := vm.peek()
+		val, err := vm.pop()
 		if err != nil {
 			return err
 		}
