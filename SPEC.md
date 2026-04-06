@@ -67,10 +67,15 @@ if-expr     = 'if' expr 'then' expr 'else' expr ;
 match-expr  = 'match' expr '{' { pattern '=>' expr } '}' ;
 do-block    = 'do' '{' { [ident '<-'] expr } '}' ;
 handle-expr = 'handle' expr '{' handler-arms '}' ;
+handler-arms = handler-arm { ',' handler-arm } ;
+handler-arm  = 'return' ident '->' expr
+             | op-name ident* 'resume' ident '->' expr ;
 for-expr    = 'for' pattern 'in' expr ['if' expr] ['fold' ident '=' expr] 'do' expr ;
 ```
 
 All operators desugar to function calls: `a + b` → `add(a, b)`, `a |> f(b)` → `f(a, b)`, `a ++ b` → `concat(a, b)` (works on strings and lists).
+
+**Multi-statement expressions:** Lambdas, `if`/`else` branches, `for...do` bodies, and handler arms each accept a single expression. Use `do { ... }` blocks to sequence multiple statements, or chain `let` bindings (each `let` scopes over the next expression). For example: `fn(x) => do { let y = x + 1  print(show(y))  y }` or `if cond then do { let _ = print("yes")  42 } else 0`.
 
 ## 3. Type System
 
@@ -86,13 +91,16 @@ Every function type includes an effect annotation: `T -> <effects> U`.
 
 Built-in effects: `io`, `exn[E]`, `async`. User-defined via `effect Name { op : T -> U }`. Effect aliases: `effect alias Pure = <>`.
 
-Handlers interpret effects:
+Handlers interpret effects. The `return` clause transforms the final value. Operation clauses bind the operation's arguments, then the `resume` keyword, then a continuation identifier `k`. Use `k(value)` to resume the computation, or omit it to abort:
 ```
 handle computation {
-  return(x) => ...,
-  op(v, resume, k) => ... k(result) ...
+  return x -> result-expr,
+  op-name arg resume k -> k(value),   # resume with value
+  other-op arg resume _ -> default    # abort (don't call k)
 }
 ```
+
+Note: `k(value)` transfers control back into the handled computation — it does not return a value to the handler arm. The result of the entire `handle` expression flows through the `return` clause. To perform side effects before resuming, use `let ... in`: `let _ = print("log") in k(value)`.
 
 ### 3.2 Records
 Structural key-value maps with row polymorphism:
@@ -239,20 +247,18 @@ Clank uses algebraic effects for errors, not try/catch. The `raise` effect propa
 
 ```
 # Safe division — returns Option
-safe-div : (Int, Int) -> <> Option<Int> =
-  fn(n, d) =>
-    handle div(n, d) {
-      return x => Some(x)
-      raise _ resume _ => None
-    }
+safe-div : (n: Int, d: Int) -> <> Option =
+  handle div(n, d) {
+    return x -> Some(x),
+    raise _ resume _ -> None
+  }
 
 # HTTP with error recovery
-fetch : (Str) -> <io> Str =
-  fn(url) =>
-    handle http.get(url) {
-      return resp => resp.body
-      raise msg resume _ => "error: " ++ msg
-    }
+fetch : (url: Str) -> <io> Str =
+  handle http.get(url) {
+    return resp -> resp.body,
+    raise msg resume _ -> "error: " ++ msg
+  }
 ```
 
 ### Package Management
