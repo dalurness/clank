@@ -1,0 +1,59 @@
+# Test: collection operations
+# Expected output:
+# [3, 2, 1]
+# [1, 2, 3]
+# [1, 2, 3]
+# [(0, 10), (1, 20), (2, 30)]
+# [[1, 2], [3, 4], [5]]
+# [[1, 2, 3], [2, 3, 4], [3, 4, 5]]
+# [1, 0, 2, 0, 3]
+# [10, 10, 10]
+# 6
+# 24
+# true
+# false
+# 3
+# [1, 2, 3, 4, 5, 6]
+
+main : () -> <io> () =
+  # rev
+  let _ = print(show(col.rev([1, 2, 3])))
+
+  # sort
+  let _ = print(show(col.sort([3, 1, 2])))
+
+  # uniq (adjacent duplicates)
+  let _ = print(show(col.uniq([1, 1, 2, 2, 3])))
+
+  # enum
+  let _ = print(show(col.enum([10, 20, 30])))
+
+  # chunk
+  let _ = print(show(col.chunk([1, 2, 3, 4, 5], 2)))
+
+  # window
+  let _ = print(show(col.win([1, 2, 3, 4, 5], 3)))
+
+  # intersperse
+  let _ = print(show(col.intersperse([1, 2, 3], 0)))
+
+  # rep
+  let _ = print(show(col.rep(10, 3)))
+
+  # sum
+  let _ = print(show(col.sum([1, 2, 3])))
+
+  # prod
+  let _ = print(show(col.prod([1, 2, 3, 4])))
+
+  # any
+  let _ = print(show(col.any([1, 2, 3], fn(x) => x > 2)))
+
+  # all
+  let _ = print(show(col.all([1, 2, 3], fn(x) => x > 2)))
+
+  # count
+  let _ = print(show(col.count([1, 2, 3, 4, 5], fn(x) => x > 2)))
+
+  # flat
+  print(show(col.flat([[1, 2], [3, 4], [5, 6]])))

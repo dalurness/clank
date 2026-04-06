@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 
@@ -72,6 +71,14 @@ type VM struct {
 	// Configurable timeouts
 	httpTimeout int // HTTP request timeout in milliseconds (0 = use default 30s)
 
+	// Logging state
+	logLevel   int               // 0=trace, 1=debug, 2=info, 3=warn, 4=error; default 2
+	logContext map[string]string  // persistent key-value context
+	logJSON    bool              // JSON output mode; default true
+
+	// Testing overrides
+	testArgs []string // if non-nil, cli.args uses this instead of os.Args
+
 	// I/O capture (for testing)
 	Stdout []string
 }
@@ -127,6 +134,9 @@ func New(mod *compiler.BytecodeModule) *VM {
 		nextRefID:     1,
 		tasks:         make(map[int]*taskState),
 		taskGroups:    make(map[int]*taskGroup),
+		logLevel:      2,
+		logContext:     make(map[string]string),
+		logJSON:       true,
 	}
 	if mod.DispatchTable != nil {
 		vm.dispatchTbl = mod.DispatchTable
@@ -1278,7 +1288,7 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 func (vm *VM) doCall(wordID int) error {
 	target, ok := vm.wordMap[wordID]
 	if !ok {
-		if wordID < 300 {
+		if wordID < 400 {
 			return vm.dispatchBuiltin(wordID)
 		}
 		return vm.trap("E010", fmt.Sprintf("CALL: word ID %d not found", wordID))
@@ -1313,7 +1323,7 @@ func (vm *VM) doReturn() {
 func (vm *VM) doTailCall(wordID int) error {
 	target, ok := vm.wordMap[wordID]
 	if !ok {
-		if wordID < 256 {
+		if wordID < 400 {
 			if err := vm.dispatchBuiltin(wordID); err != nil {
 				return err
 			}
@@ -1590,8 +1600,76 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinIterRange()
 	case 72: // iter.collect / collect
 		return vm.builtinIterCollect()
+	case 73: // iter.map
+		return vm.builtinIterMap()
+	case 74: // iter.filter
+		return vm.builtinIterFilter()
+	case 75: // iter.take
+		return vm.builtinIterTake()
+	case 76: // iter.drop
+		return vm.builtinIterDrop()
+	case 77: // iter.fold
+		return vm.builtinIterFold()
+	case 78: // iter.count
+		return vm.builtinIterCount()
+	case 79: // iter.sum
+		return vm.builtinIterSum()
+	case 80: // iter.any
+		return vm.builtinIterAny()
+	case 81: // iter.all
+		return vm.builtinIterAll()
+	case 82: // iter.find
+		return vm.builtinIterFind()
+	case 83: // iter.each
+		return vm.builtinIterEach()
 	case 84: // iter.drain / drain
 		return vm.builtinIterDrain()
+	case 85: // iter.enumerate
+		return vm.builtinIterEnumerate()
+	case 86: // iter.chain
+		return vm.builtinIterChain()
+	case 87: // iter.zip
+		return vm.builtinIterZip()
+	case 88: // iter.take-while
+		return vm.builtinIterTakeWhile()
+	case 89: // iter.drop-while
+		return vm.builtinIterDropWhile()
+	case 90: // iter.flatmap
+		return vm.builtinIterFlatMap()
+	case 91: // iter.first
+		return vm.builtinIterFirst()
+	case 92: // iter.last
+		return vm.builtinIterLast()
+	case 93: // iter.join
+		return vm.builtinIterJoin()
+	case 94: // iter.repeat
+		return vm.builtinIterRepeat()
+	case 95: // iter.once
+		return vm.builtinIterOnce()
+	case 96: // iter.empty
+		return vm.builtinIterEmpty()
+	case 97: // iter.unfold
+		return vm.builtinIterUnfold()
+	case 98: // iter.scan
+		return vm.builtinIterScan()
+	case 99: // iter.dedup
+		return vm.builtinIterDedup()
+	case 100: // iter.chunk
+		return vm.builtinIterChunk()
+	case 101: // iter.window
+		return vm.builtinIterWindow()
+	case 102: // iter.intersperse
+		return vm.builtinIterIntersperse()
+	case 103: // iter.cycle
+		return vm.builtinIterCycle()
+	case 104: // iter.nth
+		return vm.builtinIterNth()
+	case 105: // iter.min
+		return vm.builtinIterMin()
+	case 106: // iter.max
+		return vm.builtinIterMax()
+	case 107: // iter.generate
+		return vm.builtinIterGenerate()
 	case 112: // next
 		return vm.builtinIterNextFn()
 
@@ -1696,6 +1774,170 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinMathCeil()
 	case 229: // math.sqrt
 		return vm.builtinMathSqrt()
+
+	// Server
+	case 130: // srv.new
+		return vm.builtinSrvNew()
+	case 131: // srv.get
+		return vm.builtinSrvGet()
+	case 132: // srv.post
+		return vm.builtinSrvPost()
+	case 133: // srv.put
+		return vm.builtinSrvPut()
+	case 134: // srv.del
+		return vm.builtinSrvDel()
+	case 135: // srv.start
+		return vm.builtinSrvStart()
+	case 136: // srv.stop
+		return vm.builtinSrvStop()
+	case 137: // srv.res
+		return vm.builtinSrvRes()
+	case 138: // srv.json
+		return vm.builtinSrvJSON()
+	case 139: // srv.hdr
+		return vm.builtinSrvHdr()
+	case 140: // srv.mw
+		return vm.builtinSrvMw()
+
+	// CSV
+	case 145: // csv.dec
+		return vm.builtinCsvDec()
+	case 146: // csv.enc
+		return vm.builtinCsvEnc()
+	case 147: // csv.decf
+		return vm.builtinCsvDecf()
+	case 148: // csv.encf
+		return vm.builtinCsvEncf()
+	case 149: // csv.hdr
+		return vm.builtinCsvHdr()
+	case 150: // csv.rows
+		return vm.builtinCsvRows()
+	case 151: // csv.maps
+		return vm.builtinCsvMaps()
+	case 152: // csv.opts
+		return vm.builtinCsvOpts()
+
+	// DateTime
+	case 170: // dt.now
+		return vm.builtinDtNow()
+	case 171: // dt.unix
+		return vm.builtinDtUnix()
+	case 172: // dt.from
+		return vm.builtinDtFrom()
+	case 173: // dt.to
+		return vm.builtinDtTo()
+	case 174: // dt.parse
+		return vm.builtinDtParse()
+	case 175: // dt.fmt
+		return vm.builtinDtFmt()
+	case 176: // dt.add
+		return vm.builtinDtAdd()
+	case 177: // dt.sub
+		return vm.builtinDtSub()
+	case 178: // dt.tz
+		return vm.builtinDtTz()
+	case 179: // dt.iso
+		return vm.builtinDtIso()
+	case 180: // dt.ms
+		return vm.builtinDtMs()
+	case 181: // dt.sec
+		return vm.builtinDtSec()
+	case 182: // dt.min
+		return vm.builtinDtMin()
+	case 183: // dt.hr
+		return vm.builtinDtHr()
+	case 184: // dt.day
+		return vm.builtinDtDay()
+
+	// CLI
+	case 300: // cli.args
+		return vm.builtinCliArgs()
+	case 301: // cli.parse
+		return vm.builtinCliParse()
+	case 302: // cli.opt
+		return vm.builtinCliOpt()
+	case 303: // cli.req
+		return vm.builtinCliReq()
+	case 304: // cli.def
+		return vm.builtinCliDef()
+	case 305: // cli.get
+		return vm.builtinCliGet()
+	case 306: // cli.flag
+		return vm.builtinCliFlag()
+	case 307: // cli.pos
+		return vm.builtinCliPos()
+
+	// Logging
+	case 310: // log.trace
+		return vm.builtinLogTrace()
+	case 311: // log.debug
+		return vm.builtinLogDebug()
+	case 312: // log.info
+		return vm.builtinLogInfo()
+	case 313: // log.warn
+		return vm.builtinLogWarn()
+	case 314: // log.error
+		return vm.builtinLogError()
+	case 315: // log.level
+		return vm.builtinLogLevel()
+	case 316: // log.ctx
+		return vm.builtinLogCtx()
+	case 317: // log.json
+		return vm.builtinLogJSON()
+
+	// Collections (std.col)
+	case 320: // col.rev
+		return vm.builtinColRev()
+	case 321: // col.sort
+		return vm.builtinColSort()
+	case 322: // col.sortby
+		return vm.builtinColSortBy()
+	case 323: // col.uniq
+		return vm.builtinColUniq()
+	case 324: // col.zip
+		return vm.builtinColZip()
+	case 325: // col.unzip
+		return vm.builtinColUnzip()
+	case 326: // col.flat
+		return vm.builtinColFlat()
+	case 327: // col.flatmap
+		return vm.builtinColFlatMap()
+	case 328: // col.take
+		return vm.builtinColTake()
+	case 329: // col.drop
+		return vm.builtinColDrop()
+	case 330: // col.nth
+		return vm.builtinColNth()
+	case 331: // col.find
+		return vm.builtinColFind()
+	case 332: // col.any
+		return vm.builtinColAny()
+	case 333: // col.all
+		return vm.builtinColAll()
+	case 334: // col.count
+		return vm.builtinColCount()
+	case 335: // col.enum
+		return vm.builtinColEnum()
+	case 336: // col.chunk
+		return vm.builtinColChunk()
+	case 337: // col.win
+		return vm.builtinColWin()
+	case 338: // col.intersperse
+		return vm.builtinColIntersperse()
+	case 339: // col.rep
+		return vm.builtinColRep()
+	case 340: // col.sum
+		return vm.builtinColSum()
+	case 341: // col.prod
+		return vm.builtinColProd()
+	case 342: // col.min
+		return vm.builtinColMin()
+	case 343: // col.max
+		return vm.builtinColMax()
+	case 344: // col.group
+		return vm.builtinColGroup()
+	case 345: // col.scan
+		return vm.builtinColScan()
 
 	default:
 		return vm.trap("E010", fmt.Sprintf("unknown builtin word ID %d", wordID))
@@ -2229,382 +2471,6 @@ func (vm *VM) builtinShield() error {
 		return err
 	}
 	vm.push(result)
-	return nil
-}
-
-func (vm *VM) builtinCmp() error {
-	b, _ := vm.pop()
-	a, _ := vm.pop()
-	ltTag, err := vm.findVariantTag("Lt")
-	if err != nil {
-		return err
-	}
-	eqTag, err := vm.findVariantTag("Eq_")
-	if err != nil {
-		return err
-	}
-	gtTag, err := vm.findVariantTag("Gt")
-	if err != nil {
-		return err
-	}
-	var av, bv interface{}
-	if a.Tag == TagSTR {
-		av = a.StrVal
-		bv = b.StrVal
-	} else {
-		av2, _ := NumericValue(a)
-		bv2, _ := NumericValue(b)
-		av = av2
-		bv = bv2
-	}
-	switch {
-	case fmt.Sprint(av) < fmt.Sprint(bv):
-		vm.push(ValUnion(ltTag, nil))
-	case fmt.Sprint(av) > fmt.Sprint(bv):
-		vm.push(ValUnion(gtTag, nil))
-	default:
-		vm.push(ValUnion(eqTag, nil))
-	}
-	return nil
-}
-
-func (vm *VM) builtinShowRecord() error {
-	rec, _ := vm.pop()
-	if rec.Tag != TagHEAP || rec.Heap.Kind != KindRecord {
-		return vm.trap("E002", "show$Record: expected record")
-	}
-	keys := make([]string, 0, len(rec.Heap.Fields))
-	for k := range rec.Heap.Fields {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		v := rec.Heap.Fields[k]
-		shown, err := vm.dispatchMethodSync("show", []Value{v})
-		if err != nil {
-			return err
-		}
-		if shown.Tag != TagSTR {
-			return vm.trap("E002", "show$Record: show did not return Str")
-		}
-		parts[i] = k + ": " + shown.StrVal
-	}
-	vm.push(ValStr("{" + strings.Join(parts, ", ") + "}"))
-	return nil
-}
-
-func (vm *VM) builtinEqRecord() error {
-	b, _ := vm.pop()
-	a, _ := vm.pop()
-	if a.Tag != TagHEAP || a.Heap.Kind != KindRecord || b.Tag != TagHEAP || b.Heap.Kind != KindRecord {
-		vm.push(ValBool(false))
-		return nil
-	}
-	if len(a.Heap.Fields) != len(b.Heap.Fields) {
-		vm.push(ValBool(false))
-		return nil
-	}
-	for k, av := range a.Heap.Fields {
-		bv, ok := b.Heap.Fields[k]
-		if !ok {
-			vm.push(ValBool(false))
-			return nil
-		}
-		result, err := vm.dispatchMethodSync("eq", []Value{av, bv})
-		if err != nil {
-			return err
-		}
-		if result.Tag != TagBOOL || !result.BoolVal {
-			vm.push(ValBool(false))
-			return nil
-		}
-	}
-	vm.push(ValBool(true))
-	return nil
-}
-
-func (vm *VM) builtinCloneRecord() error {
-	rec, _ := vm.pop()
-	if rec.Tag != TagHEAP || rec.Heap.Kind != KindRecord {
-		return vm.trap("E002", "clone$Record: expected record")
-	}
-	newFields := make(map[string]Value, len(rec.Heap.Fields))
-	for k, v := range rec.Heap.Fields {
-		cloned, err := vm.dispatchMethodSync("clone", []Value{v})
-		if err != nil {
-			return err
-		}
-		newFields[k] = cloned
-	}
-	vm.push(ValRecord(newFields, rec.Heap.FieldOrder))
-	return nil
-}
-
-func (vm *VM) builtinCmpRecord() error {
-	bRec, _ := vm.pop()
-	aRec, _ := vm.pop()
-	if aRec.Tag != TagHEAP || aRec.Heap.Kind != KindRecord || bRec.Tag != TagHEAP || bRec.Heap.Kind != KindRecord {
-		return vm.trap("E002", "cmp$Record: expected records")
-	}
-	ltTag, _ := vm.findVariantTag("Lt")
-	eqTag, _ := vm.findVariantTag("Eq_")
-	gtTag, _ := vm.findVariantTag("Gt")
-
-	aKeys := make([]string, 0, len(aRec.Heap.Fields))
-	for k := range aRec.Heap.Fields {
-		aKeys = append(aKeys, k)
-	}
-	sort.Strings(aKeys)
-	bKeys := make([]string, 0, len(bRec.Heap.Fields))
-	for k := range bRec.Heap.Fields {
-		bKeys = append(bKeys, k)
-	}
-	sort.Strings(bKeys)
-
-	minLen := len(aKeys)
-	if len(bKeys) < minLen {
-		minLen = len(bKeys)
-	}
-	for i := 0; i < minLen; i++ {
-		if aKeys[i] < bKeys[i] {
-			vm.push(ValUnion(ltTag, nil))
-			return nil
-		}
-		if aKeys[i] > bKeys[i] {
-			vm.push(ValUnion(gtTag, nil))
-			return nil
-		}
-	}
-	if len(aKeys) < len(bKeys) {
-		vm.push(ValUnion(ltTag, nil))
-		return nil
-	}
-	if len(aKeys) > len(bKeys) {
-		vm.push(ValUnion(gtTag, nil))
-		return nil
-	}
-	for _, k := range aKeys {
-		r, err := vm.dispatchMethodSync("cmp", []Value{aRec.Heap.Fields[k], bRec.Heap.Fields[k]})
-		if err != nil {
-			return err
-		}
-		if r.Tag == TagHEAP && r.Heap.Kind == KindUnion && r.Heap.VariantTag != eqTag {
-			vm.push(r)
-			return nil
-		}
-	}
-	vm.push(ValUnion(eqTag, nil))
-	return nil
-}
-
-func (vm *VM) builtinShowList() error {
-	lst, _ := vm.pop()
-	if lst.Tag != TagHEAP || lst.Heap.Kind != KindList {
-		return vm.trap("E002", "show$List: expected list")
-	}
-	parts := make([]string, len(lst.Heap.Items))
-	for i, item := range lst.Heap.Items {
-		shown, err := vm.dispatchMethodSync("show", []Value{item})
-		if err != nil {
-			return err
-		}
-		if shown.Tag != TagSTR {
-			return vm.trap("E002", "show$List: show did not return Str")
-		}
-		parts[i] = shown.StrVal
-	}
-	vm.push(ValStr("[" + strings.Join(parts, ", ") + "]"))
-	return nil
-}
-
-func (vm *VM) builtinEqList() error {
-	b, _ := vm.pop()
-	a, _ := vm.pop()
-	if a.Tag != TagHEAP || a.Heap.Kind != KindList || b.Tag != TagHEAP || b.Heap.Kind != KindList {
-		vm.push(ValBool(false))
-		return nil
-	}
-	if len(a.Heap.Items) != len(b.Heap.Items) {
-		vm.push(ValBool(false))
-		return nil
-	}
-	for i := range a.Heap.Items {
-		r, err := vm.dispatchMethodSync("eq", []Value{a.Heap.Items[i], b.Heap.Items[i]})
-		if err != nil {
-			return err
-		}
-		if r.Tag != TagBOOL || !r.BoolVal {
-			vm.push(ValBool(false))
-			return nil
-		}
-	}
-	vm.push(ValBool(true))
-	return nil
-}
-
-func (vm *VM) builtinCloneList() error {
-	lst, _ := vm.pop()
-	if lst.Tag != TagHEAP || lst.Heap.Kind != KindList {
-		return vm.trap("E002", "clone$List: expected list")
-	}
-	cloned := make([]Value, len(lst.Heap.Items))
-	for i, item := range lst.Heap.Items {
-		c, err := vm.dispatchMethodSync("clone", []Value{item})
-		if err != nil {
-			return err
-		}
-		cloned[i] = c
-	}
-	vm.push(ValList(cloned))
-	return nil
-}
-
-func (vm *VM) builtinShowTuple() error {
-	tup, _ := vm.pop()
-	if tup.Tag != TagHEAP || tup.Heap.Kind != KindTuple {
-		return vm.trap("E002", "show$Tuple: expected tuple")
-	}
-	parts := make([]string, len(tup.Heap.Items))
-	for i, item := range tup.Heap.Items {
-		shown, err := vm.dispatchMethodSync("show", []Value{item})
-		if err != nil {
-			return err
-		}
-		if shown.Tag != TagSTR {
-			return vm.trap("E002", "show$Tuple: show did not return Str")
-		}
-		parts[i] = shown.StrVal
-	}
-	vm.push(ValStr("(" + strings.Join(parts, ", ") + ")"))
-	return nil
-}
-
-func (vm *VM) builtinEqTuple() error {
-	b, _ := vm.pop()
-	a, _ := vm.pop()
-	if a.Tag != TagHEAP || a.Heap.Kind != KindTuple || b.Tag != TagHEAP || b.Heap.Kind != KindTuple {
-		vm.push(ValBool(false))
-		return nil
-	}
-	if len(a.Heap.Items) != len(b.Heap.Items) {
-		vm.push(ValBool(false))
-		return nil
-	}
-	for i := range a.Heap.Items {
-		r, err := vm.dispatchMethodSync("eq", []Value{a.Heap.Items[i], b.Heap.Items[i]})
-		if err != nil {
-			return err
-		}
-		if r.Tag != TagBOOL || !r.BoolVal {
-			vm.push(ValBool(false))
-			return nil
-		}
-	}
-	vm.push(ValBool(true))
-	return nil
-}
-
-func (vm *VM) builtinCloneTuple() error {
-	tup, _ := vm.pop()
-	if tup.Tag != TagHEAP || tup.Heap.Kind != KindTuple {
-		return vm.trap("E002", "clone$Tuple: expected tuple")
-	}
-	cloned := make([]Value, len(tup.Heap.Items))
-	for i, item := range tup.Heap.Items {
-		c, err := vm.dispatchMethodSync("clone", []Value{item})
-		if err != nil {
-			return err
-		}
-		cloned[i] = c
-	}
-	vm.push(ValTuple(cloned))
-	return nil
-}
-
-func (vm *VM) builtinCmpList() error {
-	b, _ := vm.pop()
-	a, _ := vm.pop()
-	if a.Tag != TagHEAP || a.Heap.Kind != KindList || b.Tag != TagHEAP || b.Heap.Kind != KindList {
-		return vm.trap("E002", "cmp$List: expected lists")
-	}
-	ltTag, _ := vm.findVariantTag("Lt")
-	eqTag, _ := vm.findVariantTag("Eq_")
-	gtTag, _ := vm.findVariantTag("Gt")
-	minLen := len(a.Heap.Items)
-	if len(b.Heap.Items) < minLen {
-		minLen = len(b.Heap.Items)
-	}
-	for i := 0; i < minLen; i++ {
-		r, err := vm.dispatchMethodSync("cmp", []Value{a.Heap.Items[i], b.Heap.Items[i]})
-		if err != nil {
-			return err
-		}
-		if r.Tag == TagHEAP && r.Heap.Kind == KindUnion && r.Heap.VariantTag != eqTag {
-			vm.push(r)
-			return nil
-		}
-	}
-	if len(a.Heap.Items) < len(b.Heap.Items) {
-		vm.push(ValUnion(ltTag, nil))
-	} else if len(a.Heap.Items) > len(b.Heap.Items) {
-		vm.push(ValUnion(gtTag, nil))
-	} else {
-		vm.push(ValUnion(eqTag, nil))
-	}
-	return nil
-}
-
-func (vm *VM) builtinCmpTuple() error {
-	b, _ := vm.pop()
-	a, _ := vm.pop()
-	if a.Tag != TagHEAP || a.Heap.Kind != KindTuple || b.Tag != TagHEAP || b.Heap.Kind != KindTuple {
-		return vm.trap("E002", "cmp$Tuple: expected tuples")
-	}
-	ltTag, _ := vm.findVariantTag("Lt")
-	eqTag, _ := vm.findVariantTag("Eq_")
-	gtTag, _ := vm.findVariantTag("Gt")
-	minLen := len(a.Heap.Items)
-	if len(b.Heap.Items) < minLen {
-		minLen = len(b.Heap.Items)
-	}
-	for i := 0; i < minLen; i++ {
-		r, err := vm.dispatchMethodSync("cmp", []Value{a.Heap.Items[i], b.Heap.Items[i]})
-		if err != nil {
-			return err
-		}
-		if r.Tag == TagHEAP && r.Heap.Kind == KindUnion && r.Heap.VariantTag != eqTag {
-			vm.push(r)
-			return nil
-		}
-	}
-	if len(a.Heap.Items) < len(b.Heap.Items) {
-		vm.push(ValUnion(ltTag, nil))
-	} else if len(a.Heap.Items) > len(b.Heap.Items) {
-		vm.push(ValUnion(gtTag, nil))
-	} else {
-		vm.push(ValUnion(eqTag, nil))
-	}
-	return nil
-}
-
-func (vm *VM) builtinCloneRef() error {
-	v, _ := vm.pop()
-	if v.Tag != TagHEAP || v.Heap.Kind != KindRef {
-		return vm.trap("E002", "clone$Ref: expected Ref")
-	}
-	v.Heap.Ref.HandleCount++
-	vm.push(ValRef(v.Heap.Ref))
-	return nil
-}
-
-func (vm *VM) builtinCloneTVar() error {
-	v, _ := vm.pop()
-	if v.Tag != TagHEAP || v.Heap.Kind != KindTVar {
-		return vm.trap("E002", "clone$TVar: expected TVar")
-	}
-	v.Heap.TVar.HandleCount++
-	vm.push(ValTVarVal(v.Heap.TVar))
 	return nil
 }
 

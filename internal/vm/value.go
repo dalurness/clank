@@ -35,6 +35,7 @@ const (
 	KindSender       = "sender"
 	KindReceiver     = "receiver"
 	KindSelectSet    = "select-set"
+	KindServer       = "server"
 )
 
 // Value is a tagged VM value.
@@ -66,6 +67,7 @@ type HeapObject struct {
 	Ref        *RefCell           // ref
 	TVar       *TVar              // tvar
 	SelectArms []SelectArm        // select-set
+	Server     *HttpServerState  // server
 }
 
 // ContinuationData captures execution state for effect handler resume.
@@ -115,6 +117,21 @@ type TVar struct {
 	Occupied    bool
 	HandleCount int
 	Closed      bool
+}
+
+// HttpServerState holds an HTTP server's runtime state.
+type HttpServerState struct {
+	Server     interface{} // *http.Server (stored as interface to avoid import cycle)
+	Routes     []HttpRoute
+	Middleware []Value
+	RootVM     interface{} // *VM
+}
+
+// HttpRoute is a single route in the HTTP server.
+type HttpRoute struct {
+	Method  string
+	Path    string
+	Handler Value
 }
 
 // IteratorState tracks streaming iterator state.
@@ -198,6 +215,10 @@ func ValIter(iter *IteratorState) Value {
 
 func ValRef(ref *RefCell) Value {
 	return Value{Tag: TagHEAP, Heap: &HeapObject{Kind: KindRef, Ref: ref}}
+}
+
+func ValServer(srv *HttpServerState) Value {
+	return Value{Tag: TagHEAP, Heap: &HeapObject{Kind: KindServer, Server: srv}}
 }
 
 func ValSender(ch *Channel) Value {

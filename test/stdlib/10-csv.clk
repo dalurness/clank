@@ -1,0 +1,33 @@
+# Test: CSV operations
+# Expected output:
+# 3
+# name
+# 2
+# 2
+# alice
+
+main : () -> <io> () =
+  let data = "name,age\nalice,30\nbob,25"
+  let parsed = csv.dec(data)
+
+  # row count (header + 2 data rows)
+  let _ = print(show(len(parsed)))
+
+  # header first cell
+  let hdr = csv.hdr(parsed)
+  let _ = print(get(hdr, 0))
+
+  # data rows count
+  let rows = csv.rows(parsed)
+  let _ = print(show(len(rows)))
+
+  # maps
+  let maps = csv.maps(parsed)
+  let _ = print(show(len(maps)))
+
+  # round-trip: encode then decode, get first data cell
+  let encoded = csv.enc(parsed)
+  let reparsed = csv.dec(trim(encoded))
+  let dataRows = csv.rows(reparsed)
+  let firstRow = get(dataRows, 0)
+  print(get(firstRow, 0))

@@ -1,0 +1,25 @@
+# Test: datetime operations
+# Expected output:
+# 1000
+# 60000
+# 3600000
+# 86400000
+# true
+# true
+
+main : () -> <io> () =
+  # Duration helpers
+  let _ = print(show(dt.sec(1)))
+  let _ = print(show(dt.min(1)))
+  let _ = print(show(dt.hr(1)))
+  let _ = print(show(dt.day(1)))
+
+  # Round-trip: from(unix) -> to() should equal original
+  let ts = 1700000000
+  let rec = dt.from(ts)
+  let back = dt.to(rec)
+  let _ = print(show(back == ts))
+
+  # dt.iso produces a non-empty string
+  let iso = dt.iso(rec)
+  print(show(len(split(iso, "")) > 5))

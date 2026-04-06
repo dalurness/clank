@@ -721,3 +721,382 @@ main : () -> <io, async> () =
 		t.Errorf("expected 'ok error: child failed', got %q", output)
 	}
 }
+
+// ── Tier 2 stdlib tests ──
+
+func TestColSortBy(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let sorted = col.sortby([3, 1, 4, 1, 5], fn(a, b) => a - b)
+  print(show(sorted))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if strings.TrimSpace(output) != "[1, 1, 3, 4, 5]" {
+		t.Errorf("expected '[1, 1, 3, 4, 5]', got %q", output)
+	}
+}
+
+func TestColGroup(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let groups = col.group([1, 2, 3, 4, 5, 6], fn(x) => x % 2)
+  let _ = print(show(len(groups)))
+  print(show(col.sort(map(groups, fn(g) => fst(g)))))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0] != "2" {
+		t.Errorf("expected 2 groups, got %q", lines[0])
+	}
+	if lines[1] != "[0, 1]" {
+		t.Errorf("expected group keys '[0, 1]', got %q", lines[1])
+	}
+}
+
+func TestColScan(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let running = col.scan([1, 2, 3, 4], 0, fn(acc, x) => acc + x)
+  print(show(running))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if strings.TrimSpace(output) != "[1, 3, 6, 10]" {
+		t.Errorf("expected '[1, 3, 6, 10]', got %q", output)
+	}
+}
+
+func TestIterMapFilterCollect(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let result = iter.range(1, 11)
+    |> iter.filter(fn(x) => x % 2 == 0)
+    |> iter.map(fn(x) => x * x)
+    |> iter.collect
+  print(show(result))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if strings.TrimSpace(output) != "[4, 16, 36, 64, 100]" {
+		t.Errorf("expected '[4, 16, 36, 64, 100]', got %q", output)
+	}
+}
+
+func TestIterChunkWindow(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let chunks = iter.range(1, 8) |> iter.chunk(3) |> iter.collect
+  let _ = print(show(chunks))
+  let wins = iter.range(1, 6) |> iter.window(3) |> iter.collect
+  print(show(wins))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0] != "[[1, 2, 3], [4, 5, 6], [7]]" {
+		t.Errorf("chunks: expected '[[1, 2, 3], [4, 5, 6], [7]]', got %q", lines[0])
+	}
+	if lines[1] != "[[1, 2, 3], [2, 3, 4], [3, 4, 5]]" {
+		t.Errorf("windows: expected '[[1, 2, 3], [2, 3, 4], [3, 4, 5]]', got %q", lines[1])
+	}
+}
+
+func TestIterDedup(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let result = iter.of([1, 1, 2, 2, 3, 1, 1])
+    |> iter.dedup
+    |> iter.collect
+  print(show(result))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if strings.TrimSpace(output) != "[1, 2, 3, 1]" {
+		t.Errorf("expected '[1, 2, 3, 1]', got %q", output)
+	}
+}
+
+func TestIterScanUnfold(t *testing.T) {
+	source := `
+type Option<a> = Some(a) | None
+
+main : () -> <io> () =
+  # scan: running sum
+  let scanned = iter.range(1, 6) |> iter.scan(0, fn(acc, x) => acc + x) |> iter.collect
+  let _ = print(show(scanned))
+
+  # unfold: generate fibonacci-like
+  let fibs = iter.unfold((0, 1), fn(state) =>
+    let a = fst(state)
+    let b = snd(state)
+    if a > 20 then None
+    else Some((a, (b, a + b)))
+  ) |> iter.collect
+  print(show(fibs))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0] != "[1, 3, 6, 10, 15]" {
+		t.Errorf("scan: expected '[1, 3, 6, 10, 15]', got %q", lines[0])
+	}
+	if lines[1] != "[0, 1, 1, 2, 3, 5, 8, 13]" {
+		t.Errorf("unfold: expected '[0, 1, 1, 2, 3, 5, 8, 13]', got %q", lines[1])
+	}
+}
+
+func TestDtRoundTrip(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let ts = 1700000000
+  let rec = dt.from(ts)
+  let back = dt.to(rec)
+  let _ = print(show(back == ts))
+  # Add 1 hour and check difference
+  let added = dt.add(rec, dt.hr(1))
+  let diff = dt.sub(added, rec)
+  print(show(diff))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0] != "true" {
+		t.Errorf("round-trip: expected 'true', got %q", lines[0])
+	}
+	if lines[1] != "3600000" {
+		t.Errorf("dt.sub: expected '3600000', got %q", lines[1])
+	}
+}
+
+func TestCsvRoundTrip(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let data = "name,age\nalice,30\nbob,25"
+  let parsed = csv.dec(data)
+  let encoded = csv.enc(parsed)
+  let reparsed = csv.dec(trim(encoded))
+  let hdr = csv.hdr(reparsed)
+  let _ = print(get(hdr, 0))
+  let _ = print(get(hdr, 1))
+  let rows = csv.rows(reparsed)
+  let first = get(rows, 0)
+  print(get(first, 0))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected 3 lines, got %d", len(lines))
+	}
+	if lines[0] != "name" {
+		t.Errorf("header[0]: expected 'name', got %q", lines[0])
+	}
+	if lines[1] != "age" {
+		t.Errorf("header[1]: expected 'age', got %q", lines[1])
+	}
+	if lines[2] != "alice" {
+		t.Errorf("data[0][0]: expected 'alice', got %q", lines[2])
+	}
+}
+
+func TestLogLevel(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let _ = log.level("error")
+  let _ = log.info("should not appear")
+  let _ = log.error("should appear")
+  print("done")
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if strings.TrimSpace(output) != "done" {
+		t.Errorf("expected 'done', got %q", output)
+	}
+}
+
+func TestCliParse(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let args = cli.args()
+  print(show(len(args)))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	// cli.args in test context returns os.Args[1:] which varies,
+	// but it should produce a valid integer
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" {
+		t.Errorf("expected integer output, got empty")
+	}
+}
+
+func TestSrvStartStop(t *testing.T) {
+	source := `
+main : () -> <io, async> () =
+  let server = srv.new()
+    |> srv.get("/health", fn(_req) => srv.res(200, "ok"))
+    |> srv.get("/echo", fn(req) => srv.res(200, req.path))
+    |> srv.start(18923)
+
+  # Use HTTP client to verify
+  let resp = http.get("http://127.0.0.1:18923/health")
+  let _ = print(resp.body)
+
+  let resp2 = http.get("http://127.0.0.1:18923/echo")
+  let _ = print(resp2.body)
+
+  let _ = srv.stop(server)
+  print("stopped")
+`
+	start := time.Now()
+	output, err := runProgram(source, "")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected 3 lines, got %d: %q", len(lines), output)
+	}
+	if lines[0] != "ok" {
+		t.Errorf("health: expected 'ok', got %q", lines[0])
+	}
+	if lines[1] != "/echo" {
+		t.Errorf("echo: expected '/echo', got %q", lines[1])
+	}
+	if lines[2] != "stopped" {
+		t.Errorf("expected 'stopped', got %q", lines[2])
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("server test took too long: %v", elapsed)
+	}
+}
+
+func TestSrvJsonResponse(t *testing.T) {
+	source := `
+main : () -> <io, async> () =
+  let server = srv.new()
+    |> srv.get("/data", fn(_req) => srv.json(200, json.enc({name: "test", value: 42})))
+    |> srv.start(18924)
+
+  let resp = http.get("http://127.0.0.1:18924/data")
+  let _ = print(show(resp.status))
+  let _ = print(resp.body)
+
+  srv.stop(server)
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected 2 lines, got %d: %q", len(lines), output)
+	}
+	if lines[0] != "200" {
+		t.Errorf("status: expected '200', got %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "test") {
+		t.Errorf("body should contain 'test', got %q", lines[1])
+	}
+}
+
+func TestSrvPathParams(t *testing.T) {
+	source := `
+main : () -> <io, async> () =
+  let server = srv.new()
+    |> srv.get("/users/:id", fn(req) => srv.res(200, req.params.id))
+    |> srv.start(18925)
+
+  let resp = http.get("http://127.0.0.1:18925/users/42")
+  let _ = print(resp.body)
+
+  srv.stop(server)
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if strings.TrimSpace(output) != "42" {
+		t.Errorf("expected '42', got %q", output)
+	}
+}
+
+func TestIterIntersperse(t *testing.T) {
+	source := `
+main : () -> <io> () =
+  let result = iter.of([1, 2, 3])
+    |> iter.intersperse(0)
+    |> iter.collect
+  print(show(result))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	if strings.TrimSpace(output) != "[1, 0, 2, 0, 3]" {
+		t.Errorf("expected '[1, 0, 2, 0, 3]', got %q", output)
+	}
+}
+
+func TestIterMinMax(t *testing.T) {
+	source := `
+type Option<a> = Some(a) | None
+
+main : () -> <io> () =
+  let mn = iter.of([3, 1, 4, 1, 5]) |> iter.min
+  let mx = iter.of([3, 1, 4, 1, 5]) |> iter.max
+  let _ = print(show(mn))
+  print(show(mx))
+`
+	output, err := runProgram(source, "")
+	if err != nil {
+		t.Fatalf("runtime error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if !strings.Contains(lines[0], "1") {
+		t.Errorf("min: expected Some(1), got %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "5") {
+		t.Errorf("max: expected Some(5), got %q", lines[1])
+	}
+}

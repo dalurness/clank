@@ -1,0 +1,70 @@
+# Test: iterator combinators
+# Expected output:
+# [2, 4, 6, 8, 10]
+# [2, 4]
+# [1, 2, 3]
+# [4, 5]
+# 15
+# 5
+# true
+# false
+# 1,2,3,4,5
+# [1, 2, 3, 4, 5, 6]
+# [(0, 10), (1, 20), (2, 30)]
+
+main : () -> <io> () =
+  # iter.map + collect
+  let mapped = iter.range(1, 6)
+    |> iter.map(fn(x) => x * 2)
+    |> iter.collect
+  let _ = print(show(mapped))
+
+  # iter.filter + collect
+  let filtered = iter.of([1, 2, 3, 4, 5])
+    |> iter.filter(fn(x) => x % 2 == 0)
+    |> iter.collect
+  let _ = print(show(filtered))
+
+  # iter.take
+  let taken = iter.range(1, 100)
+    |> iter.take(3)
+    |> iter.collect
+  let _ = print(show(taken))
+
+  # iter.drop
+  let dropped = iter.range(1, 6)
+    |> iter.drop(3)
+    |> iter.collect
+  let _ = print(show(dropped))
+
+  # iter.fold
+  let sum = iter.range(1, 6)
+    |> iter.fold(0, fn(acc, x) => acc + x)
+  let _ = print(show(sum))
+
+  # iter.count
+  let c = iter.range(1, 6) |> iter.count
+  let _ = print(show(c))
+
+  # iter.any
+  let a = iter.of([1, 2, 3]) |> iter.any(fn(x) => x > 2)
+  let _ = print(show(a))
+
+  # iter.all
+  let al = iter.of([1, 2, 3]) |> iter.all(fn(x) => x > 5)
+  let _ = print(show(al))
+
+  # iter.join
+  let joined = iter.range(1, 6) |> iter.join(",")
+  let _ = print(joined)
+
+  # iter.chain
+  let chained = iter.chain(iter.range(1, 4), iter.range(4, 7))
+    |> iter.collect
+  let _ = print(show(chained))
+
+  # iter.enumerate
+  let enumd = iter.of([10, 20, 30])
+    |> iter.enumerate
+    |> iter.collect
+  print(show(enumd))

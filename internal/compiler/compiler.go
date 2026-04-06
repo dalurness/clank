@@ -97,6 +97,20 @@ var vmBuiltins = map[string]int{
 	// Math
 	"math.abs": 224, "math.min": 225, "math.max": 226,
 	"math.floor": 227, "math.ceil": 228, "math.sqrt": 229,
+	// CLI
+	"cli.args": 300, "cli.parse": 301, "cli.opt": 302, "cli.req": 303,
+	"cli.def": 304, "cli.get": 305, "cli.flag": 306, "cli.pos": 307,
+	// Logging
+	"log.trace": 310, "log.debug": 311, "log.info": 312, "log.warn": 313,
+	"log.error": 314, "log.level": 315, "log.ctx": 316, "log.json": 317,
+	// Collections
+	"col.rev": 320, "col.sort": 321, "col.sortby": 322, "col.uniq": 323,
+	"col.zip": 324, "col.unzip": 325, "col.flat": 326, "col.flatmap": 327,
+	"col.take": 328, "col.drop": 329, "col.nth": 330, "col.find": 331,
+	"col.any": 332, "col.all": 333, "col.count": 334, "col.enum": 335,
+	"col.chunk": 336, "col.win": 337, "col.intersperse": 338, "col.rep": 339,
+	"col.sum": 340, "col.prod": 341, "col.min": 342, "col.max": 343,
+	"col.group": 344, "col.scan": 345,
 }
 
 // ── Code Emitter ──
@@ -212,7 +226,7 @@ func NewCompiler() *Compiler {
 		stringIndex:          make(map[string]int),
 		rationalIdx:          make(map[float64]int),
 		wordIDs:              make(map[string]int),
-		nextWordID:           260,
+		nextWordID:           400,
 		resumeVars:           make(map[string]int),
 		variantInfos:         make(map[string]variantInfo),
 		effectOps:            make(map[string]int),
