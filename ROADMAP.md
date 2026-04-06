@@ -6,9 +6,7 @@ Current state of the implementation and what's next.
 
 ## Architecture
 
-Clank is implemented in Go (`go/`). The execution model is: source → lexer → parser → desugarer → type checker → bytecode compiler → stack VM. There is no tree-walking interpreter — the VM is the sole execution engine.
-
-The TypeScript reference implementation has been archived and removed from the repository. Its history is preserved in git.
+Clank is implemented in Go. The execution model is: source → lexer → parser → desugarer → type checker → bytecode compiler → stack VM. There is no tree-walking interpreter — the VM is the sole execution engine.
 
 ---
 

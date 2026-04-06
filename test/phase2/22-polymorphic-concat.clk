@@ -1,0 +1,16 @@
+# Test: ++ works on both strings and lists
+# Expected output:
+# hello world
+# [1, 2, 3, 4]
+# abcdef
+
+main : () -> <io> () =
+  # String concat with ++
+  let _ = print("hello" ++ " " ++ "world")
+
+  # List concat with ++
+  let xs = [1, 2] ++ [3, 4]
+  let _ = print(show(xs))
+
+  # Chained string concat
+  print("abc" ++ "def")

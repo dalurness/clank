@@ -1,0 +1,24 @@
+mod main
+
+use types (Priority, Todo)
+use format (format-report, format-todo)
+use logic (count-done, count-pending, filter-by-priority)
+
+main : () -> <io> () =
+  let todos = [
+    Todo("Fix critical bug", High, true),
+    Todo("Buy milk", Low, false),
+    Todo("Write tests", Medium, false),
+    Todo("Deploy to production", High, false),
+    Todo("Read emails", Low, true)
+  ]
+  print("=== All Todos ===")
+  print(format-report(todos))
+  print("")
+  print("=== Summary ===")
+  print("Done: ${count-done(todos)}")
+  print("Pending: ${count-pending(todos)}")
+  print("")
+  let high = filter-by-priority(todos, High)
+  print("=== High Priority ===")
+  for t in high do print(format-todo(t))

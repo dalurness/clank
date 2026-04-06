@@ -1,0 +1,23 @@
+# Test: channel communication between two goroutine-backed tasks
+# Producer sends values, consumer receives and sums them.
+# Both run as real goroutines.
+
+main : () -> <io, async> () =
+  let (tx, rx) = channel(0)
+  let producer = spawn(fn() =>
+    let _ = send(tx, 10)
+    let _ = send(tx, 20)
+    send(tx, 30)
+  )
+  let consumer = spawn(fn() =>
+    let a = recv(rx)
+    let b = recv(rx)
+    let c = recv(rx)
+    a + b + c
+  )
+  let total = await(consumer)
+  let _ = await(producer)
+  print(show(total))
+
+# Expected output:
+# 60

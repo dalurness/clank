@@ -1,0 +1,25 @@
+type Status = InStock | LowStock | OutOfStock
+
+get-status : (quantity: Int) -> <> Status =
+  if quantity == 0 then OutOfStock
+  else if quantity <= 5 then LowStock
+  else InStock
+
+status-label : (s: Status) -> <> Str =
+  match s {
+    InStock => "In Stock"
+    LowStock => "Low Stock"
+    OutOfStock => "Out of Stock"
+  }
+
+main : () -> <io> () =
+  let raw = fs.read("inventory.json")
+  let items = json.dec(raw)
+  let total = for item in items fold acc = 0.0 do
+    acc + item.quantity * item.price
+  for item in items do
+    let status = get-status(item.quantity)
+    let value = item.quantity * item.price
+    let label = status-label(status)
+    print("${item.name} | ${label} | qty: ${item.quantity} | value: $${value}")
+  print("Total inventory value: $${total}")

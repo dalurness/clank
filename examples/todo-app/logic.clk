@@ -1,0 +1,28 @@
+mod logic
+
+use types (Priority, Todo)
+
+pub count-done : (todos: [Todo]) -> <> Int =
+  fold(todos, 0, fn(acc, t) =>
+    match t {
+      Todo(_, _, done) => if done then acc + 1 else acc
+    }
+  )
+
+pub count-pending : (todos: [Todo]) -> <> Int =
+  fold(todos, 0, fn(acc, t) =>
+    match t {
+      Todo(_, _, done) => if done then acc else acc + 1
+    }
+  )
+
+pub filter-by-priority : (todos: [Todo], p: Priority) -> <> [Todo] =
+  filter(todos, fn(t) =>
+    match t {
+      Todo(_, priority, _) => match priority {
+        Low => match p { Low => true Medium => false High => false }
+        Medium => match p { Low => false Medium => true High => false }
+        High => match p { Low => false Medium => false High => true }
+      }
+    }
+  )

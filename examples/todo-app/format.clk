@@ -1,0 +1,27 @@
+mod format
+
+use types (Priority, Todo)
+
+pub format-priority : (p: Priority) -> <> Str =
+  match p {
+    Low => "LOW"
+    Medium => "MEDIUM"
+    High => "HIGH"
+  }
+
+pub format-todo : (t: Todo) -> <> Str =
+  match t {
+    Todo(name, priority, done) =>
+      let check = if done then "x" else " "
+      let pstr = format-priority(priority)
+      "[${check}] (${pstr}) ${name}"
+  }
+
+pub format-report : (todos: [Todo]) -> <> Str =
+  let indexed = zip(range(1, len(todos) + 1), todos)
+  let lines = map(indexed, fn(pair) =>
+    match pair {
+      (n, todo) => "${n}. ${format-todo(todo)}"
+    }
+  )
+  join(lines, "\n")

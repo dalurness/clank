@@ -1,0 +1,49 @@
+type Priority = Low | Medium | High | Critical
+
+type Task = Task(Str, Priority)
+
+urgency : (p: Priority) -> <> Int =
+  match p {
+    Low => 1
+    Medium => 2
+    High => 3
+    Critical => 5
+  }
+
+format-task : (t: Task) -> <> Str =
+  match t {
+    Task(name, p) =>
+      let label = match p {
+        Low => "LOW"
+        Medium => "MEDIUM"
+        High => "HIGH"
+        Critical => "CRITICAL"
+      }
+      "[ ${label} ] ${name}"
+  }
+
+print-urgent : (tasks: [Task]) -> <io> () =
+  let highest = fold(tasks, 0, fn(acc, t) =>
+    match t {
+      Task(_, p) =>
+        let score = urgency(p)
+        if score > acc then score else acc
+    }
+  )
+  let urgent = filter(tasks, fn(t) =>
+    match t {
+      Task(_, p) => urgency(p) >= 3
+    }
+  )
+  for task in urgent do print(format-task(task))
+
+main : () -> <io> () =
+  let tasks = [
+    Task("Write tests", Low),
+    Task("Fix the build", High),
+    Task("Update docs", Medium),
+    Task("Patch security hole", Critical),
+    Task("Refactor auth", High),
+    Task("Rename variable", Low)
+  ]
+  print-urgent(tasks)

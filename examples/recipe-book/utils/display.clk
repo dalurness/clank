@@ -1,0 +1,25 @@
+mod utils.display
+
+use models.types (Difficulty, Ingredient, Recipe, Easy, Medium, Hard)
+
+pub difficulty-stars : (d: Difficulty) -> <> Str =
+  match d {
+    Easy   => "*"
+    Medium => "**"
+    Hard   => "***"
+  }
+
+pub format-ingredient : (i: Ingredient) -> <> Str =
+  match i {
+    Ingredient(name, qty) => "  - ${name} (${qty})"
+  }
+
+pub format-recipe : (r: Recipe) -> <> Str =
+  match r {
+    Recipe(name, diff, ingredients, cook-time) =>
+      let stars = difficulty-stars(diff)
+      let header = "=== ${name} [${stars}] (${cook-time} min) ==="
+      let ingredient-lines = map(ingredients, format-ingredient)
+      let body = join(ingredient-lines, "\n")
+      header ++ "\nIngredients:\n" ++ body
+  }

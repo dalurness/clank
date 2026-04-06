@@ -1,0 +1,63 @@
+# File inventory: scan a directory and summarize files by extension.
+# Demonstrates: fs stdlib, list operations, pattern matching, string interpolation.
+
+type FileKind = Code | Doc | Config | Data | Other
+
+classify : (name: Str) -> <> FileKind =
+  let ext = get-ext(name)
+  match ext {
+    ".clk" => Code
+    ".go" => Code
+    ".ts" => Code
+    ".js" => Code
+    ".py" => Code
+    ".md" => Doc
+    ".txt" => Doc
+    ".json" => Config
+    ".toml" => Config
+    ".yaml" => Config
+    ".csv" => Data
+    _ => Other
+  }
+
+get-ext : (name: Str) -> <> Str =
+  let parts = split(name, ".")
+  if len(parts) <= 1
+    then ""
+    else "." ++ get(parts, len(parts) - 1)
+
+label : (kind: FileKind) -> <> Str =
+  match kind {
+    Code => "code"
+    Doc => "docs"
+    Config => "config"
+    Data => "data"
+    Other => "other"
+  }
+
+count-kind : (files: [Str], kind: FileKind) -> <> Int =
+  len(filter(files, fn(f: Str) => classify(f) == kind))
+
+main : () -> <io> () =
+  let dir = ".."
+  let files = fs.ls(dir)
+  let total = len(files)
+  let _ = print("=== File Inventory ===")
+  let _ = print("directory: ${dir}")
+  let _ = print("total files: ${total}")
+  let _ = print("")
+  let code = count-kind(files, Code)
+  let docs = count-kind(files, Doc)
+  let conf = count-kind(files, Config)
+  let data = count-kind(files, Data)
+  let other = count-kind(files, Other)
+  let _ = print("  code:   ${code}")
+  let _ = print("  docs:   ${docs}")
+  let _ = print("  config: ${conf}")
+  let _ = print("  data:   ${data}")
+  let _ = print("  other:  ${other}")
+  let _ = print("")
+  let code-files = filter(files, fn(f: Str) => classify(f) == Code)
+  let _ = print("code files:")
+  for f in code-files do
+    print("  ${f}")

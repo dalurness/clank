@@ -1,0 +1,20 @@
+# Test: match and if used inline in binary expressions
+# Expected output:
+# 14
+# hello world
+# 30
+
+type Val = A(Int) | B(Int)
+
+main : () -> <io> () =
+  # match as operand of +
+  let x = 10 + match A(4) { A(n) => n B(n) => n * 2 }
+  let _ = print(show(x))
+
+  # if as operand of ++
+  let s = "hello" ++ if true then " world" else " nope"
+  let _ = print(s)
+
+  # nested: match inside *
+  let y = 3 * match B(5) { A(n) => n B(n) => n + 5 }
+  print(show(y))

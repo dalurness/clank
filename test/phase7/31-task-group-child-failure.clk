@@ -1,0 +1,18 @@
+# Test: child task handles its own error within task group
+# One child handles a raise and returns the error as a value.
+
+main : () -> <io, async> () =
+  let result = task-group(fn() =>
+    let a = spawn(fn() => "ok")
+    let b = spawn(fn() =>
+      handle raise("child failed") {
+        return x -> "ok",
+        raise msg resume _ -> "error: " ++ msg
+      }
+    )
+    await(a) ++ " " ++ await(b)
+  )
+  print(result)
+
+# Expected output:
+# ok error: child failed

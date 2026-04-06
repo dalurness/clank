@@ -1,0 +1,14 @@
+# Test: print from spawned task, then from main after await
+# Verifies that output from a spawned task is visible after await
+
+worker : () -> <io, async> () =
+  print("from worker")
+
+main : () -> <io, async> () =
+  let f = spawn(fn() => worker())
+  let _ = await(f)
+  print("from main")
+
+# Expected output:
+# from worker
+# from main

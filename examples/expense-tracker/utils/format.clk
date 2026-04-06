@@ -1,0 +1,12 @@
+mod utils.format
+
+pub format-currency : (cents: Int) -> <> Str =
+  let dollars = cents / 100
+  let remaining = cents % 100
+  let cents-str = if lt(remaining, 10) then "0${remaining}" else show(remaining)
+  "$${dollars}.${cents-str}"
+
+pub format-date : (date: {year: Int, month: Int, day: Int}) -> <> Str =
+  let month-str = if lt(date.month, 10) then "0${date.month}" else show(date.month)
+  let day-str = if lt(date.day, 10) then "0${date.day}" else show(date.day)
+  "${date.year}-${month-str}-${day-str}"

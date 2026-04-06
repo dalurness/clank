@@ -1,0 +1,22 @@
+# Test: spawned tasks run in parallel (goroutine-backed)
+# Spawns 3 tasks that each sleep briefly, then return a value.
+# If sequential, this would take 3x as long. Output verifies all complete.
+
+main : () -> <io, async> () =
+  let a = spawn(fn() =>
+    let _ = sleep(50)
+    10
+  )
+  let b = spawn(fn() =>
+    let _ = sleep(50)
+    20
+  )
+  let c = spawn(fn() =>
+    let _ = sleep(50)
+    30
+  )
+  let total = await(a) + await(b) + await(c)
+  print(show(total))
+
+# Expected output:
+# 60

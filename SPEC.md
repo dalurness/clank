@@ -17,6 +17,8 @@ Primitives: `Int` (64-bit signed, overflow traps), `Rat` (IEEE 754 double, overf
 
 Compounds: `[T]` (list), `(T, U)` (tuple), `{k: T}` (record), `T | U` (tagged union), `T -> <E> U` (function with effects E).
 
+String interpolation: `"hello ${expr}"` desugars to `"hello " ++ show(expr)`. Escape with `\$`.
+
 ## 2. Grammar (Core)
 
 ```ebnf
@@ -57,9 +59,10 @@ mul-expr    = unary-expr { ('*' | '/' | '%') unary-expr } ;
 unary-expr  = ['-' | '!'] postfix-expr ;
 postfix-expr = atom { '(' args ')' | '.' ident } ;
 
-atom        = literal | ident | lambda | '(' expr ')' | tuple | list | record ;
+atom        = literal | ident | lambda | '(' expr ')' | tuple | list | record
+            | match-expr | if-expr ;
 lambda      = 'fn' '(' params ')' '=>' expr ;
-let-expr    = 'let' pattern '=' expr ['in' expr] ;
+let-expr    = 'let' pattern '=' expr ['in' expr] ;  (* 'in' is optional in match arms and lambdas — the next expression becomes the body *)
 if-expr     = 'if' expr 'then' expr 'else' expr ;
 match-expr  = 'match' expr '{' { pattern '=>' expr } '}' ;
 do-block    = 'do' '{' { [ident '<-'] expr } '}' ;
@@ -67,7 +70,7 @@ handle-expr = 'handle' expr '{' handler-arms '}' ;
 for-expr    = 'for' pattern 'in' expr ['if' expr] ['fold' ident '=' expr] 'do' expr ;
 ```
 
-All operators desugar to function calls: `a + b` → `add(a, b)`, `a |> f(b)` → `f(a, b)`, `a ++ b` → `str.cat(a, b)`.
+All operators desugar to function calls: `a + b` → `add(a, b)`, `a |> f(b)` → `f(a, b)`, `a ++ b` → `concat(a, b)` (works on strings and lists).
 
 ## 3. Type System
 
@@ -127,15 +130,21 @@ Hindley-Milner with: literal types, let-binding, if/match branch unification, la
 
 ```
 mod math.stats
-use std.io (print)
-use mathlib (double, triple)
+use mathlib (double, triple)       # unqualified: call as double(x)
+use utils.format                    # qualified: call as format.func-name(x)
+use utils.format as fmt             # aliased: call as fmt.func-name(x)
 
 pub mean : (xs: [Rat]) -> <> Rat = ...
 ```
 
 - **1:1 file mapping**: `math/stats.clk` → `mod math.stats`
-- **Explicit imports**: every name listed, no globs
+- **Unqualified import**: `use foo (x, y)` — call as `x()`, `y()`
+- **Qualified import**: `use foo` — call as `foo.x()`, `foo.y()`
+- **Aliased import**: `use foo as f` — call as `f.x()`, `f.y()`
+- **Importing a type** automatically includes its constructors
 - **Visibility**: private by default, `pub` to export
+- **Builtins need no import**: `print`, `show`, `map`, `filter`, etc. and all `std.*` modules are always available
+- **Cross-directory resolution**: modules resolve relative to the importing file, then fall back to the project root (entry file's directory)
 
 ## 5. Built-in Functions (always available)
 
@@ -148,6 +157,7 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 | Strings | `str.cat`, `show`, `print`, `split`, `join`, `trim` |
 | Lists | `len`, `head`, `tail`, `cons`, `cat`, `rev`, `get`, `map`, `filter`, `fold`, `flat-map`, `range`, `zip` |
 | Tuples | `fst`, `snd`, `tuple.get` |
+| Concat | `concat` (`++` operator — works on strings and lists) |
 | Effects | `raise` |
 | For-loops | `for x in list do expr`, `for x in list if pred do expr`, `for x in list fold acc = init do expr` |
 
@@ -159,22 +169,28 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 | `json` | `json.enc`, `json.dec`, `json.get`, `json.set`, `json.keys`, `json.merge` | JSON encode/decode |
 | `env` | `env.get`, `env.set`, `env.has`, `env.all` | Environment variables |
 | `proc` | `proc.run`, `proc.sh`, `proc.exit` | Process execution |
-| `http` | `http.get`, `http.post`, `http.put`, `http.del` | HTTP client |
+| `http` | `http.get`, `http.post`, `http.put`, `http.del`, `http.set-timeout` | HTTP client |
 | `rx` | `rx.ok`, `rx.find`, `rx.replace`, `rx.split` | Regex |
 | `math` | `math.abs`, `math.min`, `math.max`, `math.floor`, `math.ceil`, `math.sqrt` | Math |
 
 ### Async & Concurrency
+
+Each `spawn` launches a real goroutine — spawned tasks run in parallel. This means I/O-bound work (HTTP requests, file reads, process execution) in separate tasks executes concurrently. Cancellation (via `task-group` failure or explicit cancel) interrupts blocked I/O operations (sleep, HTTP, process execution, channel recv/send) immediately.
+
 | Function | Signature | Purpose |
 |----------|-----------|---------|
-| `spawn` | `(() -> a) -> <async> Future[a]` | Spawn task |
+| `spawn` | `(() -> a) -> <async> Future[a]` | Spawn task (runs in parallel goroutine) |
 | `await` | `Future[a] -> <async> a` | Wait for result |
 | `channel` | `Int -> <async> (Sender[a], Receiver[a])` | Create channel |
 | `send` | `(Sender[a], a) -> <async> ()` | Send value |
-| `recv` | `Receiver[a] -> <async> a` | Receive value |
+| `recv` | `Receiver[a] -> <async> a` | Receive value (blocks until available) |
 | `try-recv` | `Receiver[a] -> <async> Option[a]` | Non-blocking receive |
-| `sleep` | `Int -> <async> ()` | Sleep milliseconds |
-| `task-group` | `(() -> a) -> <async> a` | Structured concurrency |
+| `close-sender` | `Sender[a] -> <async> ()` | Close sender half |
+| `close-receiver` | `Receiver[a] -> <async> ()` | Close receiver half |
+| `sleep` | `Int -> <async> ()` | Sleep milliseconds (interruptible) |
+| `task-group` | `(() -> a) -> <async> a` | Structured concurrency (cancels children on failure) |
 | `shield` | `(() -> a) -> <async> a` | Cancellation protection |
+| `http.set-timeout` | `Int -> <io> ()` | Set HTTP timeout in ms (default: 30000) |
 
 ## 6. CLI
 
@@ -187,6 +203,7 @@ clank lint <file>               # Lint source code
 clank doc search <query>        # Search documentation
 clank test [dir]                # Run tests
 clank pkg <init|add|remove>     # Package management
+clank spec                      # Print this specification
 ```
 
 All commands support `--json` for structured output.
@@ -205,12 +222,12 @@ area : (s: Shape) -> <> Rat =
 main : () -> <io> () =
   let shapes = [Circle(5.0), Rect(3.0, 4.0)]
   let areas = map(shapes, fn(s) => area(s))
-  for a in areas do print(show(a))
+  for a in areas do print("area: ${a}")
 
   let data = fs.read("config.json")
   let config = json.dec(data)
   match json.get(config, "name") {
-    Some(name) => print("Hello, " ++ show(name))
+    Some(name) => print("Hello, ${name}")
     None => print("no name found")
   }
 ```

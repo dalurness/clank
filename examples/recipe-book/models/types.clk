@@ -1,0 +1,7 @@
+mod models.types
+
+pub type Difficulty = Easy | Medium | Hard
+
+pub type Ingredient = Ingredient(Str, Rat)
+
+pub type Recipe = Recipe(Str, Difficulty, [Ingredient], Int)

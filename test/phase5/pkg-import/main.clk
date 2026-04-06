@@ -1,0 +1,10 @@
+# Test: importing from an external package via clank.pkg
+# Expected output:
+# Hello, world!
+# wow!
+
+use mylib.utils (greet, add-exclaim)
+
+main : () -> <io> () =
+  let _ = print(greet("world"))
+  print(add-exclaim("wow"))

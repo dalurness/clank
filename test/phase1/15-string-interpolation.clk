@@ -1,0 +1,27 @@
+# Test: string interpolation with ${expr}
+# Expected output:
+# hello world!
+# answer: 42
+# 2 + 3 = 5
+# escaped ${x}
+# a then b
+
+main : () -> <io> () =
+  # Basic variable interpolation
+  let name = "world"
+  let _ = print("hello ${name}!")
+
+  # Auto-show for non-string types
+  let x = 42
+  let _ = print("answer: ${x}")
+
+  # Expression inside interpolation
+  let _ = print("2 + 3 = ${2 + 3}")
+
+  # Escaped $ prevents interpolation
+  let _ = print("escaped \${x}")
+
+  # Adjacent interpolations
+  let a = "a"
+  let b = "b"
+  print("${a} then ${b}")

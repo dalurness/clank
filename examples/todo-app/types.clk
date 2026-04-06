@@ -1,0 +1,5 @@
+mod types
+
+pub type Priority = Low | Medium | High
+
+pub type Todo = Todo(Str, Priority, Bool)

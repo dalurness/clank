@@ -1,0 +1,5 @@
+mod models.types
+
+pub type Category = Food | Transport | Housing | Entertainment
+
+pub type Expense = Expense(Str, Category, Int, {year: Int, month: Int, day: Int})

@@ -1,0 +1,74 @@
+mod main
+
+use models.types (Difficulty, Ingredient, Recipe, Easy, Medium, Hard)
+use utils.display (format-recipe, difficulty-stars)
+
+count-by-difficulty : (recipes: [Recipe], d: Difficulty) -> <> Int =
+  let matches = filter(recipes, fn(r) =>
+    match r {
+      Recipe(_, diff, _, _) => eq(diff, d)
+    }
+  )
+  len(matches)
+
+total-cook-time : (recipes: [Recipe]) -> <> Int =
+  fold(recipes, 0, fn(acc, r) =>
+    match r {
+      Recipe(_, _, _, t) => add(acc, t)
+    }
+  )
+
+main : () -> <io> () =
+  let pasta = Recipe(
+    "Spaghetti Carbonara",
+    Medium,
+    [
+      Ingredient("Spaghetti", 200.0),
+      Ingredient("Eggs", 3.0),
+      Ingredient("Pancetta", 100.0),
+      Ingredient("Parmesan", 50.0),
+      Ingredient("Black Pepper", 2.0)
+    ],
+    25
+  )
+  let salad = Recipe(
+    "Garden Salad",
+    Easy,
+    [
+      Ingredient("Lettuce", 150.0),
+      Ingredient("Tomatoes", 100.0),
+      Ingredient("Cucumber", 80.0),
+      Ingredient("Olive Oil", 15.0)
+    ],
+    10
+  )
+  let souffle = Recipe(
+    "Cheese Souffle",
+    Hard,
+    [
+      Ingredient("Gruyere Cheese", 120.0),
+      Ingredient("Butter", 30.0),
+      Ingredient("Flour", 25.0),
+      Ingredient("Milk", 200.0),
+      Ingredient("Eggs", 4.0),
+      Ingredient("Nutmeg", 1.0)
+    ],
+    45
+  )
+  let recipes = [pasta, salad, souffle]
+  for r in recipes do
+    let formatted = format-recipe(r)
+    print(formatted)
+    print("")
+  let n = len(recipes)
+  let total = total-cook-time(recipes)
+  let avg = div(total, n)
+  let easy-count = count-by-difficulty(recipes, Easy)
+  let medium-count = count-by-difficulty(recipes, Medium)
+  let hard-count = count-by-difficulty(recipes, Hard)
+  print("=== Recipe Book Summary ===")
+  print("Total recipes: ${n}")
+  print("Average cook time: ${avg} min")
+  print("Easy (${difficulty-stars(Easy)}): ${easy-count}")
+  print("Medium (${difficulty-stars(Medium)}): ${medium-count}")
+  print("Hard (${difficulty-stars(Hard)}): ${hard-count}")

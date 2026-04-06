@@ -1,0 +1,14 @@
+# Test: error in spawned task handled within the task
+# The spawned task handles its own raise and returns the result.
+
+main : () -> <io, async> () =
+  let f = spawn(fn() =>
+    handle raise("boom") {
+      return x -> "ok",
+      raise msg resume _ -> "caught: " ++ msg
+    }
+  )
+  print(await(f))
+
+# Expected output:
+# caught: boom

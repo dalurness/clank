@@ -1,0 +1,15 @@
+# Test: deeply nested spawn — grandchild task
+# Parent spawns child, child spawns grandchild, result propagates back.
+
+main : () -> <io, async> () =
+  let f = spawn(fn() =>
+    let g = spawn(fn() =>
+      let h = spawn(fn() => 7)
+      await(h) * 3
+    )
+    await(g) + 1
+  )
+  print(show(await(f)))
+
+# Expected output:
+# 22

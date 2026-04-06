@@ -1,0 +1,8 @@
+# Test: qualified import with alias
+# Expected output:
+# 10
+
+use mathlib as m
+
+main : () -> <io> () =
+  print(show(m.double(5)))

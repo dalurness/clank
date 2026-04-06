@@ -1,0 +1,53 @@
+type Student = Student(Str, Int, Str)
+
+letter-grade : (g: Int) -> <> Str =
+  if g >= 90 then "A"
+  else if g >= 80 then "B"
+  else if g >= 70 then "C"
+  else if g >= 60 then "D"
+  else "F"
+
+is-passing : (s: Student) -> <> Bool =
+  match s {
+    Student(_, g, _) => g >= 60
+  }
+
+student-name : (s: Student) -> <> Str =
+  match s {
+    Student(n, _, _) => n
+  }
+
+student-grade : (s: Student) -> <> Int =
+  match s {
+    Student(_, g, _) => g
+  }
+
+student-subject : (s: Student) -> <> Str =
+  match s {
+    Student(_, _, sub) => sub
+  }
+
+main : () -> <io> () =
+  let students = [
+    Student("Ada", 95, "math"),
+    Student("Bob", 72, "science"),
+    Student("Clara", 55, "english"),
+    Student("Derek", 88, "math"),
+    Student("Eva", 43, "science"),
+    Student("Felix", 67, "english")
+  ]
+
+  let passing = filter(students, fn(s) => is-passing(s))
+
+  let total = fold(passing, 0, fn(acc, s) => acc + student-grade(s))
+  let count = len(passing)
+  let average = total / count
+
+  for s in passing do
+    let n = student-name(s)
+    let g = student-grade(s)
+    let sub = student-subject(s)
+    let lg = g |> letter-grade
+    print("${n} (${lg}) - ${sub}")
+
+  print("Average grade of passing students: ${average}")

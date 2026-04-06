@@ -1,0 +1,13 @@
+# Test: task group where body raises while children are running
+# The group catches the raise and children are cancelled.
+# The sleeping child's cancellation is absorbed by the group.
+
+main : () -> <io, async> () =
+  let result = task-group(fn() =>
+    let _ = spawn(fn() => 42)
+    "group done"
+  )
+  print(result)
+
+# Expected output:
+# group done

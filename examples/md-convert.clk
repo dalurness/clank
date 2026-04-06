@@ -1,0 +1,21 @@
+type Line = Header(Str) | ListItem(Str) | Quote(Str) | Plain(Str)
+
+parse : (s: Str) -> <> Line =
+  if rx.ok(s, "^# ") then Header(rx.replace(s, "^# ", ""))
+  else if rx.ok(s, "^- ") then ListItem(rx.replace(s, "^- ", ""))
+  else if rx.ok(s, "^> ") then Quote(rx.replace(s, "^> ", ""))
+  else Plain(s)
+
+render : (line: Line) -> <> Str =
+  match line {
+    Header(text) => "=== " ++ text ++ " ==="
+    ListItem(text) => "  * " ++ text
+    Quote(text) => "  | " ++ text
+    Plain(text) => text
+  }
+
+main : () -> <io> () =
+  let content = fs.read("notes.md")
+  let lines = split(content, "\n")
+  let parsed = map(lines, fn(s) => parse(s))
+  for line in parsed do print(render(line))

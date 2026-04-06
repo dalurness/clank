@@ -1,0 +1,7 @@
+mod mylib.utils
+
+pub greet : (name: Str) -> <> Str =
+  "Hello, ${name}!"
+
+pub add-exclaim : (s: Str) -> <> Str =
+  s ++ "!"

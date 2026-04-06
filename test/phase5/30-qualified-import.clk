@@ -1,0 +1,10 @@
+# Test: qualified module import with dotted access
+# Expected output:
+# 6
+# 15
+
+use mathlib
+
+main : () -> <io> () =
+  let _ = print(show(mathlib.double(3)))
+  print(show(mathlib.triple(5)))

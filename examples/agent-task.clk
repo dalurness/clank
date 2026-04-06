@@ -1,5 +1,5 @@
 # An agent executes commands and reports results.
-# Demonstrates: custom types, pattern matching, process execution, string ops.
+# Demonstrates: custom types, pattern matching, process execution, string interpolation.
 
 type TaskResult = Ok(Str) | Fail(Str)
 
@@ -11,8 +11,8 @@ run-task : (cmd: Str, args: [Str]) -> <io> TaskResult =
 
 report : (name: Str, result: TaskResult) -> <io> () =
   match result {
-    Ok(msg) => print(name ++ ": ok — " ++ msg)
-    Fail(msg) => print(name ++ ": FAIL — " ++ msg)
+    Ok(msg) => print("${name}: ok — ${msg}")
+    Fail(msg) => print("${name}: FAIL — ${msg}")
   }
 
 main : () -> <io> () =

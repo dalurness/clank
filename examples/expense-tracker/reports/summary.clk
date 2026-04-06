@@ -1,0 +1,24 @@
+mod reports.summary
+
+use utils.format (format-currency, format-date)
+use models.types (Category, Expense)
+
+pub total-expenses : (expenses: [Expense]) -> <> Int =
+  fold(expenses, 0, fn(acc, e) =>
+    match e {
+      Expense(_, _, amount, _) => add(acc, amount)
+    })
+
+pub by-category : (expenses: [Expense], cat: Category) -> <> [Expense] =
+  filter(expenses, fn(e) =>
+    match e {
+      Expense(_, c, _, _) => eq(show(c), show(cat))
+    })
+
+pub format-expense : (e: Expense) -> <> Str =
+  match e {
+    Expense(desc, cat, amount, date) =>
+      let amt-str = format-currency(amount)
+      let date-str = format-date(date)
+      "[${date-str}] ${desc} (${show(cat)}): ${amt-str}"
+  }

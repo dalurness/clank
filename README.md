@@ -178,24 +178,23 @@ All commands support `--json` for structured output.
 ## Project Structure
 
 ```
-go/
-  cmd/clank/main.go          CLI entry point
-  internal/
-    lexer/                   Tokenizer
-    parser/                  Recursive descent parser
-    ast/                     AST type definitions
-    desugar/                 Pipeline/operator/do-block desugaring
-    checker/                 Type checker (HM, affine, refinement, interfaces, effects)
-    compiler/                AST-to-bytecode compiler
-    vm/                      Stack-based bytecode VM + stdlib builtins
-    loader/                  Module resolution and import linking
-    pretty/                  Terse/verbose identifier transformation
-    formatter/               Source code formatter
-    linter/                  Lint rules
-    doc/                     Documentation extraction and search
-    pkg/                     Package manifest and dependency resolution
-    testrunner/              Test discovery and execution
-    token/                   Token types and source locations
+cmd/clank/main.go            CLI entry point
+internal/
+  lexer/                     Tokenizer
+  parser/                    Recursive descent parser
+  ast/                       AST type definitions
+  desugar/                   Pipeline/operator/do-block desugaring
+  checker/                   Type checker (HM, affine, refinement, interfaces, effects)
+  compiler/                  AST-to-bytecode compiler
+  vm/                        Stack-based bytecode VM + stdlib builtins
+  loader/                    Module resolution and import linking
+  pretty/                    Terse/verbose identifier transformation
+  formatter/                 Source code formatter
+  linter/                    Lint rules
+  doc/                       Documentation extraction and search
+  pkg/                       Package manifest and dependency resolution
+  testrunner/                Test discovery and execution
+  token/                     Token types and source locations
 test/
   phase1-7/                  Language feature tests by phase
   stdlib/                    Standard library tests
