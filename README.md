@@ -20,23 +20,29 @@ Every existing language optimizes for humans. Clank optimizes for agents:
 
 The full language spec fits in ~2500 tokens — readable in a single context window. See [RATIONALE.md](RATIONALE.md) for the reasoning behind every design decision.
 
-## Quick Start
+## Install
 
-### Prerequisites
-
-- Go 1.22+
-
-### Build
+### One-liner (macOS / Linux)
 
 ```bash
-git clone <repo-url> && cd clank/go
-go build ./cmd/clank
+curl -fsSL https://raw.githubusercontent.com/dalurness/clank/main/install.sh | sh
 ```
 
-### Run a program
+### From source
 
 ```bash
-./clank run test/examples/01-factorial.clk
+git clone https://github.com/dalurness/clank.git && cd clank
+go build -o clank ./cmd/clank
+```
+
+### Windows
+
+Download `clank-windows-amd64.exe` from [Releases](https://github.com/dalurness/clank/releases) and add it to your PATH.
+
+## Quick Start
+
+```bash
+clank run test/examples/01-factorial.clk
 ```
 
 ### Run the test suite
