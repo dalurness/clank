@@ -1240,8 +1240,35 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		}
 		refVal.Heap.Ref.Val = newVal
 		vm.push(ValUnit())
-	case compiler.OpREF_CAS, compiler.OpREF_MODIFY:
-		return vm.trap("E000", "advanced Ref operations not yet implemented in Go runtime")
+	case compiler.OpREF_CAS:
+		newVal, _ := vm.pop()
+		expected, _ := vm.pop()
+		refVal, _ := vm.pop()
+		if refVal.Tag != TagHEAP || refVal.Heap.Kind != KindRef {
+			return vm.trap("E002", "REF_CAS: expected Ref")
+		}
+		ref := refVal.Heap.Ref
+		old := ref.Val
+		if ValuesEqual(old, expected) {
+			ref.Val = newVal
+			vm.push(ValTuple([]Value{ValBool(true), old}))
+		} else {
+			vm.push(ValTuple([]Value{ValBool(false), old}))
+		}
+
+	case compiler.OpREF_MODIFY:
+		fn, _ := vm.pop()
+		refVal, _ := vm.pop()
+		if refVal.Tag != TagHEAP || refVal.Heap.Kind != KindRef {
+			return vm.trap("E002", "REF_MODIFY: expected Ref")
+		}
+		ref := refVal.Heap.Ref
+		result, err := vm.callBuiltinFn(fn, []Value{ref.Val})
+		if err != nil {
+			return err
+		}
+		ref.Val = result
+		vm.push(result)
 	case compiler.OpREF_CLOSE:
 		v, _ := vm.pop()
 		if v.Tag == TagHEAP && v.Heap.Kind == KindRef {

@@ -134,7 +134,6 @@ main : () -> <io> () =
 }
 
 func TestRefCAS(t *testing.T) {
-	t.Skip("ref-cas not yet implemented in Go VM")
 	t.Run("cas succeeds when expected matches", func(t *testing.T) {
 		source := `
 main : () -> <io> () =
@@ -205,7 +204,6 @@ main : () -> <io> () =
 }
 
 func TestRefModify(t *testing.T) {
-	t.Skip("ref-modify not yet implemented in Go VM")
 	t.Run("ref-modify applies function and updates cell", func(t *testing.T) {
 		source := `
 main : () -> <io> () =
