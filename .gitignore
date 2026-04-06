@@ -1,5 +1,5 @@
 node_modules/
 dist/
 *.js.map
-clank
-clank.exe
+/clank
+/clank.exe
