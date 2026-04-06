@@ -316,7 +316,7 @@ The spec size constraint cascades into every other design decision:
 - Built-in effects are limited to 4 (not open-ended)
 - The stdlib is comprehensive but uses terse names to minimize documentation size
 
-The current spec (SPEC.md) fits in approximately 2300 tokens and covers lexical structure, grammar, type system (effects, refinements, affine types, row polymorphism, interfaces), module system, and standard library summary.
+The current spec (SPEC.md) fits in approximately 3500 tokens and covers lexical structure, grammar, type system (effects, refinements, affine types, row polymorphism, interfaces), module system, standard library summary, mutable state (refs/TVars/STM), error handling patterns, and package management.
 
 ---
 

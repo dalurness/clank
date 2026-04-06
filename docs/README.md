@@ -47,7 +47,7 @@ These documents describe the design and specification of Clank language features
 ## For Agents
 
 If you are an AI agent learning Clank, read these files in order:
-1. **[../SPEC.md](../SPEC.md)** — Complete language specification (~2500 tokens)
+1. **[../SPEC.md](../SPEC.md)** — Complete language specification (~3500 tokens)
 2. **[stdlib-catalog.md](stdlib-catalog.md)** — Standard library reference (check implementation status table at top)
 3. **[canonical-examples.md](canonical-examples.md)** — Example programs
 

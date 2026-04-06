@@ -1,4 +1,4 @@
-# Clank Language Specification v1.1
+# Clank Language Specification
 
 Clank is a strongly-typed, applicative-primary language designed for AI agent authorship. Pipeline syntax (`|>`) provides left-to-right composition sugar. All tokens are ASCII. Algebraic effects provide extensible control flow. Execution is via bytecode compiler + stack VM.
 
@@ -200,6 +200,83 @@ Each `spawn` launches a real goroutine — spawned tasks run in parallel. This m
 | `shield` | `(() -> a) -> <async> a` | Cancellation protection |
 | `http.set-timeout` | `Int -> <io> ()` | Set HTTP timeout in ms (default: 30000) |
 
+### Mutable State (Refs & TVars)
+
+Refs are mutable reference cells. TVars are transactional variables for STM.
+
+| Function | Signature | Purpose |
+|----------|-----------|---------|
+| `ref-new` | `a -> Ref[a]` | Create mutable ref |
+| `ref-read` | `Ref[a] -> a` | Read current value |
+| `ref-write` | `(Ref[a], a) -> ()` | Overwrite value |
+| `ref-cas` | `(Ref[a], a, a) -> (Bool, a)` | Compare-and-swap: if current == expected, set new; returns (success, old) |
+| `ref-modify` | `(Ref[a], (a) -> a) -> a` | Apply function to ref value, return new value |
+| `ref-close` | `Ref[a] -> ()` | Close ref (affine cleanup) |
+| `ref-swap` | `(Ref[a], a) -> a` | Swap value, return old |
+| `tvar-new` | `a -> TVar[a]` | Create transactional variable |
+| `tvar-read` | `TVar[a] -> a` | Read (inside `atomically`) |
+| `tvar-write` | `(TVar[a], a) -> ()` | Write (inside `atomically`) |
+| `tvar-take` | `TVar[a] -> a` | Take value (empties cell) |
+| `tvar-put` | `(TVar[a], a) -> ()` | Put value (cell must be empty) |
+| `atomically` | `(() -> a) -> a` | Run STM transaction |
+| `or-else` | `(() -> a, () -> a) -> a` | Try first, fall back to second on `retry()` |
+| `retry` | `() -> a` | Abort current STM branch |
+
+### Common Types
+
+`Option` and `Ordering` are used by many builtins but must be declared in your program if you pattern match on them:
+
+```
+type Option<a> = Some(a) | None
+type Ordering = Lt | Eq_ | Gt
+```
+
+Functions that return `Option`: `json.get`, `env.get`, `col.nth`, `col.find`, `iter.find`, `iter.first`, `iter.last`, `iter.nth`, `iter.min`, `iter.max`, `str.int`, `str.rat`, `cli.get`, `cli.pos`, `try-recv`.
+
+### Error Handling
+
+Clank uses algebraic effects for errors, not try/catch. The `raise` effect propagates errors; `handle` blocks catch them:
+
+```
+# Safe division — returns Option
+safe-div : (Int, Int) -> <> Option<Int> =
+  fn(n, d) =>
+    handle div(n, d) {
+      return x => Some(x)
+      raise _ resume _ => None
+    }
+
+# HTTP with error recovery
+fetch : (Str) -> <io> Str =
+  fn(url) =>
+    handle http.get(url) {
+      return resp => resp.body
+      raise msg resume _ => "error: " ++ msg
+    }
+```
+
+### Package Management
+
+Packages are declared in `clank.pkg` at the project root:
+
+```
+[package]
+name = my-project
+version = 0.1.0
+
+[deps]
+utils = { github = "user/clank-utils", version = ">=1.0.0" }
+local-lib = { path = "../lib" }
+```
+
+Commands: `clank pkg init`, `clank pkg add <name>`, `clank pkg remove <name>`, `clank pkg resolve`, `clank pkg verify`.
+
+Dependencies are resolved from GitHub repositories or local paths. Use imported packages with `use`:
+
+```
+use utils.helpers (format-date, parse-url)
+```
+
 ## 6. CLI
 
 ```bash
@@ -239,3 +316,7 @@ main : () -> <io> () =
     None => print("no name found")
   }
 ```
+
+## 8. Contributing
+
+If you encounter a bug, missing feature, or have an improvement to suggest for the Clank language, you are encouraged to implement the fix or feature yourself and open a pull request at https://github.com/dalurness/clank. Include tests for any new functionality. The codebase is Go — see `internal/` for the compiler and VM, and `test/` for integration tests.

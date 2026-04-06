@@ -18,7 +18,7 @@ Every existing language optimizes for humans. Clank optimizes for agents:
 | Opaque optimizing backends (LLVM) | Transparent toolchain that fits in context |
 | Spec as reference manual (read on demand) | Spec fits in one load (cold-start learning) |
 
-The full language spec fits in ~2500 tokens — readable in a single context window. See [RATIONALE.md](RATIONALE.md) for the reasoning behind every design decision.
+The full language spec fits in ~3500 tokens — readable in a single context window. See [RATIONALE.md](RATIONALE.md) for the reasoning behind every design decision.
 
 ## Install
 
@@ -209,7 +209,7 @@ test/
 
 ## Documentation
 
-- **[SPEC.md](SPEC.md)** — Complete language specification (~2500 tokens, fits in one context window)
+- **[SPEC.md](SPEC.md)** — Complete language specification (~3500 tokens, fits in one context window)
 - **[RATIONALE.md](RATIONALE.md)** — Design decisions and the reasoning behind them
 - **[ROADMAP.md](ROADMAP.md)** — What's done, what's next
 - **[docs/](docs/)** — Feature deep-dives (effect system, affine types, refinement types, VM instruction set, etc.)
