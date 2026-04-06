@@ -241,4 +241,4 @@ The Go implementation is the sole active codebase. Architecture: bytecode compil
 
 ## License
 
-Private — see package.json.
+MIT — see [LICENSE](LICENSE).
