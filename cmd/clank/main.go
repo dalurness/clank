@@ -38,11 +38,14 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [--pretty] [command] [flags] <file.clk>\n\n")
+	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [--pretty] [command] [flags] <file.clk>\n")
+	fmt.Fprintf(os.Stderr, "       clank run -e '<code>'          Run inline code\n")
+	fmt.Fprintf(os.Stderr, "       clank eval '<expr>'            Evaluate an expression\n")
+	fmt.Fprintf(os.Stderr, "       clank eval -f <file.clk>       Evaluate a file\n\n")
 	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  run         Run a program (default)\n")
-	fmt.Fprintf(os.Stderr, "  check       Type-check a program\n")
-	fmt.Fprintf(os.Stderr, "  eval        Evaluate and print the result\n")
+	fmt.Fprintf(os.Stderr, "  run         Run a program (default). Use -e for inline code\n")
+	fmt.Fprintf(os.Stderr, "  check       Type-check a program. Use -e for inline code\n")
+	fmt.Fprintf(os.Stderr, "  eval        Evaluate an expression and print the result\n")
 	fmt.Fprintf(os.Stderr, "  fmt         Format source code\n")
 	fmt.Fprintf(os.Stderr, "  lint        Lint source code\n")
 	fmt.Fprintf(os.Stderr, "  doc         Search and view documentation\n")
@@ -82,6 +85,8 @@ func run() int {
 	prettyMode := false
 	command := "run"
 	var file string
+	var inlineCode string
+	var evalFile string
 	var ruleFlags []string
 
 	var positional []string
@@ -93,6 +98,24 @@ func run() int {
 			checkMode = true
 		case "--stdin":
 			stdinMode = true
+		case "-e":
+			if i+1 < len(rawArgs) {
+				inlineCode = rawArgs[i+1]
+				i++
+			} else {
+				fmt.Fprintf(os.Stderr, "error: -e requires a code argument\n")
+				return 1
+			}
+			continue
+		case "-f":
+			if i+1 < len(rawArgs) {
+				evalFile = rawArgs[i+1]
+				i++
+			} else {
+				fmt.Fprintf(os.Stderr, "error: -f requires a file argument\n")
+				return 1
+			}
+			continue
 		case "--rule", "--filter", "--name", "--entry", "--path", "--version", "--github":
 			if i+1 < len(rawArgs) {
 				if rawArgs[i] == "--rule" {
@@ -116,43 +139,84 @@ func run() int {
 		}
 	}
 
-	if len(positional) == 0 {
+	if len(positional) == 0 && inlineCode == "" && evalFile == "" {
 		usage()
 		return 1
 	}
 
-	// Commands that handle their own file loading
-	switch positional[0] {
-	case "doc":
-		return cmdDoc(positional[1:], jsonOut, rawArgs)
-	case "test":
-		return cmdTest(positional[1:], jsonOut, rawArgs)
-	case "pkg":
-		return cmdPkg(positional[1:], jsonOut, rawArgs)
-	case "spec":
-		return cmdSpec()
-	}
+	// Determine which command we're running
+	if len(positional) > 0 {
+		switch positional[0] {
+		// Commands that handle their own file loading
+		case "doc":
+			return cmdDoc(positional[1:], jsonOut, rawArgs)
+		case "test":
+			return cmdTest(positional[1:], jsonOut, rawArgs)
+		case "pkg":
+			return cmdPkg(positional[1:], jsonOut, rawArgs)
+		case "spec":
+			return cmdSpec()
 
-	// Determine command and file
-	switch positional[0] {
-	case "run", "check", "eval", "fmt", "lint", "pretty", "terse":
-		command = positional[0]
-		if (command == "fmt" || command == "pretty" || command == "terse") && stdinMode {
-			// fmt/pretty/terse --stdin: no file arg needed
-		} else if len(positional) < 2 {
-			fmt.Fprintf(os.Stderr, "error: %s requires a file argument\n", command)
-			return 1
-		} else {
-			file = positional[1]
+		case "eval":
+			command = "eval"
+			// eval: remaining positional args are the expression (unless -f is used)
+			if evalFile == "" && inlineCode == "" {
+				if len(positional) < 2 {
+					fmt.Fprintf(os.Stderr, "error: eval requires an expression or -f <file>\n")
+					return 1
+				}
+				inlineCode = strings.Join(positional[1:], " ")
+			}
+
+		case "run", "check":
+			command = positional[0]
+			if inlineCode != "" {
+				// -e flag provides the source
+			} else if len(positional) < 2 {
+				fmt.Fprintf(os.Stderr, "error: %s requires a file argument or -e '<code>'\n", command)
+				return 1
+			} else {
+				file = positional[1]
+			}
+
+		case "fmt", "lint", "pretty", "terse":
+			command = positional[0]
+			if (command == "fmt" || command == "pretty" || command == "terse") && stdinMode {
+				// fmt/pretty/terse --stdin: no file arg needed
+			} else if len(positional) < 2 {
+				fmt.Fprintf(os.Stderr, "error: %s requires a file argument\n", command)
+				return 1
+			} else {
+				file = positional[1]
+			}
+
+		default:
+			// No command specified — default to "run" with file
+			file = positional[0]
 		}
-	default:
-		file = positional[0]
+	} else if inlineCode != "" {
+		// clank -e '<code>' — defaults to run
+		command = "run"
+	} else if evalFile != "" {
+		// clank -f <file> — defaults to eval
+		command = "eval"
 	}
 
-	// Read source file (or stdin)
+	// -f is only valid with eval
+	if evalFile != "" && command != "eval" {
+		fmt.Fprintf(os.Stderr, "error: -f can only be used with eval\n")
+		return 1
+	}
+
+	// Read source: inline code, eval file (-f), stdin (--stdin), or file
 	var source []byte
 	var err error
-	if stdinMode && file == "" {
+	if inlineCode != "" {
+		source = []byte(inlineCode)
+	} else if evalFile != "" {
+		source, err = os.ReadFile(evalFile)
+		file = evalFile
+	} else if stdinMode && file == "" {
 		source, err = io.ReadAll(os.Stdin)
 	} else {
 		source, err = os.ReadFile(file)
@@ -162,6 +226,11 @@ func run() int {
 			Stage:   "io",
 			Message: err.Error(),
 		})
+	}
+
+	// eval: wrap bare expressions in a main function
+	if command == "eval" {
+		source = []byte(wrapExprSource(string(source)))
 	}
 
 	// Pretty/terse operate on raw source — dispatch before lex/parse
@@ -180,6 +249,8 @@ func run() int {
 	if file != "" {
 		absPath, _ := filepath.Abs(file)
 		baseDir = filepath.Dir(absPath)
+	} else {
+		baseDir, _ = os.Getwd()
 	}
 
 	// Lex
@@ -393,6 +464,30 @@ func cmdCheck(program *ast.Program, baseDir string, jsonOut bool) int {
 		}
 	}
 	return 1
+}
+
+// wrapExprSource wraps a bare expression in a main function for eval.
+// If the source already contains a top-level definition (has ':' before '='),
+// it is returned as-is.
+func wrapExprSource(source string) string {
+	// Quick heuristic: if the source contains a top-level type signature
+	// (ident ':' ... '='), it's already a full program.
+	trimmed := strings.TrimSpace(source)
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Check if first non-comment line looks like a definition (has ':' before '=')
+		colonIdx := strings.Index(line, ":")
+		eqIdx := strings.Index(line, "=")
+		if colonIdx > 0 && (eqIdx < 0 || colonIdx < eqIdx) {
+			return source // already a full program
+		}
+		break
+	}
+	// Wrap the expression as the body of main. cmdEval will print the result.
+	return fmt.Sprintf("main : () -> <> auto = %s", trimmed)
 }
 
 // cmdEval compiles, links, and runs the program, printing the final result value.
