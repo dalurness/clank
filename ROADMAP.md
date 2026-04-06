@@ -112,8 +112,7 @@ Clank is implemented in Go. The execution model is: source → lexer → parser 
 
 ### Near Term
 1. **Agent workflow examples** — End-to-end demos: fetch API → parse → transform → write, CSV pipeline, HTTP server bot
-2. **`ref-cas` / `ref-modify`** — Complete the ref cell API
-3. **Package discovery** — Website where agents can find community packages
+2. **Package discovery** — Website where agents can find community packages
 
 ### Medium Term
 4. **Workspace orchestration** — Multi-package projects with parallel builds
