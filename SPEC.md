@@ -154,7 +154,7 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 | Arithmetic | `add`, `sub`, `mul`, `div`, `mod`, `negate` |
 | Comparison | `eq`, `neq`, `lt`, `gt`, `lte`, `gte` |
 | Logic | `and`, `or`, `not` |
-| Strings | `str.cat`, `show`, `print`, `split`, `join`, `trim` |
+| Strings | `str.cat`, `show`, `print`, `split`, `join`, `trim`, `str.get`, `str.slc`, `str.has`, `str.idx`, `str.ridx`, `str.pfx`, `str.sfx`, `str.up`, `str.lo`, `str.rep`, `str.rep1`, `str.pad`, `str.lpad`, `str.rev`, `str.lines`, `str.words`, `str.chars`, `str.int`, `str.rat` |
 | Lists | `len`, `head`, `tail`, `cons`, `cat`, `rev`, `get`, `map`, `filter`, `fold`, `flat-map`, `range`, `zip` |
 | Tuples | `fst`, `snd`, `tuple.get` |
 | Concat | `concat` (`++` operator — works on strings and lists) |
@@ -172,6 +172,14 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 | `http` | `http.get`, `http.post`, `http.put`, `http.del`, `http.set-timeout` | HTTP client |
 | `rx` | `rx.ok`, `rx.find`, `rx.replace`, `rx.split` | Regex |
 | `math` | `math.abs`, `math.min`, `math.max`, `math.floor`, `math.ceil`, `math.sqrt` | Math |
+| `col` | `col.rev`, `col.sort`, `col.sortby`, `col.uniq`, `col.zip`, `col.unzip`, `col.flat`, `col.flatmap`, `col.take`, `col.drop`, `col.nth`, `col.find`, `col.any`, `col.all`, `col.count`, `col.enum`, `col.chunk`, `col.win`, `col.intersperse`, `col.rep`, `col.sum`, `col.prod`, `col.min`, `col.max`, `col.group`, `col.scan` | Collection operations |
+| `iter` | `iter.of`, `iter.range`, `iter.collect`, `iter.map`, `iter.filter`, `iter.take`, `iter.drop`, `iter.fold`, `iter.count`, `iter.sum`, `iter.any`, `iter.all`, `iter.find`, `iter.each`, `iter.drain`, `iter.enumerate`, `iter.chain`, `iter.zip`, `iter.take-while`, `iter.drop-while`, `iter.flatmap`, `iter.first`, `iter.last`, `iter.join`, `iter.repeat`, `iter.once`, `iter.empty`, `iter.unfold`, `iter.scan`, `iter.dedup`, `iter.chunk`, `iter.window`, `iter.intersperse`, `iter.cycle`, `iter.nth`, `iter.min`, `iter.max`, `iter.generate` | Lazy iterators |
+| `dt` | `dt.now`, `dt.unix`, `dt.from`, `dt.to`, `dt.parse`, `dt.fmt`, `dt.add`, `dt.sub`, `dt.tz`, `dt.iso`, `dt.ms`, `dt.sec`, `dt.min`, `dt.hr`, `dt.day` | Date/time |
+| `csv` | `csv.dec`, `csv.enc`, `csv.decf`, `csv.encf`, `csv.hdr`, `csv.rows`, `csv.maps`, `csv.opts` | CSV encode/decode |
+| `log` | `log.trace`, `log.debug`, `log.info`, `log.warn`, `log.error`, `log.level`, `log.ctx`, `log.json` | Structured logging (stderr) |
+| `cli` | `cli.args`, `cli.parse`, `cli.opt`, `cli.req`, `cli.def`, `cli.get`, `cli.flag`, `cli.pos` | CLI argument parsing |
+| `srv` | `srv.new`, `srv.get`, `srv.post`, `srv.put`, `srv.del`, `srv.start`, `srv.stop`, `srv.res`, `srv.json`, `srv.hdr`, `srv.mw` | HTTP server |
+| streaming | `fs.stream-lines`, `http.stream-lines`, `proc.stream`, `io.stdin-lines` | Lazy line iterators |
 
 ### Async & Concurrency
 

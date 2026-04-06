@@ -282,6 +282,33 @@ func builtinRegistry() []BuiltinEntry {
 		{"math.ceil", fn(tAny, tInt), "Ceiling (round up to integer)"},
 		{"math.sqrt", fn(tAny, tAny), "Square root (returns Rat)"},
 
+		// Streaming I/O
+		{"fs.stream-lines", fn(tStr, tAny), "Stream file lines as lazy iterator"},
+		{"http.stream-lines", fn(tStr, tAny), "Stream HTTP response lines as lazy iterator"},
+		{"proc.stream", fn(tStr, tAny), "Stream process stdout lines as lazy iterator"},
+		{"io.stdin-lines", fn(tUnit, tAny), "Stream stdin lines as lazy iterator"},
+
+		// String operations
+		{"str.get", fn(tStr, fn(tInt, tStr)), "Get character at index"},
+		{"str.slc", fn(tStr, fn(tInt, fn(tInt, tStr))), "Substring from start to end index"},
+		{"str.has", fn(tStr, fn(tStr, tBool)), "Check if string contains substring"},
+		{"str.idx", fn(tStr, fn(tStr, tInt)), "First index of substring (-1 if not found)"},
+		{"str.ridx", fn(tStr, fn(tStr, tInt)), "Last index of substring (-1 if not found)"},
+		{"str.pfx", fn(tStr, fn(tStr, tBool)), "Check if string starts with prefix"},
+		{"str.sfx", fn(tStr, fn(tStr, tBool)), "Check if string ends with suffix"},
+		{"str.up", fn(tStr, tStr), "Convert to uppercase"},
+		{"str.lo", fn(tStr, tStr), "Convert to lowercase"},
+		{"str.rep", fn(tStr, fn(tStr, fn(tStr, tStr))), "Replace all occurrences (string, old, new)"},
+		{"str.rep1", fn(tStr, fn(tStr, fn(tStr, tStr))), "Replace first occurrence (string, old, new)"},
+		{"str.pad", fn(tStr, fn(tInt, fn(tStr, tStr))), "Pad right to width with char"},
+		{"str.lpad", fn(tStr, fn(tInt, fn(tStr, tStr))), "Pad left to width with char"},
+		{"str.rev", fn(tStr, tStr), "Reverse string"},
+		{"str.lines", fn(tStr, tAnyList), "Split into lines"},
+		{"str.words", fn(tStr, tAnyList), "Split into words (whitespace-separated)"},
+		{"str.chars", fn(tStr, tAnyList), "Split into individual characters"},
+		{"str.int", fn(tStr, tAny), "Parse integer, returns Option[Int]"},
+		{"str.rat", fn(tStr, tAny), "Parse float, returns Option[Rat]"},
+
 		// HTTP Server
 		{"srv.new", fn(tUnit, tAny), "Create empty route table"},
 		{"srv.get", fn(tAny, fn(tStr, fn(tAny, tAny))), "Add GET route handler"},

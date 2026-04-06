@@ -1,0 +1,21 @@
+# Test: streaming I/O
+# Expected output:
+# 3
+# hello
+# world
+# bye
+
+main : () -> <io> () =
+  # Write a test file
+  let _ = fs.write("_test_stream.txt", "hello\nworld\nbye")
+
+  # Stream lines and count them
+  let count = fs.stream-lines("_test_stream.txt") |> iter.count
+  let _ = print(show(count))
+
+  # Stream lines and print each
+  let lines = fs.stream-lines("_test_stream.txt")
+  let _ = iter.each(lines, fn(line) => print(line))
+
+  # Cleanup
+  fs.rm("_test_stream.txt")

@@ -223,14 +223,14 @@ The Go implementation is the sole active codebase. Architecture: bytecode compil
 - Interfaces with `deriving` (Show, Eq, Ord, Clone, Default, From, Into)
 - Software transactional memory (atomically/or-else)
 - Async: spawn, await, task groups, cancellation, channels
-- Standard library: fs, json, env, proc, http, rx, math
+- Standard library: fs, json, env, proc, http, rx, math, str (19 string ops)
+- Extended stdlib: col (26 collection ops), iter (38 lazy iterator combinators), dt, csv, log, cli, srv (HTTP server)
+- Streaming I/O: fs.stream-lines, http.stream-lines, proc.stream, io.stdin-lines
 - Package manager with manifest and lockfile
 - CLI tooling with structured JSON diagnostics
 
-**Specced but not yet implemented:**
+**Not yet implemented:**
 - WASM compilation backend
-- Full effect row unification (effects checked as flat sets currently)
-- Tier 2 stdlib: srv (HTTP server), cli (arg parsing), dt (datetime), csv, log
 - `pkg search`, `pkg publish`, registry protocol
 
 ## License

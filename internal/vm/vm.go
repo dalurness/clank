@@ -3,6 +3,7 @@ package vm
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 	"sync"
@@ -77,7 +78,8 @@ type VM struct {
 	logJSON    bool              // JSON output mode; default true
 
 	// Testing overrides
-	testArgs []string // if non-nil, cli.args uses this instead of os.Args
+	testArgs  []string   // if non-nil, cli.args uses this instead of os.Args
+	testStdin io.Reader  // if non-nil, io.stdin-lines reads from this
 
 	// I/O capture (for testing)
 	Stdout []string
@@ -1288,7 +1290,7 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 func (vm *VM) doCall(wordID int) error {
 	target, ok := vm.wordMap[wordID]
 	if !ok {
-		if wordID < 400 {
+		if wordID < 450 {
 			return vm.dispatchBuiltin(wordID)
 		}
 		return vm.trap("E010", fmt.Sprintf("CALL: word ID %d not found", wordID))
@@ -1323,7 +1325,7 @@ func (vm *VM) doReturn() {
 func (vm *VM) doTailCall(wordID int) error {
 	target, ok := vm.wordMap[wordID]
 	if !ok {
-		if wordID < 400 {
+		if wordID < 450 {
 			if err := vm.dispatchBuiltin(wordID); err != nil {
 				return err
 			}
@@ -1884,6 +1886,56 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinLogCtx()
 	case 317: // log.json
 		return vm.builtinLogJSON()
+
+	// Streaming I/O
+	case 190: // fs.stream-lines
+		return vm.builtinFsStreamLines()
+	case 191: // http.stream-lines
+		return vm.builtinHttpStreamLines()
+	case 192: // proc.stream
+		return vm.builtinProcStream()
+	case 193: // io.stdin-lines
+		return vm.builtinStdinLines()
+
+	// String operations
+	case 350: // str.get
+		return vm.builtinStrGet()
+	case 351: // str.slc
+		return vm.builtinStrSlc()
+	case 352: // str.has
+		return vm.builtinStrHas()
+	case 353: // str.idx
+		return vm.builtinStrIdx()
+	case 354: // str.ridx
+		return vm.builtinStrRIdx()
+	case 355: // str.pfx
+		return vm.builtinStrPfx()
+	case 356: // str.sfx
+		return vm.builtinStrSfx()
+	case 357: // str.up
+		return vm.builtinStrUp()
+	case 358: // str.lo
+		return vm.builtinStrLo()
+	case 359: // str.rep
+		return vm.builtinStrRep()
+	case 360: // str.rep1
+		return vm.builtinStrRep1()
+	case 361: // str.pad
+		return vm.builtinStrPad()
+	case 362: // str.lpad
+		return vm.builtinStrLPad()
+	case 363: // str.rev
+		return vm.builtinStrRev()
+	case 364: // str.lines
+		return vm.builtinStrLines()
+	case 365: // str.words
+		return vm.builtinStrWords()
+	case 366: // str.chars
+		return vm.builtinStrChars()
+	case 367: // str.int
+		return vm.builtinStrInt()
+	case 368: // str.rat
+		return vm.builtinStrRat()
 
 	// Collections (std.col)
 	case 320: // col.rev

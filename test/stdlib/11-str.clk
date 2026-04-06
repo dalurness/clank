@@ -1,0 +1,67 @@
+# Test: string operations
+# Expected output:
+# e
+# ello
+# true
+# false
+# 1
+# true
+# false
+# HELLO
+# hello
+# h-llo world
+# [hello, world]
+# [hello, world]
+# [h, e, l, l, o]
+# olleh
+# 42
+# true
+
+main : () -> <io> () =
+  # str.get
+  let _ = print(str.get("hello", 1))
+
+  # str.slc
+  let _ = print(str.slc("hello world", 1, 5))
+
+  # str.has
+  let _ = print(show(str.has("hello world", "world")))
+  let _ = print(show(str.has("hello world", "xyz")))
+
+  # str.idx
+  let _ = print(show(str.idx("hello", "ello")))
+
+  # str.pfx / str.sfx
+  let _ = print(show(str.pfx("hello", "hel")))
+  let _ = print(show(str.sfx("hello", "xyz")))
+
+  # str.up / str.lo
+  let _ = print(str.up("hello"))
+  let _ = print(str.lo("HELLO"))
+
+  # str.rep
+  let _ = print(str.rep("hello world", "e", "-"))
+
+  # str.lines / str.words
+  let _ = print(show(str.lines("hello\nworld")))
+  let _ = print(show(str.words("  hello   world  ")))
+
+  # str.chars
+  let _ = print(show(str.chars("hello")))
+
+  # str.rev
+  let _ = print(str.rev("hello"))
+
+  # str.int
+  let parsed = str.int("42")
+  let _ = match parsed {
+    Some(n) => print(show(n))
+    None => print("failed")
+  }
+
+  # str.rat
+  let parsedR = str.rat("3.14")
+  match parsedR {
+    Some(_) => print("true")
+    None => print("false")
+  }

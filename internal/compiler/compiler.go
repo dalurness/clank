@@ -103,6 +103,12 @@ var vmBuiltins = map[string]int{
 	// Logging
 	"log.trace": 310, "log.debug": 311, "log.info": 312, "log.warn": 313,
 	"log.error": 314, "log.level": 315, "log.ctx": 316, "log.json": 317,
+	// String operations
+	"str.get": 350, "str.slc": 351, "str.has": 352, "str.idx": 353,
+	"str.ridx": 354, "str.pfx": 355, "str.sfx": 356, "str.up": 357,
+	"str.lo": 358, "str.rep": 359, "str.rep1": 360, "str.pad": 361,
+	"str.lpad": 362, "str.rev": 363, "str.lines": 364, "str.words": 365,
+	"str.chars": 366, "str.int": 367, "str.rat": 368,
 	// Collections
 	"col.rev": 320, "col.sort": 321, "col.sortby": 322, "col.uniq": 323,
 	"col.zip": 324, "col.unzip": 325, "col.flat": 326, "col.flatmap": 327,
@@ -226,7 +232,7 @@ func NewCompiler() *Compiler {
 		stringIndex:          make(map[string]int),
 		rationalIdx:          make(map[float64]int),
 		wordIDs:              make(map[string]int),
-		nextWordID:           400,
+		nextWordID:           450,
 		resumeVars:           make(map[string]int),
 		variantInfos:         make(map[string]variantInfo),
 		effectOps:            make(map[string]int),

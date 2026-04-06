@@ -3232,6 +3232,33 @@ func registerBuiltins(env *typeEnv) {
 	env.set("math.ceil", NewTFn(TAny, TInt))
 	env.set("math.sqrt", NewTFn(TAny, TAny))
 
+	// Streaming I/O
+	env.set("fs.stream-lines", NewTFn(TStr, TAny))
+	env.set("http.stream-lines", NewTFn(TStr, TAny))
+	env.set("proc.stream", NewTFn(TStr, TAny))
+	env.set("io.stdin-lines", NewTFn(TUnit, TAny))
+
+	// String operations
+	env.set("str.get", NewTFn(TStr, NewTFn(TInt, TStr)))
+	env.set("str.slc", NewTFn(TStr, NewTFn(TInt, NewTFn(TInt, TStr))))
+	env.set("str.has", NewTFn(TStr, NewTFn(TStr, TBool)))
+	env.set("str.idx", NewTFn(TStr, NewTFn(TStr, TInt)))
+	env.set("str.ridx", NewTFn(TStr, NewTFn(TStr, TInt)))
+	env.set("str.pfx", NewTFn(TStr, NewTFn(TStr, TBool)))
+	env.set("str.sfx", NewTFn(TStr, NewTFn(TStr, TBool)))
+	env.set("str.up", NewTFn(TStr, TStr))
+	env.set("str.lo", NewTFn(TStr, TStr))
+	env.set("str.rep", NewTFn(TStr, NewTFn(TStr, NewTFn(TStr, TStr))))
+	env.set("str.rep1", NewTFn(TStr, NewTFn(TStr, NewTFn(TStr, TStr))))
+	env.set("str.pad", NewTFn(TStr, NewTFn(TInt, NewTFn(TStr, TStr))))
+	env.set("str.lpad", NewTFn(TStr, NewTFn(TInt, NewTFn(TStr, TStr))))
+	env.set("str.rev", NewTFn(TStr, TStr))
+	env.set("str.lines", NewTFn(TStr, TList{Element: TStr}))
+	env.set("str.words", NewTFn(TStr, TList{Element: TStr}))
+	env.set("str.chars", NewTFn(TStr, TList{Element: TStr}))
+	env.set("str.int", NewTFn(TStr, TAny))
+	env.set("str.rat", NewTFn(TStr, TAny))
+
 	// HTTP Server (std.srv)
 	env.set("srv.new", NewTFn(TUnit, TAny))
 	env.set("srv.get", NewTFn(TAny, NewTFn(TStr, NewTFn(TAny, TAny))))
