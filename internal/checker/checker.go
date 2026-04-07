@@ -2700,12 +2700,33 @@ func (s *checkerState) inferExpr(
 		return TTuple{Elements: elems}
 
 	case ast.ExprHandle:
-		s.inferExpr(e.Expr, env, errors, registry, aff)
+		exprType := s.inferExpr(e.Expr, env, errors, registry, aff)
 		resultType := TAny
 		for _, arm := range e.Arms {
 			armEnv := env.extend()
-			for _, p := range arm.Params {
-				armEnv.set(p.Name, TAny)
+			if arm.Name == "return" {
+				// The return arm's parameter receives the handled expression's result
+				for _, p := range arm.Params {
+					armEnv.set(p.Name, exprType)
+				}
+			} else {
+				// Effect operation arm — look up operation type from env
+				opType, found := env.get(arm.Name)
+				if found {
+					cur := opType
+					for _, p := range arm.Params {
+						if f, ok := cur.(TFn); ok {
+							armEnv.set(p.Name, f.Param)
+							cur = f.Result
+						} else {
+							armEnv.set(p.Name, TAny)
+						}
+					}
+				} else {
+					for _, p := range arm.Params {
+						armEnv.set(p.Name, TAny)
+					}
+				}
 			}
 			if arm.ResumeName != "" {
 				armEnv.set(arm.ResumeName, NewTFn(TAny, TAny))
@@ -3843,15 +3864,40 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 					}
 				}
 			}
+			// Build type var mapping for parameterized types
+			var varMapping map[string]Type
+			var schemeVarIDs []int
+			var typeVarArgs []Type
+			if len(d.TypeParams) > 0 {
+				varMapping = make(map[string]Type, len(d.TypeParams))
+				for _, tp := range d.TypeParams {
+					id := FreshVar()
+					schemeVarIDs = append(schemeVarIDs, id)
+					tv := TVar{ID: id}
+					varMapping[tp] = tv
+					typeVarArgs = append(typeVarArgs, tv)
+				}
+			}
 			for _, v := range d.Variants {
+				retType := TGeneric{Name: d.Name, Args: typeVarArgs}
 				if len(v.Fields) == 0 {
-					env.set(v.Name, TGeneric{Name: d.Name})
+					env.set(v.Name, Type(retType))
+					if len(schemeVarIDs) > 0 {
+						env.setScheme(v.Name, TypeScheme{TypeVars: schemeVarIDs, Body: Type(retType)})
+					}
 				} else {
-					var ct Type = TGeneric{Name: d.Name}
+					var ct Type = retType
 					for i := len(v.Fields) - 1; i >= 0; i-- {
-						ct = NewTFn(resolveType(v.Fields[i], s), ct)
+						if varMapping != nil {
+							ct = NewTFn(resolveTypeWithVars(v.Fields[i], varMapping, s), ct)
+						} else {
+							ct = NewTFn(resolveType(v.Fields[i], s), ct)
+						}
 					}
 					env.set(v.Name, ct)
+					if len(schemeVarIDs) > 0 {
+						env.setScheme(v.Name, TypeScheme{TypeVars: schemeVarIDs, Body: ct})
+					}
 				}
 			}
 			if len(d.Deriving) > 0 {
