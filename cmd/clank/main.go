@@ -24,6 +24,9 @@ import (
 	"github.com/dalurness/clank/internal/vm"
 )
 
+// Version is set at build time via -ldflags.
+var Version = "dev"
+
 // structuredError is the JSON error output format.
 type structuredError struct {
 	Stage   string `json:"stage"`
@@ -54,6 +57,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  pretty      Expand terse identifiers to verbose form\n")
 	fmt.Fprintf(os.Stderr, "  terse       Compress verbose identifiers to terse form\n")
 	fmt.Fprintf(os.Stderr, "  spec        Print the language specification\n")
+	fmt.Fprintf(os.Stderr, "  version     Print the Clank version\n")
 }
 
 // getFlagValue returns the value following a flag in args, or "" if not found.
@@ -156,6 +160,9 @@ func run() int {
 			return cmdPkg(positional[1:], jsonOut, rawArgs)
 		case "spec":
 			return cmdSpec()
+		case "version":
+			fmt.Println(Version)
+			return 0
 
 		case "eval":
 			command = "eval"

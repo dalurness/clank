@@ -42,7 +42,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -o clank-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/clank
+        run: go build -ldflags "-X main.Version=${{ github.ref_name }}" -o clank-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./cmd/clank
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
