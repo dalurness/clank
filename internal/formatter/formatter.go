@@ -146,14 +146,14 @@ func formatDefinition(d ast.TopDefinition) string {
 	sig := formatTypeSig(d.Sig)
 	header := fmt.Sprintf("%s%s : %s =", pub, d.Name, sig)
 
-	// Special case: body is a do-block
-	if do, ok := d.Body.(ast.ExprDo); ok {
-		doInline := formatDo(do, 0)
-		if !strings.Contains(doInline, "\n") && len(header)+1+len(doInline) <= 80 {
-			return header + " " + doInline
+	// Special case: body is a block
+	if blk, ok := d.Body.(ast.ExprBlock); ok {
+		blkInline := formatBlock(blk, 0)
+		if !strings.Contains(blkInline, "\n") && len(header)+1+len(blkInline) <= 80 {
+			return header + " " + blkInline
 		}
-		doStr := formatDo(do, 2)
-		return header + " " + strings.TrimLeft(doStr, " ")
+		blkStr := formatBlock(blk, 2)
+		return header + " " + strings.TrimLeft(blkStr, " ")
 	}
 
 	body := formatExprBody(d.Body, 2, true)
@@ -466,8 +466,8 @@ func formatExpr(expr ast.Expr, indent int) string {
 		return formatInfix(e, indent)
 	case ast.ExprUnary:
 		return pad + e.Op + formatExprInline(e.Operand)
-	case ast.ExprDo:
-		return formatDo(e, indent)
+	case ast.ExprBlock:
+		return formatBlock(e, indent)
 	case ast.ExprFor:
 		return formatFor(e, indent)
 	case ast.ExprHandle:
@@ -746,22 +746,14 @@ func formatInfixOperand(expr ast.Expr, parentOp string, side string) string {
 	return formatExprInline(expr)
 }
 
-func formatDo(e ast.ExprDo, indent int) string {
+func formatBlock(e ast.ExprBlock, indent int) string {
 	pad := strings.Repeat(" ", indent)
-	lines := []string{pad + "do {"}
-	for _, step := range e.Steps {
-		lines = append(lines, formatDoStep(step, indent+2))
+	lines := []string{pad + "{"}
+	for _, expr := range e.Exprs {
+		lines = append(lines, formatExpr(expr, indent+2))
 	}
 	lines = append(lines, pad+"}")
 	return strings.Join(lines, "\n")
-}
-
-func formatDoStep(step ast.DoStep, indent int) string {
-	pad := strings.Repeat(" ", indent)
-	if step.Bind != "" {
-		return pad + step.Bind + " <- " + formatExprInline(step.Expr)
-	}
-	return formatExpr(step.Expr, indent)
 }
 
 func formatFor(e ast.ExprFor, indent int) string {
@@ -876,7 +868,7 @@ func formatRecordUpdate(e ast.ExprRecordUpdate, indent int) string {
 
 func needsParens(expr ast.Expr) bool {
 	switch expr.(type) {
-	case ast.ExprPerform, ast.ExprHandle, ast.ExprIf, ast.ExprMatch, ast.ExprLet, ast.ExprDo:
+	case ast.ExprPerform, ast.ExprHandle, ast.ExprIf, ast.ExprMatch, ast.ExprLet, ast.ExprBlock:
 		return true
 	}
 	return false

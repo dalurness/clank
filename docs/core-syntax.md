@@ -129,7 +129,7 @@ op-sig      = ident ':' type-sig ;
 expr        = let-expr
             | if-expr
             | match-expr
-            | do-block
+            | block-expr
             | handle-expr
             | pipeline-expr ;
 
@@ -181,9 +181,9 @@ pattern     = ident                        (* variable binding *)
 (* ── Lambda ── *)
 lambda      = 'fn' '(' params ')' '=>' expr ;
 
-(* ── Do block: sequenced effectful operations ── *)
-do-block    = 'do' '{' { do-step } '}' ;
-do-step     = [ ident '<-' ] expr ;
+(* ── Block expression: sequenced operations ── *)
+block-expr  = '{' { block-step } '}' ;
+block-step  = [ 'let' ident '=' ] expr ;
 
 (* ── Effect handlers ── *)
 handle-expr = 'handle' expr '{' { handler-arm } '}' ;
@@ -340,19 +340,19 @@ the first argument to the right-hand function:
 Pipelines are the idiomatic replacement for concatenative word sequences.
 Use them for simple 2-5 step data transforms.
 
-### Do blocks (sequential effects)
+### Brace blocks (sequential expressions)
 
-For effectful sequences with named intermediates:
+For sequences with named intermediates:
 
 ```
-do {
-  contents <- read("config.toml")
-  config   <- parse-toml(contents)
+{
+  let contents = read("config.toml")
+  let config   = parse-toml(contents)
   config
 }
 ```
 
-Desugars to continuation-passing over the effect system.
+The block evaluates each step in order and returns the value of the last expression.
 
 ### Lambda expressions
 
@@ -480,13 +480,13 @@ evens-as-strings : (xs: [Int]) -> <> [Str] =
   xs |> filter(fn(x) => x % 2 == 0) |> map(show)
 ```
 
-### 8.9 Effectful pipeline with do-block
+### 8.9 Effectful pipeline with block
 
 ```
 use std.io (read, write, print)
 
-copy-file : (src: Str, dst: Str) -> <io, exn> () = do {
-  contents <- read(src)
+copy-file : (src: Str, dst: Str) -> <io, exn> () = {
+  let contents = read(src)
   write(dst, contents)
   print("Copied " ++ src ++ " to " ++ dst)
 }
@@ -536,7 +536,7 @@ stack, no ambiguity about arity, no stack shuffling combinators.
 
 - **Function signatures**: Named, typed parameters at definition boundaries
 - **Pattern matching**: `match` with exhaustiveness checking
-- **Do blocks**: `do { x <- expr; ... }` for effectful sequences
+- **Brace blocks**: `{ let x = expr  ... }` for sequential expressions
 - **Effect annotations**: `<io, exn>` on function types
 - **Refinement type hooks**: `Int{>= 0}`, `[T]{len > 0}`
 - **Module system**: `mod`, `use`, `pub`

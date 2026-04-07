@@ -12,7 +12,7 @@ bomb : () -> <> Bool =
   1 / 0 == 0
 
 main : () -> <io> () =
-  do {
+  {
     # && short-circuits on false: bomb() never called
     print(show(false && bomb()))
     # || short-circuits on true: bomb() never called

@@ -1,4 +1,4 @@
-# Test: do-block parsing and evaluation
+# Test: brace block parsing and evaluation
 # Expected output:
 # hello
 # world
@@ -6,17 +6,17 @@
 # 15
 
 main : () -> <io> () =
-  do {
+  {
     print("hello")
     print("world")
   }
-  do {
-    x <- 1 + 2
+  {
+    let x = 1 + 2
     print(show(x))
   }
-  do {
-    a <- 5
-    b <- 10
-    c <- a + b
+  {
+    let a = 5
+    let b = 10
+    let c = a + b
     print(show(c))
   }

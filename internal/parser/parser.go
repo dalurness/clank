@@ -900,7 +900,7 @@ func (p *parser) atBodyEnd() bool {
 // expressions like  4 + match v { ... }).
 var exprKeywords = map[string]bool{
 	"let": true, "if": true, "match": true, "for": true,
-	"do": true, "perform": true, "handle": true,
+	"perform": true, "handle": true,
 	"clone": true, "discard": true,
 }
 
@@ -916,8 +916,6 @@ func (p *parser) parseExpr() ast.Expr {
 		return p.parseMatch()
 	case p.at(token.Keyword, "for"):
 		return p.parseFor()
-	case p.at(token.Keyword, "do"):
-		return p.parseDo()
 	case p.at(token.Keyword, "perform"):
 		return p.parsePerform()
 	case p.at(token.Keyword, "handle"):
@@ -1061,32 +1059,36 @@ func (p *parser) parseMatchArmBody() ast.Expr {
 	return expr
 }
 
-// ── Do-block ──
+// ── Block expression ──
 
-func (p *parser) parseDo() ast.Expr {
-	loc := p.expect(token.Keyword, "do").Loc
-	p.expect(token.Delim, "{")
-	var steps []ast.DoStep
+// parseBlock parses a brace block: { expr1  expr2  ... }
+// The opening { has already been consumed.
+func (p *parser) parseBlock(loc token.Loc) ast.Expr {
+	var exprs []ast.Expr
 	for !p.at(token.Delim, "}") {
-		steps = append(steps, p.parseDoStep())
+		exprs = append(exprs, p.parseExpr())
 	}
 	p.expect(token.Delim, "}")
-	if len(steps) == 0 {
-		p.fail("do-block must contain at least one step")
+	if len(exprs) == 0 {
+		p.fail("block must contain at least one expression")
 	}
-	return ast.ExprDo{Steps: steps, Loc: loc}
+	return ast.ExprBlock{Exprs: exprs, Loc: loc}
 }
 
-func (p *parser) parseDoStep() ast.DoStep {
-	if p.at(token.Ident) && p.pos+1 < len(p.tokens) &&
-		p.tokens[p.pos+1].Tag == token.Op && p.tokens[p.pos+1].Value == "<-" {
-		name := p.advance().Value
-		p.advance() // consume <-
-		expr := p.parseExpr()
-		return ast.DoStep{Bind: name, Expr: expr}
+// looksLikeRecord returns true if the current position looks like the start
+// of a record literal (ident:, @tag, or ..spread) rather than a block.
+func (p *parser) looksLikeRecord() bool {
+	if p.at(token.Op, "..") {
+		return true
 	}
-	expr := p.parseExpr()
-	return ast.DoStep{Expr: expr}
+	if p.at(token.Delim, "@") {
+		return true
+	}
+	if p.at(token.Ident) && p.pos+1 < len(p.tokens) &&
+		p.tokens[p.pos+1].Tag == token.Delim && p.tokens[p.pos+1].Value == ":" {
+		return true
+	}
+	return false
 }
 
 // ── For expression ──
@@ -1563,6 +1565,10 @@ func (p *parser) parseAtom() ast.Expr {
 			}
 			p.expect(token.Delim, "}")
 			return ast.ExprRecordUpdate{Base: base, Fields: fields, Loc: t.Loc}
+		}
+		// Block expression: { expr1  expr2  ... }
+		if !p.looksLikeRecord() {
+			return p.parseBlock(t.Loc)
 		}
 		// Regular record literal
 		var fields []ast.RecordField

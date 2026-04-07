@@ -190,9 +190,9 @@ func collectRefs(expr ast.Expr, refs map[string]bool) {
 		collectRefs(e.Right, refs)
 	case ast.ExprUnary:
 		collectRefs(e.Operand, refs)
-	case ast.ExprDo:
-		for _, step := range e.Steps {
-			collectRefs(step.Expr, refs)
+	case ast.ExprBlock:
+		for _, expr := range e.Exprs {
+			collectRefs(expr, refs)
 		}
 	case ast.ExprFor:
 		collectRefs(e.Collection, refs)
@@ -318,19 +318,20 @@ func checkUnusedVars(expr ast.Expr, diags *[]LintDiagnostic) {
 		checkUnusedVars(e.Right, diags)
 	case ast.ExprUnary:
 		checkUnusedVars(e.Operand, diags)
-	case ast.ExprDo:
-		for i, step := range e.Steps {
-			checkUnusedVars(step.Expr, diags)
-			if step.Bind != "" && step.Bind != "_" {
+	case ast.ExprBlock:
+		for i, expr := range e.Exprs {
+			checkUnusedVars(expr, diags)
+			// Check for unused let bindings (body-less lets in block context)
+			if letExpr, ok := expr.(ast.ExprLet); ok && letExpr.Body == nil && letExpr.Name != "_" {
 				refs := make(map[string]bool)
-				for j := i + 1; j < len(e.Steps); j++ {
-					collectRefs(e.Steps[j].Expr, refs)
+				for j := i + 1; j < len(e.Exprs); j++ {
+					collectRefs(e.Exprs[j], refs)
 				}
-				if !refs[step.Bind] {
+				if !refs[letExpr.Name] {
 					*diags = append(*diags, LintDiagnostic{
 						Code:     "W100",
-						Message:  fmt.Sprintf("unused variable '%s'", step.Bind),
-						Location: step.Expr.ExprLoc(),
+						Message:  fmt.Sprintf("unused variable '%s'", letExpr.Name),
+						Location: letExpr.Loc,
 					})
 				}
 			}
@@ -544,21 +545,10 @@ func checkShadowedBindings(expr ast.Expr, scope map[string]bool, diags *[]LintDi
 		checkShadowedBindings(e.Right, scope, diags)
 	case ast.ExprUnary:
 		checkShadowedBindings(e.Operand, scope, diags)
-	case ast.ExprDo:
-		doScope := copySet(scope)
-		for _, step := range e.Steps {
-			checkShadowedBindings(step.Expr, doScope, diags)
-			if step.Bind != "" && step.Bind != "_" {
-				if doScope[step.Bind] {
-					*diags = append(*diags, LintDiagnostic{
-						Code:     "W102",
-						Message:  fmt.Sprintf("'%s' shadows an existing binding", step.Bind),
-						Location: step.Expr.ExprLoc(),
-					})
-				}
-				doScope = copySet(doScope)
-				doScope[step.Bind] = true
-			}
+	case ast.ExprBlock:
+		blockScope := copySet(scope)
+		for _, expr := range e.Exprs {
+			checkShadowedBindings(expr, blockScope, diags)
 		}
 	case ast.ExprFor:
 		checkShadowedBindings(e.Collection, scope, diags)
@@ -704,9 +694,9 @@ func checkUnreachableArms(expr ast.Expr, diags *[]LintDiagnostic) {
 		checkUnreachableArms(e.Right, diags)
 	case ast.ExprUnary:
 		checkUnreachableArms(e.Operand, diags)
-	case ast.ExprDo:
-		for _, step := range e.Steps {
-			checkUnreachableArms(step.Expr, diags)
+	case ast.ExprBlock:
+		for _, expr := range e.Exprs {
+			checkUnreachableArms(expr, diags)
 		}
 	case ast.ExprFor:
 		checkUnreachableArms(e.Collection, diags)
@@ -805,9 +795,9 @@ func checkEmptyHandlers(expr ast.Expr, diags *[]LintDiagnostic) {
 		checkEmptyHandlers(e.Right, diags)
 	case ast.ExprUnary:
 		checkEmptyHandlers(e.Operand, diags)
-	case ast.ExprDo:
-		for _, step := range e.Steps {
-			checkEmptyHandlers(step.Expr, diags)
+	case ast.ExprBlock:
+		for _, expr := range e.Exprs {
+			checkEmptyHandlers(expr, diags)
 		}
 	case ast.ExprFor:
 		checkEmptyHandlers(e.Collection, diags)

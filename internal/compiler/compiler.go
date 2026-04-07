@@ -637,7 +637,7 @@ func (c *Compiler) compileExpr(expr ast.Expr, e *codeEmitter, scope *localScope,
 		e.emit(OpDROP)
 		e.emit(OpPUSH_UNIT)
 
-	case ast.ExprPipeline, ast.ExprInfix, ast.ExprUnary, ast.ExprDo,
+	case ast.ExprPipeline, ast.ExprInfix, ast.ExprUnary, ast.ExprBlock,
 		ast.ExprFor, ast.ExprRange, ast.ExprLetPattern:
 		panic(fmt.Sprintf("compiler: unexpected sugared node %T — run desugar first", expr))
 

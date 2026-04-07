@@ -144,8 +144,8 @@ func Desugar(expr ast.Expr) ast.Expr {
 			Loc:  e.Loc,
 		}
 
-	case ast.ExprDo:
-		return desugarDo(e.Steps, e.Loc)
+	case ast.ExprBlock:
+		return desugarBlock(e.Exprs, e.Loc)
 
 	case ast.ExprFor:
 		return desugarFor(e)
@@ -230,41 +230,39 @@ func Desugar(expr ast.Expr) ast.Expr {
 	}
 }
 
-// desugarDo flattens do-block steps into nested let expressions.
-func desugarDo(steps []ast.DoStep, loc token.Loc) ast.Expr {
-	if len(steps) == 0 {
+// desugarBlock flattens block expressions into nested let expressions.
+func desugarBlock(exprs []ast.Expr, loc token.Loc) ast.Expr {
+	if len(exprs) == 0 {
 		return ast.ExprLiteral{Value: ast.LitUnit{}, Loc: loc}
 	}
-	if len(steps) == 1 {
-		return Desugar(steps[0].Expr)
+	if len(exprs) == 1 {
+		return Desugar(exprs[0])
 	}
-	head := steps[0]
-	rest := desugarDo(steps[1:], loc)
+	head := exprs[0]
+	rest := desugarBlock(exprs[1:], loc)
 
-	// If the step is a bare `let x = e` (no `in`, no `<-` bind), lift the
-	// let so the remainder of the block becomes its body. This makes
-	//   do { let x = e1; e2 }
-	// equivalent to
-	//   do { x <- e1; e2 }
-	// i.e. `x` is in scope for all subsequent steps.
-	if head.Bind == "" {
-		if letExpr, ok := head.Expr.(ast.ExprLet); ok && letExpr.Body == nil {
-			return ast.ExprLet{
-				Name:  letExpr.Name,
-				Value: Desugar(letExpr.Value),
-				Body:  rest,
-				Loc:   letExpr.Loc,
-			}
+	// If head is a let without body, the rest becomes its body.
+	if letExpr, ok := head.(ast.ExprLet); ok && letExpr.Body == nil {
+		return ast.ExprLet{
+			Name:  letExpr.Name,
+			Value: Desugar(letExpr.Value),
+			Body:  rest,
+			Loc:   letExpr.Loc,
+		}
+	}
+	if letPat, ok := head.(ast.ExprLetPattern); ok && letPat.Body == nil {
+		return ast.ExprLetPattern{
+			Pattern: letPat.Pattern,
+			Value:   Desugar(letPat.Value),
+			Body:    rest,
+			Loc:     letPat.Loc,
 		}
 	}
 
-	name := head.Bind
-	if name == "" {
-		name = "_"
-	}
+	// Bare expression: let _ = head in rest
 	return ast.ExprLet{
-		Name:  name,
-		Value: Desugar(head.Expr),
+		Name:  "_",
+		Value: Desugar(head),
 		Body:  rest,
 		Loc:   loc,
 	}

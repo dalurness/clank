@@ -46,7 +46,7 @@ test-decl   = 'test' string '=' expr ;
 ### Expressions (precedence low→high)
 
 ```ebnf
-expr        = let-expr | if-expr | match-expr | do-block
+expr        = let-expr | if-expr | match-expr | block
             | handle-expr | for-expr | pipe-expr ;
 
 pipe-expr   = or-expr { '|>' or-expr } ;
@@ -60,12 +60,12 @@ unary-expr  = ['-' | '!'] postfix-expr ;
 postfix-expr = atom { '(' args ')' | '.' ident } ;
 
 atom        = literal | ident | lambda | '(' expr ')' | tuple | list | record
-            | match-expr | if-expr ;
+            | block | match-expr | if-expr ;
 lambda      = 'fn' '(' params ')' '=>' expr ;
 let-expr    = 'let' pattern '=' expr ['in' expr] ;  (* 'in' is optional in match arms and lambdas — the next expression becomes the body *)
 if-expr     = 'if' expr 'then' expr 'else' expr ;
 match-expr  = 'match' expr '{' { pattern '=>' expr } '}' ;
-do-block    = 'do' '{' { [ident '<-'] expr } '}' ;
+block       = '{' expr { expr } '}' ;
 handle-expr = 'handle' expr '{' handler-arms '}' ;
 handler-arms = handler-arm { ',' handler-arm } ;
 handler-arm  = 'return' ident '->' expr
@@ -75,7 +75,7 @@ for-expr    = 'for' pattern 'in' expr ['if' expr] ['fold' ident '=' expr] 'do' e
 
 All operators desugar to function calls: `a + b` → `add(a, b)`, `a |> f(b)` → `f(a, b)`, `a ++ b` → `concat(a, b)` (works on strings and lists).
 
-**Multi-statement expressions:** Lambdas, `if`/`else` branches, `for...do` bodies, and handler arms each accept a single expression. Use `do { ... }` blocks to sequence multiple statements, or chain `let` bindings (each `let` scopes over the next expression). For example: `fn(x) => do { let y = x + 1  print(show(y))  y }` or `if cond then do { let _ = print("yes")  42 } else 0`.
+**Multi-statement expressions:** Lambdas, `if`/`else` branches, `for...do` bodies, and handler arms each accept a single expression. Use `{ ... }` blocks to sequence multiple expressions, or chain `let` bindings (each `let` scopes over the next expression). For example: `fn(x) => { let y = x + 1  print(show(y))  y }` or `if cond then { print("yes")  42 } else 0`. Blocks are distinguished from records by lookahead: `{ ident: ... }` is a record, everything else is a block.
 
 ## 3. Type System
 

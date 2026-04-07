@@ -233,11 +233,6 @@ type HandlerArm struct {
 	Body       Expr
 }
 
-// DoStep is a single step in a do block.
-type DoStep struct {
-	Bind string // empty if no binding
-	Expr Expr
-}
 
 // Param is a function parameter with optional type annotation.
 type Param struct {
@@ -332,8 +327,8 @@ type ExprUnary struct {
 	Loc     token.Loc
 }
 
-type ExprDo struct {
-	Steps []DoStep
+type ExprBlock struct {
+	Exprs []Expr
 	Loc   token.Loc
 }
 
@@ -418,7 +413,7 @@ func (ExprApply) exprNode()        {}
 func (ExprPipeline) exprNode()     {}
 func (ExprInfix) exprNode()        {}
 func (ExprUnary) exprNode()        {}
-func (ExprDo) exprNode()           {}
+func (ExprBlock) exprNode()           {}
 func (ExprHandle) exprNode()       {}
 func (ExprPerform) exprNode()      {}
 func (ExprList) exprNode()         {}
@@ -443,7 +438,7 @@ func (e ExprApply) ExprLoc() token.Loc        { return e.Loc }
 func (e ExprPipeline) ExprLoc() token.Loc     { return e.Loc }
 func (e ExprInfix) ExprLoc() token.Loc        { return e.Loc }
 func (e ExprUnary) ExprLoc() token.Loc        { return e.Loc }
-func (e ExprDo) ExprLoc() token.Loc           { return e.Loc }
+func (e ExprBlock) ExprLoc() token.Loc           { return e.Loc }
 func (e ExprHandle) ExprLoc() token.Loc       { return e.Loc }
 func (e ExprPerform) ExprLoc() token.Loc      { return e.Loc }
 func (e ExprList) ExprLoc() token.Loc         { return e.Loc }

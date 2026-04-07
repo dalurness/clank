@@ -2972,14 +2972,26 @@ func (s *checkerState) inferExpr(
 		s.inferExpr(e.End, env, errors, registry, aff)
 		return TList{Element: TInt}
 
-	case ast.ExprDo:
+	case ast.ExprBlock:
 		var lastType Type = TUnit
-		doEnv := env.extend()
-		for _, step := range e.Steps {
-			lastType = s.inferExpr(step.Expr, doEnv, errors, registry, aff)
-			if step.Bind != "" {
-				doEnv.set(step.Bind, lastType)
+		blockEnv := env.extend()
+		for _, expr := range e.Exprs {
+			// Handle let bindings without body — add binding to block scope
+			if letExpr, ok := expr.(ast.ExprLet); ok && letExpr.Body == nil {
+				valType := s.inferExpr(letExpr.Value, blockEnv, errors, registry, aff)
+				if letExpr.Name != "_" {
+					blockEnv.set(letExpr.Name, valType)
+				}
+				lastType = valType
+				continue
 			}
+			if letPat, ok := expr.(ast.ExprLetPattern); ok && letPat.Body == nil {
+				valType := s.inferExpr(letPat.Value, blockEnv, errors, registry, aff)
+				s.bindPatternVars(letPat.Pattern, blockEnv, aff, valType)
+				lastType = valType
+				continue
+			}
+			lastType = s.inferExpr(expr, blockEnv, errors, registry, aff)
 		}
 		return lastType
 
@@ -3499,9 +3511,9 @@ func walkEffects(e ast.Expr, opMap effectOpMap, handled, effects map[string]bool
 		for _, el := range e.Elements {
 			walkEffects(el, opMap, handled, effects)
 		}
-	case ast.ExprDo:
-		for _, step := range e.Steps {
-			walkEffects(step.Expr, opMap, handled, effects)
+	case ast.ExprBlock:
+		for _, expr := range e.Exprs {
+			walkEffects(expr, opMap, handled, effects)
 		}
 	case ast.ExprFor:
 		walkEffects(e.Collection, opMap, handled, effects)

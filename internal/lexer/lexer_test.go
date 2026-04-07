@@ -85,11 +85,11 @@ func TestLexRational(t *testing.T) {
 }
 
 func TestLexMultiCharOps(t *testing.T) {
-	tokens, err := lexer.Lex("== != <= >= && || ++ |> => <- ->")
+	tokens, err := lexer.Lex("== != <= >= && || ++ |> => ->")
 	if err != nil {
 		t.Fatalf("unexpected lex error: %s", err.Message)
 	}
-	ops := []string{"==", "!=", "<=", ">=", "&&", "||", "++", "|>", "=>", "<-", "->"}
+	ops := []string{"==", "!=", "<=", ">=", "&&", "||", "++", "|>", "=>", "->"}
 	for i, op := range ops {
 		if tokens[i].Tag != token.Op || tokens[i].Value != op {
 			t.Errorf("token %d: expected op(%q), got %s(%q)", i, op, tokens[i].Tag, tokens[i].Value)

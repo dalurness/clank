@@ -31,7 +31,7 @@ code generation strategy**, not the VM.
 - **Still used, same semantics:** All 87 opcodes remain valid.
 - **Used differently:** `DUP`/`DROP`/`SWAP`/`ROT`/`OVER`/`PICK`/`ROLL` are now
   compiler-internal (never generated from user syntax directly, but used for
-  intermediate value management). `QUOTE` is used only for thunks in do-block
+  intermediate value management). `QUOTE` is used only for thunks in block
   desugaring; user-facing quotation syntax `[...]` no longer exists.
 - **New opcodes needed:** None.
 
@@ -349,18 +349,18 @@ The pattern matching compilation is the same as before — the difference is
 that arm bodies compile as applicative expressions (using locals) rather than
 concatenative word sequences.
 
-### 3.9 Do Blocks
+### 3.9 Brace Blocks
 
 Source:
 ```
-do {
-  contents <- read("config.toml")
-  config   <- parse-toml(contents)
+{
+  let contents = read("config.toml")
+  let config   = parse-toml(contents)
   config
 }
 ```
 
-Do-blocks desugar to sequential let-bindings at the compiler level:
+Brace blocks desugar to sequential let-bindings at the compiler level:
 
 ```
 let contents = read("config.toml")
@@ -381,10 +381,9 @@ LOCAL_SET 1              # config
 LOCAL_GET 1              # result
 ```
 
-The `<-` binder in do-blocks is syntactic sugar for let-binding the result of
-an effectful expression. No monadic desugaring or CPS transform is needed
-because effects are handled by the VM's effect dispatch mechanism, not by
-value-level plumbing.
+Brace blocks are syntactic sugar for sequential let-bindings. No monadic
+desugaring or CPS transform is needed because effects are handled by the VM's
+effect dispatch mechanism, not by value-level plumbing.
 
 ### 3.10 Effect Handlers
 
@@ -750,7 +749,7 @@ Produce AST from grammar (§4 of core-syntax.md).
 ### Phase 2: Desugar (AST → AST)
 - `x |> f(y)` → `f(x, y)` (pipeline elimination)
 - `a + b` → `add(a, b)` (operator desugaring)
-- `do { x <- e1; e2 }` → `let x = e1 in e2` (do-block flattening)
+- `{ let x = e1; e2 }` → `let x = e1 in e2` (block flattening)
 - `a ++ b` → `str-cat(a, b)` (string concat)
 - `!x` → `not(x)` (unary ops)
 
@@ -786,7 +785,7 @@ the **compiler's code generation**, not the VM's execution semantics.
 | Lambdas | ✅ QUOTE (no captures) or CLOSURE (with captures) |
 | Higher-order calls | ✅ CALL_DYN (already in spec) |
 | Pattern matching | ✅ Unchanged from spec |
-| Do blocks | ✅ Desugar to let-bindings |
+| Brace blocks | ✅ Desugar to let-bindings |
 | Effect handlers | ✅ Unchanged from spec |
 | Tail calls | ✅ TAIL_CALL (easier to detect in applicative) |
 | Record/tuple/list literals | ✅ Unchanged from spec |
