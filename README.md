@@ -35,9 +35,11 @@ git clone https://github.com/dalurness/clank.git && cd clank
 go build -o clank ./cmd/clank
 ```
 
-### Windows
+### Windows (PowerShell)
 
-Download `clank-windows-amd64.exe` from [Releases](https://github.com/dalurness/clank/releases) and add it to your PATH.
+```powershell
+irm https://raw.githubusercontent.com/dalurness/clank/main/install.ps1 | iex
+```
 
 ## Quick Start
 
@@ -177,6 +179,8 @@ clank test [files...]           # Run tests
 clank pkg init|add|remove       # Package management
 clank pretty <file>             # Expand terse identifiers
 clank terse <file>              # Compress to terse form
+clank version                   # Print the Clank version
+clank update                    # Update to the latest version
 ```
 
 All commands support `--json` for structured output.
