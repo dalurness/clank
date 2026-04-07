@@ -58,6 +58,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  terse       Compress verbose identifiers to terse form\n")
 	fmt.Fprintf(os.Stderr, "  spec        Print the language specification\n")
 	fmt.Fprintf(os.Stderr, "  version     Print the Clank version\n")
+	fmt.Fprintf(os.Stderr, "  update      Update to the latest version\n")
 }
 
 // getFlagValue returns the value following a flag in args, or "" if not found.
@@ -163,6 +164,8 @@ func run() int {
 		case "version":
 			fmt.Println(Version)
 			return 0
+		case "update":
+			return cmdUpdate()
 
 		case "eval":
 			command = "eval"
