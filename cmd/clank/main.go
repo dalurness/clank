@@ -39,12 +39,12 @@ func main() {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [--pretty] [command] [flags] <file.clk>\n")
-	fmt.Fprintf(os.Stderr, "       clank run -e '<code>'          Run inline code\n")
+	fmt.Fprintf(os.Stderr, "       clank run -c '<code>'          Run inline code\n")
 	fmt.Fprintf(os.Stderr, "       clank eval '<expr>'            Evaluate an expression\n")
 	fmt.Fprintf(os.Stderr, "       clank eval -f <file.clk>       Evaluate a file\n\n")
 	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  run         Run a program (default). Use -e for inline code\n")
-	fmt.Fprintf(os.Stderr, "  check       Type-check a program. Use -e for inline code\n")
+	fmt.Fprintf(os.Stderr, "  run         Run a program (default). Use -c for inline code\n")
+	fmt.Fprintf(os.Stderr, "  check       Type-check a program. Use -c for inline code\n")
 	fmt.Fprintf(os.Stderr, "  eval        Evaluate an expression and print the result\n")
 	fmt.Fprintf(os.Stderr, "  fmt         Format source code\n")
 	fmt.Fprintf(os.Stderr, "  lint        Lint source code\n")
@@ -98,12 +98,12 @@ func run() int {
 			checkMode = true
 		case "--stdin":
 			stdinMode = true
-		case "-e":
+		case "-c":
 			if i+1 < len(rawArgs) {
 				inlineCode = rawArgs[i+1]
 				i++
 			} else {
-				fmt.Fprintf(os.Stderr, "error: -e requires a code argument\n")
+				fmt.Fprintf(os.Stderr, "error: -c requires a code argument\n")
 				return 1
 			}
 			continue
@@ -173,7 +173,7 @@ func run() int {
 			if inlineCode != "" {
 				// -e flag provides the source
 			} else if len(positional) < 2 {
-				fmt.Fprintf(os.Stderr, "error: %s requires a file argument or -e '<code>'\n", command)
+				fmt.Fprintf(os.Stderr, "error: %s requires a file argument or -c '<code>'\n", command)
 				return 1
 			} else {
 				file = positional[1]
@@ -469,20 +469,31 @@ func cmdCheck(program *ast.Program, baseDir string, jsonOut bool) int {
 // wrapExprSource wraps a bare expression in a main function for eval.
 // If the source already contains a top-level definition (has ':' before '='),
 // it is returned as-is.
+// topLevelKeywords are keywords that can only appear at the start of a
+// top-level declaration, never at the start of a bare expression.
+var topLevelKeywords = map[string]bool{
+	"type": true, "effect": true, "pub": true, "mod": true,
+	"use": true, "interface": true, "impl": true, "test": true,
+	"affine": true, "opaque": true, "alias": true,
+}
+
 func wrapExprSource(source string) string {
-	// Quick heuristic: if the source contains a top-level type signature
-	// (ident ':' ... '='), it's already a full program.
 	trimmed := strings.TrimSpace(source)
 	for _, line := range strings.Split(trimmed, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		// Check if line starts with a top-level keyword
+		firstWord := strings.Fields(line)[0]
+		if topLevelKeywords[firstWord] {
+			return source
+		}
 		// Check if first non-comment line looks like a definition (has ':' before '=')
 		colonIdx := strings.Index(line, ":")
 		eqIdx := strings.Index(line, "=")
 		if colonIdx > 0 && (eqIdx < 0 || colonIdx < eqIdx) {
-			return source // already a full program
+			return source
 		}
 		break
 	}
