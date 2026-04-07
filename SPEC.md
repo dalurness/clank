@@ -247,7 +247,7 @@ Clank uses algebraic effects for errors, not try/catch. The `raise` effect propa
 
 ```
 # Safe division — returns Option
-safe-div : (n: Int, d: Int) -> <> Option =
+safe-div : (n: Int, d: Int) -> <> Option<Int> =
   handle div(n, d) {
     return x -> Some(x),
     raise _ resume _ -> None
