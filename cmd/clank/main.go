@@ -171,7 +171,7 @@ func run() int {
 		case "run", "check":
 			command = positional[0]
 			if inlineCode != "" {
-				// -e flag provides the source
+				// -c flag provides the source
 			} else if len(positional) < 2 {
 				fmt.Fprintf(os.Stderr, "error: %s requires a file argument or -c '<code>'\n", command)
 				return 1
@@ -485,7 +485,11 @@ func wrapExprSource(source string) string {
 			continue
 		}
 		// Check if line starts with a top-level keyword
-		firstWord := strings.Fields(line)[0]
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			break
+		}
+		firstWord := fields[0]
 		if topLevelKeywords[firstWord] {
 			return source
 		}
