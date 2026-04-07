@@ -152,7 +152,7 @@ func run() int {
 	if len(positional) > 0 {
 		switch positional[0] {
 		// Commands that handle their own file loading
-		case "doc":
+		case "doc", "docs":
 			return cmdDoc(positional[1:], jsonOut, rawArgs)
 		case "test":
 			return cmdTest(positional[1:], jsonOut, rawArgs)
