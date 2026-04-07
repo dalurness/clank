@@ -75,6 +75,8 @@ for-expr    = 'for' pattern 'in' expr ['if' expr] ['fold' ident '=' expr] 'do' e
 
 All operators desugar to function calls: `a + b` → `add(a, b)`, `a |> f(b)` → `f(a, b)`, `a ++ b` → `concat(a, b)` (works on strings and lists).
 
+**Unary minus** negates a numeric expression: `-x`, `-3.14`, `-(a + b)`. Use it directly — `0 - x` is unnecessary.
+
 **Multi-statement expressions:** Lambdas, `if`/`else` branches, `for...do` bodies, and handler arms each accept a single expression. Use `do { ... }` blocks to sequence multiple statements, or chain `let` bindings (each `let` scopes over the next expression). For example: `fn(x) => do { let y = x + 1  print(show(y))  y }` or `if cond then do { let _ = print("yes")  42 } else 0`.
 
 ## 3. Type System
