@@ -74,23 +74,33 @@ func pathTarget(target, baseDir string) (string, bool) {
 		return abs, true
 	}
 
+	// Real absolute paths take precedence over the project-relative "/..."
+	// convention. On Linux, every path starting with "/" is technically
+	// absolute, so we must try the filesystem first — otherwise
+	// /tmp/foo.clk would get rewritten to <projectRoot>/tmp/foo.clk and
+	// fail to resolve. On Windows, filepath.IsAbs returns false for
+	// "/cmd/main.clk", so this branch is skipped and project-relative
+	// resolution below handles it.
+	if filepath.IsAbs(target) {
+		if _, err := os.Stat(target); err == nil {
+			return target, true
+		}
+		// git-bash MSYS rewrite: a leading "/x" becomes "<msys-root>/x". If
+		// the trailing portion exists under projectRoot, assume that's what
+		// the user meant.
+		if mangled, ok := unmangleMSYS(target, baseDir); ok {
+			return mangled, true
+		}
+		// Fall through: on Linux a "/..."" target that isn't a real file
+		// may still be a project-relative path the user wants.
+	}
+
 	if strings.HasPrefix(target, "/") {
 		root := projectRoot(baseDir)
 		rel := strings.TrimPrefix(target, "/")
 		return filepath.Join(root, filepath.FromSlash(rel)), true
 	}
 
-	if filepath.IsAbs(target) {
-		if _, err := os.Stat(target); err == nil {
-			return target, true
-		}
-		// git-bash MSYS rewrite: a leading "/x" becomes "<msys-root>/x". If the
-		// trailing portion exists under projectRoot, assume that's what the user
-		// meant.
-		if mangled, ok := unmangleMSYS(target, baseDir); ok {
-			return mangled, true
-		}
-	}
 	return "", false
 }
 

@@ -153,6 +153,33 @@ func TestResolveTargetProjectPathDir(t *testing.T) {
 	}
 }
 
+func TestResolveTargetAbsolutePathOutsideProject(t *testing.T) {
+	// Regression: on Linux, t.TempDir() returns "/tmp/..." — a real
+	// absolute path that also starts with "/". Earlier code matched the
+	// "/..." project-relative branch first and rewrote it to
+	// <projectRoot>/tmp/..., producing a false "path not found". The
+	// real-absolute-path check must win.
+	projectRoot := t.TempDir()
+	mustWrite(t, filepath.Join(projectRoot, "clank.pkg"),
+		"name = \"demo\"\nversion = \"0.1.0\"\n")
+
+	// A file that lives outside the project root entirely.
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "outside.clk")
+	mustWrite(t, outsideFile, "def outside-fn() -> int = 1")
+
+	res, err := ResolveTarget(outsideFile, projectRoot, nil)
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
+	}
+	if res.Kind != "path" {
+		t.Errorf("Kind = %q, want path", res.Kind)
+	}
+	if len(res.Files) != 1 || res.Files[0] != outsideFile {
+		t.Errorf("Files = %v, want %q", res.Files, outsideFile)
+	}
+}
+
 func TestResolveTargetProjectPathMissing(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "clank.pkg"), "name = \"demo\"\nversion = \"0.1.0\"\n")
