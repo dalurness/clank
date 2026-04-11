@@ -133,12 +133,12 @@ func TestW100_UnusedLambdaParam(t *testing.T) {
 	}
 }
 
-func TestW100_UnusedDoBinding(t *testing.T) {
-	// do { result <- expr; other_expr }
-	body := ast.ExprDo{
-		Steps: []ast.DoStep{
-			{Bind: "result", Expr: ast.ExprLiteral{Value: ast.LitInt{Value: 1}, Loc: loc(2, 3)}},
-			{Expr: ast.ExprLiteral{Value: ast.LitInt{Value: 2}, Loc: loc(3, 3)}},
+func TestW100_UnusedBlockBinding(t *testing.T) {
+	// { let result = 1  2 }
+	body := ast.ExprBlock{
+		Exprs: []ast.Expr{
+			ast.ExprLet{Name: "result", Value: ast.ExprLiteral{Value: ast.LitInt{Value: 1}, Loc: loc(2, 3)}, Loc: loc(2, 1)},
+			ast.ExprLiteral{Value: ast.LitInt{Value: 2}, Loc: loc(3, 3)},
 		},
 		Loc: loc(1, 1),
 	}
@@ -152,7 +152,7 @@ func TestW100_UnusedDoBinding(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected W100 for unused do binding")
+		t.Errorf("expected W100 for unused block binding")
 	}
 }
 

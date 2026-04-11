@@ -227,7 +227,7 @@ fetch-with-retry : (url: Str) -> <io, exn, Retry> Str =
   let go = fn(n) =>
     handle get(url) |> json {
       return(v) => v
-      raise(e) => if attempt(n) then do { sleep(n * 100); go(n + 1) } else throw(e)
+      raise(e) => if attempt(n) then { sleep(n * 100); go(n + 1) } else throw(e)
     }
   go(1)
 
@@ -318,7 +318,7 @@ use std.json (merge)
 use std.col (map)
 
 fetch-all : (urls: [Str]{len > 0}) -> <io, async, exn> Json =
-  urls |> map(fn(u) => do { get(u) |> json })
+  urls |> map(fn(u) => { get(u) |> json })
        |> await-all
        |> fold(merge)
 ```
@@ -551,8 +551,8 @@ affine type Conn
 run-tx : (dsn: Str, sql: [Str]{len > 0}) -> <io, exn> [Json] =
   let conn = connect(dsn)
   handle fold(sql, [], fn(acc, s) => acc ++ [query(&conn, s)]) {
-    return(results) => do { commit(conn); results }
-    raise(e) => do { rollback(conn); throw(e) }
+    return(results) => { commit(conn); results }
+    raise(e) => { rollback(conn); throw(e) }
   }
 ```
 

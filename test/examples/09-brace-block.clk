@@ -1,0 +1,15 @@
+# Spec example 8.9: Effectful pipeline with brace block
+# Demonstrates block sequencing pattern from the spec:
+#   { let contents = read(src)  write(dst, contents)  print(...) }
+# Adapted to use string processing instead of file I/O
+# Expected output:
+# Processed: hello world (length: 11)
+
+process : (input: Str) -> <io> () = {
+  let contents = input
+  let length = len(split(contents, ""))
+  print("Processed: " ++ contents ++ " (length: " ++ show(length) ++ ")")
+}
+
+main : () -> <io> () =
+  process("hello world")

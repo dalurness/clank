@@ -117,7 +117,7 @@ expr        = let-expr
             | if-expr
             | match-expr
             | for-expr            (* NEW *)
-            | do-block
+            | block-expr
             | handle-expr
             | pipe-expr ;
 
@@ -190,34 +190,24 @@ for x in source do f(x)
 `match-expr` are parallel alternatives in the `expr` production. The leading
 keyword (`for` vs `match`) fully disambiguates. No interaction.
 
-### 5.4 `do` — conflict with do-block
+### 5.4 `do` — conflict with brace blocks
 
-**Conflict:** `do` appears in both `do-block` and `for-body`.
+**Conflict:** `do` appears in `for-body` and `{` starts a brace block.
 
 **Resolution:** No ambiguity. In `for-expr`, `do` is expected after the
 collection (and optional guard/fold). The parser is inside the `for-expr`
 production, so `do` is consumed as the body delimiter, not as the start of a
-standalone `do-block`.
+standalone brace block.
 
-**Edge case — do-block as for body:**
-```
-for x in xs do do {
-  y <- effectful(x)
-  pure(y)
-}
-```
-The first `do` is the `for-body` delimiter. The second `do` starts a `do-block`
-as the body expression. This is syntactically valid but stylistically
-discouraged — prefer:
+**Edge case — brace block as for body:**
 ```
 for x in xs do {
-  y <- effectful(x)
+  let y = effectful(x)
   pure(y)
 }
 ```
-(A bare block `{ ... }` in for-body position would need the effect binding `<-`
-to be supported directly. If not, the `do` block form is required. See §8
-Observations.)
+The `do` is the `for-body` delimiter. The `{ ... }` is a brace block used as
+the body expression. This is the idiomatic way to write multi-step for bodies.
 
 ### 5.5 `fold` — new contextual keyword
 
@@ -416,14 +406,13 @@ for (name, score) in students if score >= 90 do
 
 ```
 for path in files do {
-  contents <- read(path)
+  let contents = read(path)
   parse(contents)
 }
 ```
 
-Note: The `<-` binding requires the body to be inside a `do` block context for
-effect sequencing. This works because `do { ... }` is a valid expression in body
-position.
+Note: The brace block `{ ... }` sequences multiple expressions. `let` binds
+intermediate results within the block.
 
 ### 8.6 Pipeline integration
 
@@ -458,7 +447,7 @@ in process(squared-evens)
   `enumerate` stdlib function + destructuring. No special syntax needed.
 - **`for` as statement (side-effects only):** All `for` expressions produce a
   value. For side-effect iteration, use `each` from the stdlib or wrap in a
-  `do` block. `for` without using the result will trigger an unused-value
+  brace block. `for` without using the result will trigger an unused-value
   warning.
 - **`break`/`continue`:** These belong to unbounded `loop`, not bounded `for`.
   `for` always processes every element (after filtering).

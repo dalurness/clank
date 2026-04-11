@@ -249,12 +249,12 @@ bomb : () -> <> Bool =
 main : () -> <io> () =
   print(show(false && bomb()))
   print(show(true || bomb()))
-  let x = do {
+  let x = {
     let a = false && bomb()
     "safe-and"
   }
   print(x)
-  let y = do {
+  let y = {
     let b = true || bomb()
     "safe-or"
   }
@@ -520,14 +520,14 @@ func TestParseExprMatch(t *testing.T) {
 	}
 }
 
-func TestParseExprDoBlock(t *testing.T) {
-	expr := mustParseExpr(t, `do { let x = 1 x + 2 }`)
-	do, ok := expr.(ast.ExprDo)
+func TestParseExprBlock(t *testing.T) {
+	expr := mustParseExpr(t, `{ let x = 1 x + 2 }`)
+	blk, ok := expr.(ast.ExprBlock)
 	if !ok {
-		t.Fatalf("expected ExprDo, got %T", expr)
+		t.Fatalf("expected ExprBlock, got %T", expr)
 	}
-	if len(do.Steps) != 2 {
-		t.Errorf("expected 2 steps, got %d", len(do.Steps))
+	if len(blk.Exprs) != 2 {
+		t.Errorf("expected 2 exprs, got %d", len(blk.Exprs))
 	}
 }
 

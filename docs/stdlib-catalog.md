@@ -667,7 +667,7 @@ test.run([
   test.def("addition", fn() => test.eq(1 + 1, 2)),
   test.def("string concat", fn() => test.eq("hello " ++ "world", "hello world")),
   test.def("division by zero", fn() => test.ok(test.throws(fn() => 1 / 0))),
-  test.def("list ops", fn() => do {
+  test.def("list ops", fn() => {
     test.eq(col.rev([1, 2, 3]), [3, 2, 1])
     test.eq(filter([1, 2, 3, 4, 5], fn(x) => x % 2 == 0), [2, 4])
   })

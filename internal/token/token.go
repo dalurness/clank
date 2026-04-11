@@ -79,7 +79,7 @@ var Keywords = map[string]bool{
 
 // MultiOps are multi-character operators in longest-match order.
 var MultiOps = []string{
-	"==", "!=", "<=", ">=", "&&", "||", "++", "|>", "=>", "<-", "->",
+	"==", "!=", "<=", ">=", "&&", "||", "++", "|>", "=>", "->",
 }
 
 // SingleOps are single-character operators.
