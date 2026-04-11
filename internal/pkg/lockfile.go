@@ -219,6 +219,34 @@ func WriteLockfile(manifestPath string, includeDev bool) (string, error) {
 	return lockPath, nil
 }
 
+// TouchLockfileVersion stamps the current clank binary version onto the
+// project's lockfile as a diagnostic breadcrumb. It's called on successful
+// `clank run` so the lockfile always reflects the last version that
+// actually executed the project. Nothing reads this field for enforcement —
+// it's purely informational.
+//
+// If projectDir has a clank.lock, only the clank_version and resolved_at
+// fields are updated; packages are left untouched (we don't want a plain
+// run to silently re-resolve dependencies). If no lockfile exists, a
+// minimal one is written with an empty packages map.
+//
+// Errors are best-effort — callers should log and proceed, not abort.
+func TouchLockfileVersion(projectDir, version string) error {
+	lockPath := filepath.Join(projectDir, "clank.lock")
+
+	lock := ReadLockfile(lockPath)
+	if lock == nil {
+		lock = &Lockfile{
+			LockVersion: 1,
+			Packages:    make(map[string]LockPackage),
+		}
+	}
+	lock.ClankVersion = version
+	lock.ResolvedAt = time.Now().UTC().Format(time.RFC3339)
+
+	return os.WriteFile(lockPath, []byte(SerializeLockfile(lock)), 0644)
+}
+
 // ReadLockfile reads and parses a clank.lock file. Returns nil if not found.
 func ReadLockfile(lockPath string) *Lockfile {
 	data, err := os.ReadFile(lockPath)

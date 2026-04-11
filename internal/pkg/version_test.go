@@ -2,6 +2,47 @@ package pkg
 
 import "testing"
 
+func TestSatisfiesOrDev(t *testing.T) {
+	tests := []struct {
+		version    string
+		constraint string
+		want       bool
+	}{
+		{"dev", ">= 99.99.99", true}, // dev satisfies anything
+		{"dev", "*", true},
+		{"dev", "", true},
+		{"0.5.0", "", true}, // empty constraint satisfies anything
+		{"0.5.0", ">= 0.4.0", true},
+		{"0.3.0", ">= 0.5.0", false},
+		{"0.5.0", "0.5.0", true},
+		{"0.4.0", "0.5.0", false},
+	}
+	for _, tt := range tests {
+		got := SatisfiesOrDev(tt.version, tt.constraint)
+		if got != tt.want {
+			t.Errorf("SatisfiesOrDev(%q, %q) = %v, want %v",
+				tt.version, tt.constraint, got, tt.want)
+		}
+	}
+}
+
+func TestInitialClankConstraint(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"0.5.0", ">= 0.5.0"},
+		{"1.2.3", ">= 1.2.3"},
+		{"dev", ""},
+		{"", ""},
+		{"not-a-version", ""},
+	}
+	for _, tt := range tests {
+		if got := initialClankConstraint(tt.in); got != tt.want {
+			t.Errorf("initialClankConstraint(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestVersionSatisfies(t *testing.T) {
 	tests := []struct {
 		version    string

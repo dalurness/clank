@@ -359,6 +359,17 @@ type PkgInitResult struct {
 	Error        string
 }
 
+// initialClankConstraint returns the value PkgInit should seed into a new
+// manifest's `clank` field. A real semver (like "0.5.0") becomes a floor
+// (">= 0.5.0"). A dev build is left empty — seeding a nonsense constraint
+// like "dev" or ">= dev" would be worse than no constraint at all.
+func initialClankConstraint(ver string) string {
+	if parseSemver(ver) == nil {
+		return ""
+	}
+	return ">= " + ver
+}
+
 // PkgInit initializes a new package directory.
 func PkgInit(opts PkgInitOptions) PkgInitResult {
 	dir := opts.Dir
@@ -383,7 +394,7 @@ func PkgInit(opts PkgInitOptions) PkgInitResult {
 	m := &Manifest{
 		Name:     name,
 		Version:  "0.1.0",
-		Clank:    ClankVersion,
+		Clank:    initialClankConstraint(ClankVersion),
 		Authors:  []string{},
 		Keywords: []string{},
 		Deps:     make(map[string]Dependency),

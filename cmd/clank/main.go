@@ -273,7 +273,7 @@ func run() int {
 		return reportError(jsonOut, structuredError{
 			Stage:   "lex",
 			Code:    lexErr.Code,
-			Message: lexErr.Message,
+			Message: withFloorHint(lexErr.Message, file),
 			Line:    lexErr.Location.Line,
 			Col:     lexErr.Location.Col,
 		})
@@ -285,7 +285,7 @@ func run() int {
 		return reportError(jsonOut, structuredError{
 			Stage:   "parse",
 			Code:    parseErr.Code,
-			Message: parseErr.Message,
+			Message: withFloorHint(parseErr.Message, file),
 			Line:    parseErr.Location.Line,
 			Col:     parseErr.Location.Col,
 		})
@@ -309,7 +309,7 @@ func run() int {
 		if linked.Error != nil {
 			return reportError(jsonOut, structuredError{
 				Stage:   "link",
-				Message: linked.Error.Error(),
+				Message: withFloorHint(linked.Error.Error(), baseDir),
 			})
 		}
 		// Type-check the linked program
@@ -322,6 +322,7 @@ func run() int {
 			}
 		}
 		if hasErrors {
+			hint := floorHintForFile(baseDir)
 			if jsonOut {
 				errs := make([]structuredError, 0, len(typeErrors))
 				for _, te := range typeErrors {
@@ -335,6 +336,9 @@ func run() int {
 						})
 					}
 				}
+				if hint != "" {
+					errs = append(errs, structuredError{Stage: "note", Message: hint})
+				}
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				enc.Encode(errs)
@@ -344,10 +348,23 @@ func run() int {
 						fmt.Fprintf(os.Stderr, "%s\n", te.Error())
 					}
 				}
+				if hint != "" {
+					fmt.Fprintf(os.Stderr, "%s\n", hint)
+				}
 			}
 			return 1
 		}
-		return cmdRun(linked.Program, jsonOut)
+		exitCode := cmdRun(linked.Program, jsonOut)
+		if exitCode == 0 {
+			// Stamp the lockfile with the running binary's version so the
+			// project records which clank actually executed it. Scoped to
+			// projects (has a clank.pkg) — single-file scripts don't get
+			// a surprise lockfile dropped next to them.
+			if manifestPath := pkg.FindManifest(baseDir); manifestPath != "" {
+				_ = pkg.TouchLockfileVersion(filepath.Dir(manifestPath), Version)
+			}
+		}
+		return exitCode
 	}
 	return 0
 }
@@ -544,6 +561,55 @@ func cmdEval(program *ast.Program, baseDir string, jsonOut bool) int {
 		fmt.Println(vm.ValueToString(*result))
 	}
 	return 0
+}
+
+// withFloorHint appends a floor-mismatch note to a message if one applies
+// for the given source file. Used at error-report sites so callers can
+// keep their existing structuredError construction inline.
+func withFloorHint(msg, sourceFile string) string {
+	if hint := floorHintForFile(sourceFile); hint != "" {
+		return msg + "\n" + hint
+	}
+	return msg
+}
+
+// floorHintForFile returns a one-line advisory note if the manifest owning
+// sourceFile (or the nearest ancestor clank.pkg of its directory) declares
+// a clank constraint that the current binary version does not satisfy.
+// Returns "" when there's no manifest, no constraint, or the constraint is
+// already satisfied — including the case where this binary is a dev build,
+// which is assumed to satisfy every constraint.
+//
+// The hint is best-effort and silently returns "" on any error. The
+// intent is to enrich unrelated parse/type errors with a "maybe you need
+// to upgrade clank" nudge, not to introduce a new failure mode.
+func floorHintForFile(sourceFile string) string {
+	if sourceFile == "" {
+		return ""
+	}
+	startDir := sourceFile
+	if info, err := os.Stat(sourceFile); err == nil && !info.IsDir() {
+		startDir = filepath.Dir(sourceFile)
+	}
+	manifestPath := pkg.FindManifest(startDir)
+	if manifestPath == "" {
+		return ""
+	}
+	m, err := pkg.LoadManifest(manifestPath)
+	if err != nil || m == nil || m.Clank == "" {
+		return ""
+	}
+	if pkg.SatisfiesOrDev(Version, m.Clank) {
+		return ""
+	}
+	name := m.Name
+	if name == "" {
+		name = filepath.Base(filepath.Dir(manifestPath))
+	}
+	return fmt.Sprintf(
+		"note: %s declares clank %s, you're running %s — upgrading may resolve this",
+		name, m.Clank, Version,
+	)
 }
 
 // reportError outputs a single structured error and returns exit code 1.

@@ -484,6 +484,105 @@ func TestPkgInitAlreadyExists(t *testing.T) {
 	}
 }
 
+func TestPkgInitSeedsClankFloor(t *testing.T) {
+	// A real semver binary version seeds a ">= X.Y.Z" constraint.
+	prev := ClankVersion
+	ClankVersion = "0.5.0"
+	defer func() { ClankVersion = prev }()
+
+	dir := filepath.Join(t.TempDir(), "real-ver")
+	os.MkdirAll(dir, 0755)
+	result := PkgInit(PkgInitOptions{Name: "my-app", Dir: dir})
+	if !result.Ok {
+		t.Fatalf("expected ok, got: %s", result.Error)
+	}
+	m, err := LoadManifest(filepath.Join(dir, "clank.pkg"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if m.Clank != ">= 0.5.0" {
+		t.Errorf("clank field: %q, want %q", m.Clank, ">= 0.5.0")
+	}
+}
+
+func TestPkgInitOmitsClankFloorOnDev(t *testing.T) {
+	// A dev-version binary writes no clank field at all — seeding
+	// "dev" as a constraint would be meaningless.
+	prev := ClankVersion
+	ClankVersion = "dev"
+	defer func() { ClankVersion = prev }()
+
+	dir := filepath.Join(t.TempDir(), "dev-ver")
+	os.MkdirAll(dir, 0755)
+	result := PkgInit(PkgInitOptions{Name: "my-app", Dir: dir})
+	if !result.Ok {
+		t.Fatalf("expected ok, got: %s", result.Error)
+	}
+	m, err := LoadManifest(filepath.Join(dir, "clank.pkg"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if m.Clank != "" {
+		t.Errorf("clank field: %q, want empty", m.Clank)
+	}
+}
+
+func TestTouchLockfileVersionCreatesNew(t *testing.T) {
+	dir := t.TempDir()
+	if err := TouchLockfileVersion(dir, "0.5.0"); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	lock := ReadLockfile(filepath.Join(dir, "clank.lock"))
+	if lock == nil {
+		t.Fatal("lockfile not created")
+	}
+	if lock.ClankVersion != "0.5.0" {
+		t.Errorf("clank_version: %q, want 0.5.0", lock.ClankVersion)
+	}
+	if len(lock.Packages) != 0 {
+		t.Errorf("packages: %d, want 0 for fresh lockfile", len(lock.Packages))
+	}
+	if lock.LockVersion != 1 {
+		t.Errorf("lock_version: %d, want 1", lock.LockVersion)
+	}
+}
+
+func TestTouchLockfileVersionUpdatesExisting(t *testing.T) {
+	dir := t.TempDir()
+	// Seed an existing lockfile with a package and old clank_version.
+	existing := &Lockfile{
+		LockVersion:  1,
+		ClankVersion: "0.3.0",
+		ResolvedAt:   "2024-01-01T00:00:00Z",
+		Packages: map[string]LockPackage{
+			"dep@1.0.0": {
+				Version:   "1.0.0",
+				Resolved:  "cache:dep@1.0.0",
+				Integrity: "sha256:abc",
+				Deps:      map[string]string{},
+			},
+		},
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "clank.lock"),
+		[]byte(SerializeLockfile(existing)),
+		0644,
+	); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := TouchLockfileVersion(dir, "0.5.0"); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	lock := ReadLockfile(filepath.Join(dir, "clank.lock"))
+	if lock.ClankVersion != "0.5.0" {
+		t.Errorf("clank_version: %q, want 0.5.0", lock.ClankVersion)
+	}
+	if _, ok := lock.Packages["dep@1.0.0"]; !ok {
+		t.Error("packages were wiped — touch should preserve them")
+	}
+}
+
 func TestPkgInitInvalidName(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "bad")
 	os.MkdirAll(dir, 0755)

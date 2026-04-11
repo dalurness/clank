@@ -106,6 +106,19 @@ func VersionSatisfies(version, constraint string) bool {
 	return false
 }
 
+// SatisfiesOrDev reports whether version satisfies constraint, treating a
+// "dev" version as satisfying any constraint and an empty constraint as
+// satisfied by any version. It's the check the CLI uses when deciding
+// whether to show a version-mismatch hint on parse or type errors — dev
+// builds are assumed to have everything, and packages that declare no
+// floor never warn.
+func SatisfiesOrDev(version, constraint string) bool {
+	if version == "dev" || constraint == "" {
+		return true
+	}
+	return VersionSatisfies(version, constraint)
+}
+
 // SelectVersion selects the minimum version satisfying a constraint (MVS).
 func SelectVersion(versions []string, constraint string) string {
 	for _, v := range versions {

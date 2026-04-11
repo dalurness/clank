@@ -64,6 +64,64 @@ func writeTmpFile(t *testing.T, name, content string) string {
 	return path
 }
 
+// buildClankVersioned builds a test binary with main.Version pinned via
+// -ldflags, caching one binary per version string. Used by version-hint
+// tests that need a non-dev build to exercise the floor-mismatch path.
+var (
+	versionedBins      = map[string]string{}
+	versionedBinsMu    sync.Mutex
+	versionedBinsErr   = map[string]error{}
+)
+
+func buildClankVersioned(t *testing.T, version string) string {
+	t.Helper()
+	versionedBinsMu.Lock()
+	defer versionedBinsMu.Unlock()
+	if bin, ok := versionedBins[version]; ok {
+		return bin
+	}
+	if err, ok := versionedBinsErr[version]; ok {
+		t.Fatalf("build failed: %v", err)
+	}
+	dir, err := os.MkdirTemp("", "clank-test-bin-v")
+	if err != nil {
+		versionedBinsErr[version] = err
+		t.Fatalf("mkdir: %v", err)
+	}
+	binary := filepath.Join(dir, "clank")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	cmd := exec.Command("go", "build",
+		"-ldflags", "-X main.Version="+version,
+		"-o", binary, "./cmd/clank")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		e := &buildError{err: err, output: string(out)}
+		versionedBinsErr[version] = e
+		t.Fatalf("build failed: %v", e)
+	}
+	versionedBins[version] = binary
+	return binary
+}
+
+func runClankBinary(t *testing.T, binary string, args ...string) (stdout, stderr string, exitCode int) {
+	t.Helper()
+	cmd := exec.Command(binary, args...)
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	exitCode = 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("exec error: %v", err)
+		}
+	}
+	return outBuf.String(), errBuf.String(), exitCode
+}
+
 // runClank runs the clank binary with the given args and returns stdout, stderr, and exit code.
 func runClank(t *testing.T, args ...string) (stdout, stderr string, exitCode int) {
 	t.Helper()
@@ -494,6 +552,98 @@ main : () -> <io> () =
 	names := extractNames(entries)
 	if !containsStr(names, "factorial") {
 		t.Errorf("expected 'factorial' in results, got %v", names)
+	}
+}
+
+func TestVersion_HintOnParseErrorWithUnmetFloor(t *testing.T) {
+	// A tagged 0.5.0 binary running a project that declares clank >= 99.0.0
+	// and contains a deliberate parse error should emit the floor hint.
+	bin := buildClankVersioned(t, "0.5.0")
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(projectDir, "clank.pkg"),
+		[]byte("name = \"demo\"\nversion = \"0.1.0\"\nclank = \">= 99.0.0\"\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write clank.pkg: %v", err)
+	}
+	src := filepath.Join(projectDir, "main.clk")
+	// Intentionally broken — stray `:::` is not valid syntax.
+	if err := os.WriteFile(src, []byte("main :::= broken\n"), 0644); err != nil {
+		t.Fatalf("write main.clk: %v", err)
+	}
+
+	_, stderr, exitCode := runClankBinary(t, bin, "run", src)
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit on parse error, got 0")
+	}
+	if !strings.Contains(stderr, "declares clank >= 99.0.0") {
+		t.Errorf("stderr missing floor hint:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "you're running 0.5.0") {
+		t.Errorf("stderr missing running version:\n%s", stderr)
+	}
+}
+
+func TestVersion_NoHintOnDevBuild(t *testing.T) {
+	// A dev binary (Version = "dev") must never emit the floor hint,
+	// regardless of what constraint the manifest declares.
+	bin := buildClankVersioned(t, "dev")
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(projectDir, "clank.pkg"),
+		[]byte("name = \"demo\"\nversion = \"0.1.0\"\nclank = \">= 99.0.0\"\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write clank.pkg: %v", err)
+	}
+	src := filepath.Join(projectDir, "main.clk")
+	if err := os.WriteFile(src, []byte("main :::= broken\n"), 0644); err != nil {
+		t.Fatalf("write main.clk: %v", err)
+	}
+
+	_, stderr, exitCode := runClankBinary(t, bin, "run", src)
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit on parse error, got 0")
+	}
+	if strings.Contains(stderr, "declares clank") {
+		t.Errorf("dev build emitted floor hint (should not):\n%s", stderr)
+	}
+}
+
+func TestVersion_LockfileTouchedOnSuccessfulRun(t *testing.T) {
+	// Running a successful project should stamp clank.lock's
+	// clank_version with the running binary's version.
+	bin := buildClankVersioned(t, "0.5.0")
+
+	projectDir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(projectDir, "clank.pkg"),
+		[]byte("name = \"demo\"\nversion = \"0.1.0\"\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write clank.pkg: %v", err)
+	}
+	src := filepath.Join(projectDir, "main.clk")
+	if err := os.WriteFile(src,
+		[]byte("main : () -> <io> () = print(\"ok\")\n"),
+		0644,
+	); err != nil {
+		t.Fatalf("write main.clk: %v", err)
+	}
+
+	_, stderr, exitCode := runClankBinary(t, bin, "run", src)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstderr: %s", exitCode, stderr)
+	}
+	lockData, err := os.ReadFile(filepath.Join(projectDir, "clank.lock"))
+	if err != nil {
+		t.Fatalf("clank.lock not created: %v", err)
+	}
+	if !strings.Contains(string(lockData), "\"clank_version\": \"0.5.0\"") {
+		t.Errorf("clank.lock missing expected version stamp:\n%s", lockData)
 	}
 }
 
