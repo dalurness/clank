@@ -51,7 +51,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  eval        Evaluate an expression and print the result\n")
 	fmt.Fprintf(os.Stderr, "  fmt         Format source code\n")
 	fmt.Fprintf(os.Stderr, "  lint        Lint source code\n")
-	fmt.Fprintf(os.Stderr, "  doc         Search and view documentation\n")
+	fmt.Fprintf(os.Stderr, "  doc, docs   Search and view documentation\n")
 	fmt.Fprintf(os.Stderr, "  test        Run tests\n")
 	fmt.Fprintf(os.Stderr, "  pkg         Package management\n")
 	fmt.Fprintf(os.Stderr, "  pretty      Expand terse identifiers to verbose form\n")
@@ -153,7 +153,7 @@ func run() int {
 	if len(positional) > 0 {
 		switch positional[0] {
 		// Commands that handle their own file loading
-		case "doc":
+		case "doc", "docs":
 			return cmdDoc(positional[1:], jsonOut, rawArgs)
 		case "test":
 			return cmdTest(positional[1:], jsonOut, rawArgs)
