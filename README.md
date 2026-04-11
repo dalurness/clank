@@ -174,7 +174,9 @@ clank check <file>              # Type-check without running
 clank eval <file>               # Evaluate and print result
 clank fmt <file>                # Canonical formatting
 clank lint <file>               # Lint source code
-clank doc search <query>        # Search documentation
+clank doc [target]              # List documentation for a target (default: current project)
+clank doc search <q> [target]   # Search docs within target (or builtins)
+clank doc show <name> [target]  # Show one entry in detail
 clank test [files...]           # Run tests
 clank pkg init|add|remove       # Package management
 clank pretty <file>             # Expand terse identifiers

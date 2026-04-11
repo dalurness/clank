@@ -48,8 +48,7 @@ Default is `json`. The `human` format is a pretty-printed rendering of the same 
 | `clank check <file\|dir>` | Type-check without running |
 | `clank build <dir>` | Compile to bytecode |
 | `clank eval <expr>` | Evaluate a single expression |
-| `clank query <query>` | Search docs/types/symbols |
-| `clank doc <module>` | Emit module documentation |
+| `clank doc [target]` | List / search / show documentation |
 | `clank pkg <subcommand>` | Package management |
 | `clank test [glob]` | Run test modules |
 | `clank fmt <file\|dir>` | Canonical formatting |
@@ -139,13 +138,38 @@ When `ok` is `false`, `data` is `null` and `diagnostics` contains at least one e
 
 ### 4.1 `clank doc`
 
-Emits structured documentation for a module or symbol.
+Lists, searches, or shows documentation for a **target**. A target is any
+of:
+
+| Target form                   | Meaning                                                           |
+|-------------------------------|-------------------------------------------------------------------|
+| *(omitted)*                   | The current project (directory containing `clank.pkg`)            |
+| `/cmd/main.clk`               | File or directory, project-root-relative                          |
+| `./path`, `../path`           | File or directory, cwd-relative                                   |
+| `github.com/user/repo[@ref]`  | Remote repo — fetched into `~/.clank/cache/` after a `y/N` prompt |
+| `user/repo`                   | Same as above (bare slug form)                                    |
+| `<lib>[@version]`             | Installed dependency, resolved via `clank.pkg` then cache         |
 
 ```bash
-clank doc std.list               # full module docs
-clank doc std.list.map           # single symbol
-clank doc --type "([a], (a) -> b) -> [b]"  # search by type
+clank doc                                # list current project (public only)
+clank doc ./examples/expense-tracker     # list a subtree
+clank doc search fold                    # search in the current project + builtins
+clank doc search fold ./utils            # scoped search
+clank doc show map                       # show a single entry in detail
+clank doc http                           # docs for an installed dep
+clank doc github.com/foo/bar             # prompts y/N, then lists
 ```
+
+Flags:
+
+- `--all` — include private (non-`pub`) declarations. Default is public only.
+- `--yes` — skip the y/N fetch prompt. Required when fetching in `--json`
+  mode (agents must confirm downloads explicitly).
+- `--json` — structured output (see below).
+
+Builtins are always included in `search` and `show` so agents can discover
+stdlib from any invocation. They are excluded from plain `list` mode (where
+the user is asking "what's in *this* library").
 
 ### 4.2 Module Documentation Output
 

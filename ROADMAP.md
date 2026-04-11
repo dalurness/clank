@@ -77,7 +77,7 @@ Clank is implemented in Go. The execution model is: source → lexer → parser 
 - `clank eval` — evaluate and print result
 - `clank fmt` — canonical formatting
 - `clank lint` — 6 lint rules with enable/disable
-- `clank doc search|show` — documentation extraction and search
+- `clank doc [target]` — list/search/show docs. Target is any of: empty (current project), `/path` or `./path` (project-relative file or dir), `github.com/user/repo[@ref]` (remote fetch, prompts y/N), or an installed dep name `<lib>[@version]`
 - `clank test` — test runner with `--filter`
 - `clank spec` — print embedded language specification
 - `clank pkg init|add|remove|resolve|verify` — package management

@@ -12,8 +12,12 @@ import (
 	"time"
 )
 
-// ClankVersion is the current clank version used in lockfiles.
-const ClankVersion = "0.2.0"
+// ClankVersion is the clank version recorded in generated lockfiles and
+// in the `clank` field of manifests written by PkgInit. It defaults to
+// "dev" (matching the default build-time version of the binary) and is
+// overwritten by cmd/clank's main.go at startup with the real ldflags
+// version so every pkg operation tags files with the actual build.
+var ClankVersion = "dev"
 
 // LockPackage is a single package entry in the lockfile.
 type LockPackage struct {

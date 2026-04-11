@@ -474,14 +474,14 @@ func TestDoc_ShowNonExistent(t *testing.T) {
 
 func TestDoc_SearchFindsUserDefinedFunction(t *testing.T) {
 	src := `
-factorial : (n: Int) -> <> Int =
+pub factorial : (n: Int) -> <> Int =
   if n == 0 then 1 else n * factorial(n - 1)
 
 main : () -> <io> () =
   print(show(factorial(5)))
 `
 	file := writeTmpFile(t, "factorial.clk", src)
-	stdout, _, exitCode := runClank(t, "doc", "search", "factorial", "--json", file)
+	stdout, _, exitCode := runClank(t, "doc", "search", "factorial", file, "--json")
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", exitCode)
 	}
@@ -497,10 +497,24 @@ main : () -> <io> () =
 	}
 }
 
-func TestDoc_DocWithNoSubcommand(t *testing.T) {
-	_, _, exitCode := runClank(t, "doc", "--json")
-	if exitCode != 1 {
-		t.Fatalf("expected exit code 1, got %d", exitCode)
+func TestDoc_ListCurrentProject(t *testing.T) {
+	// Bare `clank doc` lists the current project's public surface. From the
+	// test harness's cwd (the repo root, where clank.pkg lives) this is a
+	// non-empty set of entries.
+	stdout, _, exitCode := runClank(t, "doc", "--json")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if out["ok"] != true {
+		t.Fatal("expected ok: true")
+	}
+	data := out["data"].(map[string]interface{})
+	if _, ok := data["target"]; !ok {
+		t.Error("expected data.target to be set for list mode")
 	}
 }
 

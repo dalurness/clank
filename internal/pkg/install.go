@@ -131,6 +131,17 @@ func PkgInstall(opts PkgInstallOptions) PkgInstallResult {
 	return PkgInstallResult{Ok: true, Installed: installed}
 }
 
+// FetchGitHub downloads a GitHub repo tarball into a temp directory and
+// returns the path to the extracted root. Version may be empty or "latest"
+// to fetch the default branch. The caller owns the returned directory and
+// is responsible for cleanup via os.RemoveAll when done.
+func FetchGitHub(slug, version string) (string, error) {
+	if version == "" {
+		version = "latest"
+	}
+	return fetchGitHubFunc(slug, version)
+}
+
 // fetchGitHubPackage downloads and extracts a GitHub repo tarball into a temp directory.
 // Returns the path to the extracted package root (the single directory inside the tarball).
 func fetchGitHubPackage(slug, version string) (string, error) {

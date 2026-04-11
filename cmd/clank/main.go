@@ -37,6 +37,10 @@ type structuredError struct {
 }
 
 func main() {
+	// Propagate the binary's build-time version into the pkg package so any
+	// manifest or lockfile this process writes is stamped with the same
+	// version the user sees in `clank version`.
+	pkg.ClankVersion = Version
 	os.Exit(run())
 }
 
@@ -51,7 +55,7 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  eval        Evaluate an expression and print the result\n")
 	fmt.Fprintf(os.Stderr, "  fmt         Format source code\n")
 	fmt.Fprintf(os.Stderr, "  lint        Lint source code\n")
-	fmt.Fprintf(os.Stderr, "  doc, docs   Search and view documentation\n")
+	fmt.Fprintf(os.Stderr, "  doc, docs   List/search/show docs for a target (project, /path, github URL, dep)\n")
 	fmt.Fprintf(os.Stderr, "  test        Run tests\n")
 	fmt.Fprintf(os.Stderr, "  pkg         Package management\n")
 	fmt.Fprintf(os.Stderr, "  pretty      Expand terse identifiers to verbose form\n")
@@ -130,8 +134,8 @@ func run() int {
 			}
 		case "--pretty":
 			prettyMode = true
-		case "--dev", "--all":
-			// boolean flags for pkg/test — just consume
+		case "--dev", "--all", "--yes":
+			// boolean flags for pkg/test/doc — just consume
 		case "--help", "-h":
 			usage()
 			return 0
@@ -733,82 +737,224 @@ func collectClkFiles(targets []string) ([]string, error) {
 
 // ── Doc subcommand ──
 
-// cmdDoc implements: clank doc search <query> [files...] | clank doc show <name> [files...]
+// cmdDoc implements the target-based doc UX:
+//
+//	clank doc                          list current project (public only)
+//	clank doc <target>                 list target
+//	clank doc search <query> [target]  search within target
+//	clank doc show <name> [target]     show a single entry
+//
+// Targets: empty = current project; "/path" = project-relative path;
+// "github.com/user/repo" or "user/repo" = remote fetch (prompts y/N);
+// "<name>[@version]" = manifest dep, falling back to ~/.clank/cache/.
+//
+// Flags: --all (include private), --yes (skip fetch prompt), --json.
 func cmdDoc(args []string, jsonOut bool, rawArgs []string) int {
-	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "usage: clank doc search <query> [files...] | clank doc show <name> [files...]\n")
-		return 1
+	includeAll := hasFlag(rawArgs, "--all")
+	yes := hasFlag(rawArgs, "--yes")
+
+	// Drop flags from positional args — ParseArgs already consumed them
+	// from rawArgs, but they'll still appear in args as raw tokens.
+	var positional []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		positional = append(positional, a)
 	}
 
-	subCmd := args[0]
-	if subCmd != "search" && subCmd != "show" {
-		fmt.Fprintf(os.Stderr, "usage: clank doc search <query> [files...] | clank doc show <name> [files...]\n")
-		return 1
+	mode := "list"
+	var query, target string
+
+	if len(positional) > 0 {
+		switch positional[0] {
+		case "search":
+			if len(positional) < 2 {
+				fmt.Fprintf(os.Stderr, "usage: clank doc search <query> [<target>]\n")
+				return 1
+			}
+			mode = "search"
+			query = positional[1]
+			if len(positional) >= 3 {
+				target = positional[2]
+			}
+		case "show":
+			if len(positional) < 2 {
+				fmt.Fprintf(os.Stderr, "usage: clank doc show <name> [<target>]\n")
+				return 1
+			}
+			mode = "show"
+			query = positional[1]
+			if len(positional) >= 3 {
+				target = positional[2]
+			}
+		default:
+			target = positional[0]
+		}
 	}
 
-	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "error: no %s provided\n", map[string]string{"search": "query", "show": "name"}[subCmd])
-		return 1
+	baseDir, err := os.Getwd()
+	if err != nil {
+		baseDir = "."
 	}
 
-	query := args[1]
-	fileTargets := args[2:]
+	fetcher := makeDocFetcher(yes, jsonOut)
 
-	// Collect all entries: builtins + any provided files
-	allEntries := doc.GetBuiltinEntries()
+	resolved, err := doc.ResolveTarget(target, baseDir, fetcher)
+	if err != nil {
+		return docError(jsonOut, err)
+	}
 
-	for _, f := range fileTargets {
+	// Builtins are always included so agents can discover stdlib from any
+	// invocation — they're filtered out of the "public only" test because
+	// their Pub field is nil.
+	entries := append([]doc.DocEntry{}, doc.GetBuiltinEntries()...)
+	for _, f := range resolved.Files {
 		program, err := parseFile(f)
 		if err != nil {
 			continue
 		}
-		allEntries = append(allEntries, doc.ExtractProgramEntries(*program, f)...)
+		entries = append(entries, doc.ExtractProgramEntries(*program, f)...)
 	}
 
-	if subCmd == "search" {
-		results := doc.SearchEntries(allEntries, query)
+	if !includeAll {
+		entries = filterPublicEntries(entries)
+	}
 
-		if jsonOut {
-			data := make([]map[string]interface{}, len(results))
-			for i, e := range results {
-				data[i] = doc.EntryToMap(e)
+	switch mode {
+	case "list":
+		return docList(entries, resolved, jsonOut)
+	case "search":
+		return docSearch(query, entries, resolved, jsonOut)
+	case "show":
+		return docShow(query, entries, jsonOut)
+	}
+	return 0
+}
+
+// makeDocFetcher returns a doc.Fetcher that prompts the user y/N before
+// downloading. In --json mode there's no TTY to prompt on, so fetches are
+// refused unless --yes was passed. The goal is that agents cannot silently
+// pull code off the network.
+func makeDocFetcher(yes, jsonOut bool) doc.Fetcher {
+	return func(slug, version string) (string, error) {
+		if !yes {
+			if jsonOut {
+				return "", fmt.Errorf("fetching %s requires --yes in --json mode", slug)
 			}
-			out := map[string]interface{}{
-				"query":   query,
-				"count":   len(results),
-				"entries": data,
+			label := "github.com/" + slug
+			if version != "" && version != "latest" {
+				label += "@" + version
 			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			enc.Encode(map[string]interface{}{"ok": true, "data": out})
-		} else {
-			if len(results) == 0 {
-				fmt.Printf("No results for %q\n", query)
-			} else {
-				for _, entry := range results {
-					fmt.Println(doc.FormatEntryShort(entry))
-				}
+			fmt.Fprintf(os.Stderr, "About to download %s. Continue? [y/N] ", label)
+			var reply string
+			fmt.Fscanln(os.Stdin, &reply)
+			reply = strings.ToLower(strings.TrimSpace(reply))
+			if reply != "y" && reply != "yes" {
+				return "", fmt.Errorf("fetch cancelled")
 			}
 		}
+		return pkg.FetchGitHub(slug, version)
+	}
+}
+
+func filterPublicEntries(entries []doc.DocEntry) []doc.DocEntry {
+	out := entries[:0]
+	for _, e := range entries {
+		if e.Pub == nil || *e.Pub {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func docList(entries []doc.DocEntry, resolved doc.ResolveResult, jsonOut bool) int {
+	// Exclude builtins from the "list" view — users asking "what's in this
+	// library" don't want the entire stdlib mixed in. Search and show still
+	// see builtins.
+	var listed []doc.DocEntry
+	for _, e := range entries {
+		if e.Kind == "builtin" {
+			continue
+		}
+		listed = append(listed, e)
+	}
+
+	if jsonOut {
+		data := make([]map[string]interface{}, len(listed))
+		for i, e := range listed {
+			data[i] = doc.EntryToMap(e)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{
+			"ok": true,
+			"data": map[string]interface{}{
+				"target":  resolved.Label,
+				"kind":    resolved.Kind,
+				"count":   len(listed),
+				"entries": data,
+			},
+		})
 		return 0
 	}
 
-	// show
-	entry := doc.FindEntry(allEntries, query)
+	if len(listed) == 0 {
+		fmt.Printf("No public entries in %s\n", resolved.Label)
+		return 0
+	}
+	fmt.Printf("%s (%d entries)\n", resolved.Label, len(listed))
+	for _, entry := range listed {
+		fmt.Println(doc.FormatEntryShort(entry))
+	}
+	return 0
+}
+
+func docSearch(query string, entries []doc.DocEntry, resolved doc.ResolveResult, jsonOut bool) int {
+	results := doc.SearchEntries(entries, query)
+	if jsonOut {
+		data := make([]map[string]interface{}, len(results))
+		for i, e := range results {
+			data[i] = doc.EntryToMap(e)
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{
+			"ok": true,
+			"data": map[string]interface{}{
+				"query":   query,
+				"target":  resolved.Label,
+				"count":   len(results),
+				"entries": data,
+			},
+		})
+		return 0
+	}
+	if len(results) == 0 {
+		fmt.Printf("No results for %q\n", query)
+		return 0
+	}
+	for _, entry := range results {
+		fmt.Println(doc.FormatEntryShort(entry))
+	}
+	return 0
+}
+
+func docShow(name string, entries []doc.DocEntry, jsonOut bool) int {
+	entry := doc.FindEntry(entries, name)
 	if entry == nil {
 		if jsonOut {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			enc.Encode(map[string]interface{}{
 				"ok":    false,
-				"error": fmt.Sprintf("no entry found for '%s'", query),
+				"error": fmt.Sprintf("no entry found for '%s'", name),
 			})
 		} else {
-			fmt.Fprintf(os.Stderr, "no entry found for '%s'\n", query)
+			fmt.Fprintf(os.Stderr, "no entry found for '%s'\n", name)
 		}
 		return 1
 	}
-
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -817,6 +963,17 @@ func cmdDoc(args []string, jsonOut bool, rawArgs []string) int {
 		fmt.Println(doc.FormatEntryDetailed(*entry))
 	}
 	return 0
+}
+
+func docError(jsonOut bool, err error) int {
+	if jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{"ok": false, "error": err.Error()})
+	} else {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+	}
+	return 1
 }
 
 // ── Test subcommand ──

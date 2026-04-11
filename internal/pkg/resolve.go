@@ -383,6 +383,7 @@ func PkgInit(opts PkgInitOptions) PkgInitResult {
 	m := &Manifest{
 		Name:     name,
 		Version:  "0.1.0",
+		Clank:    ClankVersion,
 		Authors:  []string{},
 		Keywords: []string{},
 		Deps:     make(map[string]Dependency),
