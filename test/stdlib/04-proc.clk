@@ -1,17 +1,13 @@
-# Test: process execution — comprehensive
+# Test: process execution
+# proc.sh is portable (sh -c on unix, cmd /C on windows); proc.run needs a
+# real executable, so its record shape is covered by Go tests per-OS.
 # Expected output:
 # hello
-# 0
 # hello world
 
 main : () -> <io> () =
-  # Basic run with args
-  let result = proc.run("echo", ["hello"])
-  let _ = print(trim(result.stdout))
+  let out = proc.sh("echo hello")
+  let _ = print(trim(out))
 
-  # Check exit code
-  let _ = print(show(result.code))
-
-  # proc.sh runs a shell command
-  let out = proc.sh("echo hello world")
-  print(trim(out))
+  let out2 = proc.sh("echo hello world")
+  print(trim(out2))

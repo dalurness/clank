@@ -3,6 +3,7 @@ package clank_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -675,12 +676,22 @@ main : () -> <io> () =
 }
 
 func TestProcRunReturnsRecord(t *testing.T) {
+	// proc.run executes a real binary — `echo` is a shell builtin on
+	// Windows, so pick a per-OS command that actually exists.
 	src := `
 main : () -> <io> () =
   let result = proc.run("echo", ["hello"])
   let _ = print(show(result.code))
   print(trim(result.stdout))
 `
+	if runtime.GOOS == "windows" {
+		src = `
+main : () -> <io> () =
+  let result = proc.run("cmd", ["/C", "echo hello"])
+  let _ = print(show(result.code))
+  print(trim(result.stdout))
+`
+	}
 	out, err := runProgram(src, "")
 	if err != nil {
 		t.Fatalf("error: %v", err)
