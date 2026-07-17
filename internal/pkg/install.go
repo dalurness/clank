@@ -68,7 +68,7 @@ func PkgInstall(opts PkgInstallOptions) PkgInstallResult {
 		}
 	}
 
-	var toInstall []Dependency
+	var queue []Dependency
 	for _, dep := range sortedDeps(allDeps) {
 		if dep.GitHub == "" {
 			continue
@@ -76,59 +76,197 @@ func PkgInstall(opts PkgInstallOptions) PkgInstallResult {
 		if opts.Name != "" && dep.Name != opts.Name {
 			continue
 		}
-		toInstall = append(toInstall, dep)
+		queue = append(queue, dep)
 	}
 
-	if opts.Name != "" && len(toInstall) == 0 {
+	if opts.Name != "" && len(queue) == 0 {
 		return PkgInstallResult{Ok: false, Error: fmt.Sprintf("No GitHub dependency '%s' found in manifest", opts.Name)}
 	}
 
-	if len(toInstall) == 0 {
-		return PkgInstallResult{Ok: true, Installed: nil}
-	}
-
+	// Walk github deps breadth-first: after a dep is satisfied (from
+	// cache or fetched), its own manifest's github deps are queued so
+	// transitive dependencies land in the cache too.
 	var installed []InstalledPkg
-	for _, dep := range toInstall {
-		version := dep.Constraint
-		if version == "" || version == "*" {
-			version = "latest"
+	seen := make(map[string]bool)
+	for len(queue) > 0 {
+		dep := queue[0]
+		queue = queue[1:]
+		if seen[dep.Name] {
+			continue
 		}
+		seen[dep.Name] = true
 
-		// Check if already cached
-		cachePath := CachedPackagePath(dep.Name, version)
-		if cachePath != "" {
-			if _, err := os.Stat(filepath.Join(cachePath, "clank.pkg")); err == nil {
-				installed = append(installed, InstalledPkg{
-					Name:    dep.Name,
-					Version: version,
-					GitHub:  dep.GitHub,
-					Path:    cachePath,
-				})
-				continue
-			}
-		}
-
-		// Fetch from GitHub
-		tmpDir, err := fetchGitHubFunc(dep.GitHub, version)
+		cachePath, err := ensureCached(dep)
 		if err != nil {
-			return PkgInstallResult{Ok: false, Error: fmt.Sprintf("Fetching %s: %s", dep.Name, err)}
+			return PkgInstallResult{Ok: false, Error: err.Error()}
 		}
-		defer os.RemoveAll(tmpDir)
 
-		cachePath, err = InstallToCache(dep.Name, version, tmpDir)
+		depManifest, err := LoadManifest(filepath.Join(cachePath, "clank.pkg"))
 		if err != nil {
-			return PkgInstallResult{Ok: false, Error: fmt.Sprintf("Caching %s: %s", dep.Name, err)}
+			return PkgInstallResult{Ok: false, Error: fmt.Sprintf("Reading manifest of %s: %s", dep.Name, err)}
 		}
-
 		installed = append(installed, InstalledPkg{
 			Name:    dep.Name,
-			Version: version,
+			Version: depManifest.Version,
 			GitHub:  dep.GitHub,
 			Path:    cachePath,
 		})
+		for _, sub := range sortedDeps(depManifest.Deps) {
+			if sub.GitHub != "" && !seen[sub.Name] {
+				queue = append(queue, sub)
+			}
+		}
 	}
 
 	return PkgInstallResult{Ok: true, Installed: installed}
+}
+
+// ensureCached makes sure a github dependency is present in the global
+// cache, fetching it if necessary, and returns its cache path.
+//
+// Unpinned deps (constraint "" or "*") reuse any cached version — installs
+// stay deterministic and offline-friendly once fetched; `clank pkg update`
+// is the explicit way to move to a newer snapshot. Pinned deps fetch the
+// exact tag when it isn't cached yet.
+func ensureCached(dep Dependency) (string, error) {
+	if path, _ := FindCachedPackage(dep.Name, dep.Constraint); path != "" {
+		return path, nil
+	}
+
+	version := dep.Constraint
+	if version == "" || version == "*" {
+		version = "latest"
+	}
+	tmpDir, err := fetchGitHubFunc(dep.GitHub, version)
+	if err != nil {
+		return "", fmt.Errorf("Fetching %s: %s", dep.Name, err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Cache under the real version from the fetched manifest so a
+	// default-branch fetch isn't keyed as a meaningless "latest".
+	cacheVersion := version
+	if fetched, err := LoadManifest(filepath.Join(tmpDir, "clank.pkg")); err == nil && fetched.Version != "" {
+		if version == "latest" {
+			cacheVersion = fetched.Version
+		}
+	} else if err != nil {
+		return "", fmt.Errorf("Fetched %s has no valid clank.pkg: %s", dep.GitHub, err)
+	}
+
+	cachePath, err := InstallToCache(dep.Name, cacheVersion, tmpDir)
+	if err != nil {
+		return "", fmt.Errorf("Caching %s: %s", dep.Name, err)
+	}
+	return cachePath, nil
+}
+
+// ── pkg update ──
+
+// PkgUpdateOptions configures a pkg update operation.
+type PkgUpdateOptions struct {
+	Name string // update a specific dep (empty = all unpinned GitHub deps)
+	Dev  bool   // include dev-deps
+	Dir  string
+}
+
+// UpdatedPkg describes one dependency examined by PkgUpdate.
+type UpdatedPkg struct {
+	Name       string
+	GitHub     string
+	OldVersion string // highest version previously cached ("" if none)
+	NewVersion string
+	Changed    bool
+}
+
+// PkgUpdateResult is the result of a pkg update.
+type PkgUpdateResult struct {
+	Ok      bool
+	Updated []UpdatedPkg
+	Skipped []string // pinned deps left alone (change pins with pkg add repo@ref)
+	Error   string
+}
+
+// PkgUpdate re-fetches unpinned GitHub dependencies from their default
+// branch and refreshes the cache. Pinned deps (exact version constraint)
+// are reported as skipped — re-pin with `clank pkg add user/repo@<ref>`.
+func PkgUpdate(opts PkgUpdateOptions) PkgUpdateResult {
+	startDir := opts.Dir
+	if startDir == "" {
+		startDir = "."
+	}
+	startDir, _ = filepath.Abs(startDir)
+	manifestPath := FindManifest(startDir)
+	if manifestPath == "" {
+		return PkgUpdateResult{Ok: false, Error: "No clank.pkg found in current directory or any parent"}
+	}
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		return PkgUpdateResult{Ok: false, Error: err.Error()}
+	}
+
+	allDeps := make(map[string]Dependency)
+	for k, v := range manifest.Deps {
+		allDeps[k] = v
+	}
+	if opts.Dev {
+		for k, v := range manifest.DevDeps {
+			allDeps[k] = v
+		}
+	}
+
+	var targets []Dependency
+	var skipped []string
+	for _, dep := range sortedDeps(allDeps) {
+		if dep.GitHub == "" {
+			continue
+		}
+		if opts.Name != "" && dep.Name != opts.Name {
+			continue
+		}
+		if dep.Constraint != "" && dep.Constraint != "*" {
+			skipped = append(skipped, dep.Name)
+			continue
+		}
+		targets = append(targets, dep)
+	}
+	if opts.Name != "" && len(targets) == 0 && len(skipped) == 0 {
+		return PkgUpdateResult{Ok: false, Error: fmt.Sprintf("No GitHub dependency '%s' found in manifest", opts.Name)}
+	}
+
+	var updated []UpdatedPkg
+	for _, dep := range targets {
+		_, oldVersion := FindCachedPackage(dep.Name, "*")
+
+		tmpDir, err := fetchGitHubFunc(dep.GitHub, "latest")
+		if err != nil {
+			return PkgUpdateResult{Ok: false, Error: fmt.Sprintf("Fetching %s: %s", dep.Name, err), Updated: updated, Skipped: skipped}
+		}
+
+		fetched, err := LoadManifest(filepath.Join(tmpDir, "clank.pkg"))
+		if err != nil {
+			os.RemoveAll(tmpDir)
+			return PkgUpdateResult{Ok: false, Error: fmt.Sprintf("Fetched %s has no valid clank.pkg: %s", dep.GitHub, err), Updated: updated, Skipped: skipped}
+		}
+		if _, err := ReplaceInCache(dep.Name, fetched.Version, tmpDir); err != nil {
+			os.RemoveAll(tmpDir)
+			return PkgUpdateResult{Ok: false, Error: fmt.Sprintf("Caching %s: %s", dep.Name, err), Updated: updated, Skipped: skipped}
+		}
+		os.RemoveAll(tmpDir)
+
+		updated = append(updated, UpdatedPkg{
+			Name:       dep.Name,
+			GitHub:     dep.GitHub,
+			OldVersion: oldVersion,
+			NewVersion: fetched.Version,
+			Changed:    oldVersion != fetched.Version,
+		})
+	}
+
+	// Refresh the lockfile so the new resolution is recorded.
+	WriteLockfile(manifestPath, opts.Dev)
+
+	return PkgUpdateResult{Ok: true, Updated: updated, Skipped: skipped}
 }
 
 // FetchGitHub downloads a GitHub repo tarball into a temp directory and
@@ -140,6 +278,72 @@ func FetchGitHub(slug, version string) (string, error) {
 		version = "latest"
 	}
 	return fetchGitHubFunc(slug, version)
+}
+
+// NormalizeGitHubTarget accepts any of the common GitHub identifier forms
+// and returns a canonical (slug, ref) pair. Supported inputs:
+//
+//	user/repo                    → ("user/repo", "")
+//	user/repo@v1.2.3             → ("user/repo", "v1.2.3")
+//	github.com/user/repo         → ("user/repo", "")
+//	https://github.com/user/repo → ("user/repo", "")
+//	https://github.com/user/repo.git
+//	git@github.com:user/repo.git
+//
+// Returns an error for inputs that don't look like github targets. Local
+// paths ("./foo") and non-github URLs should be detected by the caller
+// before calling this function.
+func NormalizeGitHubTarget(raw string) (slug, ref string, err error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", "", fmt.Errorf("empty target")
+	}
+
+	// git@github.com:user/repo(.git)
+	if strings.HasPrefix(s, "git@github.com:") {
+		s = strings.TrimPrefix(s, "git@github.com:")
+	} else {
+		s = strings.TrimPrefix(s, "https://")
+		s = strings.TrimPrefix(s, "http://")
+		s = strings.TrimPrefix(s, "github.com/")
+	}
+	s = strings.TrimSuffix(s, ".git")
+
+	// Split off optional @ref suffix.
+	if i := strings.LastIndex(s, "@"); i > 0 {
+		ref = s[i+1:]
+		s = s[:i]
+	}
+
+	// Must be user/repo with exactly one slash and both halves non-empty.
+	parts := strings.Split(s, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("not a github target: %q (expected user/repo)", raw)
+	}
+	return s, ref, nil
+}
+
+// LooksLikeGitHubTarget reports whether a raw target string looks like a
+// github identifier in any of the supported forms. Used to decide whether
+// to fetch or treat as a local path.
+func LooksLikeGitHubTarget(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if strings.HasPrefix(s, "github.com/") ||
+		strings.HasPrefix(s, "https://github.com/") ||
+		strings.HasPrefix(s, "http://github.com/") ||
+		strings.HasPrefix(s, "git@github.com:") {
+		return true
+	}
+	// bare user/repo: exactly one slash, no leading dot or slash
+	if strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || strings.HasPrefix(s, "/") {
+		return false
+	}
+	// strip optional @ref for the check
+	if i := strings.LastIndex(s, "@"); i > 0 {
+		s = s[:i]
+	}
+	parts := strings.Split(s, "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != "" && !strings.Contains(parts[0], ".")
 }
 
 // fetchGitHubPackage downloads and extracts a GitHub repo tarball into a temp directory.

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/dalurness/clank/internal/ast"
@@ -42,6 +43,233 @@ func main() {
 	// version the user sees in `clank version`.
 	pkg.ClankVersion = Version
 	os.Exit(run())
+}
+
+// helpTopics holds per-command help text keyed by space-joined command
+// path. `clank pkg add --help` resolves to helpTopics["pkg add"]. Lookups
+// fall back from the longest prefix match down to the empty string
+// (top-level). Keep these next to the commands they document so flag
+// changes are caught in review.
+var helpTopics = map[string]string{
+	"": `Clank — a small ML-ish language for agents.
+
+Usage:
+  clank [--json] <command> [flags] [args]
+
+Core commands:
+  run <file>              Run a program
+  check <file>            Type-check without running
+  eval <expr>             Evaluate an expression
+  fmt <file>              Format source code
+  lint <file>             Lint source code
+  test [files...]         Run tests
+  doc [target]            Search/show documentation
+  pkg <subcommand>        Package management
+  spec                    Print the language specification
+  skill                   Print/install the agent skill for working with clank
+  version                 Print the clank version
+  update                  Update the clank binary to the latest release
+
+Global flags:
+  --json                  Structured output for agents/tools
+  --pretty                Pretty-print (where supported)
+  --help, -h              Show help for a command
+
+See 'clank <command> --help' for per-command details.
+`,
+
+	"run": `clank run <file>
+
+Run a Clank program. The file may import other modules via 'use'
+(local or '&external') — they'll be resolved automatically. The
+file's 'main' function, if present, is called as the entry point.
+
+Flags:
+  --json    Emit VM errors as structured JSON
+`,
+
+	"check": `clank check <file>
+
+Type-check a Clank program without running it. Reports type errors
+with location info. Exits 0 on success, 1 on any hard error.
+
+Flags:
+  --json    Emit diagnostics as a JSON array
+`,
+
+	"eval": `clank eval <expression>
+clank eval -f <file>
+
+Evaluate a single Clank expression and print its result. Useful for
+quick sanity checks and agent-facing math/string ops.
+`,
+
+	"fmt": `clank fmt <file>
+
+Canonical source formatting. Modifies the file in place. Use
+--stdin to read from stdin instead. --check exits non-zero if the
+file would be changed (useful in CI).
+`,
+
+	"lint": `clank lint <file>
+
+Run all enabled lint rules on a single file. Rule codes start with
+'W'. Use --rule <name> to enable/disable individual rules.
+
+Flags:
+  --json          JSON diagnostics
+  --rule <name>   Enable a specific rule
+`,
+
+	"test": `clank test [files...] [--filter <substring>]
+
+Run tests. With no arguments, discovers '*_test.clk' files under
+./test/. With --filter, only tests whose name contains the
+substring run.
+`,
+
+	"doc": `clank doc [<target>]
+clank doc search <query> [<target>]
+clank doc show <name> [<target>]
+
+List, search, or show documentation for a target.
+
+Targets:
+  (omitted)                    current project (containing clank.pkg)
+  /cmd/main.clk                project-relative path (file or dir)
+  ./libs                       cwd-relative path
+  github.com/user/repo         remote repo (fetched after y/N prompt)
+  user/repo                    same as above (bare slug)
+  <lib>[@version]              installed dependency
+
+Flags:
+  --all       Include private (non-pub) declarations
+  --yes       Skip the y/N prompt for remote fetches (required in --json mode)
+  --json      Structured output
+
+Examples:
+  clank doc                                list current project
+  clank doc ./examples/expense-tracker     list a subtree
+  clank doc search fold                    search current project + builtins
+  clank doc show map                       show one entry
+  clank doc github.com/foo/bar             list a remote package
+`,
+
+	"pkg": `clank pkg <subcommand>
+
+Subcommands:
+  init [<name>]          Create a new clank.pkg in the current directory
+  add <target>           Add a dependency (github URL, slug, or local path)
+  install                Fetch + resolve + lockfile + lint for a clean clone
+  update [<name>]        Update unpinned github deps to their latest snapshot
+  list                   List resolved dependencies (direct + transitive)
+  remove <name>          Remove a dependency from the manifest
+
+See 'clank pkg <subcommand> --help' for details.
+`,
+
+	"pkg update": `clank pkg update [<name>] [--dev]
+
+Re-fetch unpinned GitHub dependencies (those added without @<ref>)
+from their default branch, refresh the cache, and rewrite
+clank.lock. With <name>, only that dependency is updated.
+
+Pinned dependencies are skipped — change a pin by re-adding:
+
+  clank pkg add github.com/user/repo@v2.0.0
+
+Flags:
+  --dev     Include dev-deps
+`,
+
+	"pkg list": `clank pkg list [--dev]
+
+List every dependency the project resolves, direct and transitive,
+with version and source. Deps declared in clank.pkg but absent
+from the cache are flagged MISSING (fix with 'clank pkg install').
+
+Flags:
+  --dev     Include dev-deps
+  --json    Structured output
+`,
+
+	"pkg init": `clank pkg init [<name>] [--entry <name>]
+
+Create a new clank.pkg in the current directory. With no argument,
+uses the directory's base name as the package name. --entry
+<name> also creates src/<name>.clk with a stub main function.
+
+The generated manifest records the current clank binary version as
+a '>= <version>' floor under the 'clank' field. On a dev build the
+field is omitted.
+`,
+
+	"pkg add": `clank pkg add <target> [--dev]
+
+Add a dependency. The target is one positional — no flags for name,
+version, path, or source. Clank infers everything from the target:
+
+  clank pkg add github.com/user/repo          latest from default branch
+  clank pkg add github.com/user/repo@v1.2.3   pinned tag
+  clank pkg add user/repo                     bare slug form
+  clank pkg add https://github.com/user/repo  URL form
+  clank pkg add git@github.com:user/repo.git  SSH form
+  clank pkg add ./libs/util                   local path
+
+For github targets, the package is fetched immediately into
+~/.clank/cache/, its own clank.pkg is parsed, and its declared
+'name' becomes the dep key in your manifest. No --name required.
+
+Flags:
+  --dev     Add to [dev-deps] instead of [deps]
+`,
+
+	"pkg install": `clank pkg install [--dev]
+
+Post-clone installer. Reads clank.pkg, fetches any GitHub deps
+missing from the cache, resolves the full module graph, writes
+clank.lock, and runs package-level lint (duplicate-pub-name)
+against each resolved dep.
+
+This is the single command to run after cloning a project — it
+covers what used to be 'install', 'resolve', and 'verify'.
+
+Flags:
+  --dev     Include dev-deps
+`,
+
+	"pkg remove": `clank pkg remove <name> [--dev]
+
+Remove a dependency from clank.pkg by name. --dev removes from
+the [dev-deps] section instead of [deps].
+`,
+
+	"update": `clank update
+
+Self-update: download the latest clank release for this platform
+and replace the running binary in place. 'clank upgrade' is an
+alias. Requires write access to the binary's directory (use sudo
+or an elevated shell if it lives in a system path).
+`,
+}
+
+func init() {
+	// Command aliases share their primary command's help topic.
+	helpTopics["upgrade"] = helpTopics["update"]
+	helpTopics["docs"] = helpTopics["doc"]
+}
+
+// resolveHelpTopic walks positional args from longest prefix to shortest,
+// returning the first matching help topic. Falls back to the top-level
+// help text if nothing matches.
+func resolveHelpTopic(positional []string) string {
+	for i := len(positional); i > 0; i-- {
+		key := strings.Join(positional[:i], " ")
+		if topic, ok := helpTopics[key]; ok {
+			return topic
+		}
+	}
+	return helpTopics[""]
 }
 
 func usage() {
@@ -92,6 +320,7 @@ func run() int {
 	checkMode := false
 	stdinMode := false
 	prettyMode := false
+	helpRequested := false
 	command := "run"
 	var file string
 	var inlineCode string
@@ -137,8 +366,10 @@ func run() int {
 		case "--dev", "--all", "--yes":
 			// boolean flags for pkg/test/doc — just consume
 		case "--help", "-h":
-			usage()
-			return 0
+			// Don't dispatch to top-level usage here — let it fall
+			// through so we can resolve a subcommand-specific help
+			// topic from the collected positional args below.
+			helpRequested = true
 		default:
 			if strings.HasPrefix(rawArgs[i], "-") {
 				fmt.Fprintf(os.Stderr, "unknown flag: %s\n", rawArgs[i])
@@ -146,6 +377,15 @@ func run() int {
 			}
 			positional = append(positional, rawArgs[i])
 		}
+	}
+
+	// --help / -h resolution: look up the longest matching prefix of
+	// positional args in helpTopics. `clank pkg add --help` matches
+	// "pkg add", `clank pkg --help` matches "pkg", `clank --help`
+	// falls through to the top-level topic.
+	if helpRequested {
+		fmt.Print(resolveHelpTopic(positional))
+		return 0
 	}
 
 	if len(positional) == 0 && inlineCode == "" && evalFile == "" {
@@ -168,7 +408,7 @@ func run() int {
 		case "version":
 			fmt.Println(Version)
 			return 0
-		case "update":
+		case "update", "upgrade":
 			return cmdUpdate()
 
 		case "eval":
@@ -305,7 +545,7 @@ func run() int {
 		return cmdEval(desugared, baseDir, jsonOut)
 	case "run":
 		// Link imports first (resolves modules, expands type imports)
-		linked := loader.LinkWithPackages(desugared, baseDir, resolvePackageModules(baseDir))
+		linked := loader.LinkWithPackages(desugared, baseDir, resolvePackageFiles(baseDir))
 		if linked.Error != nil {
 			return reportError(jsonOut, structuredError{
 				Stage:   "link",
@@ -369,9 +609,12 @@ func run() int {
 	return 0
 }
 
-// resolvePackageModules checks for a clank.pkg manifest and resolves the
-// package module map if one exists. Returns nil if no manifest found.
-func resolvePackageModules(baseDir string) map[string]string {
+// resolvePackageFiles checks for a clank.pkg manifest and resolves the
+// package file map if one exists. The return value maps each dep package
+// name to the list of .clk files in its src/ tree — the loader loads all
+// of them and merges their pub symbols into a single flat namespace per
+// package. Returns nil if no manifest found.
+func resolvePackageFiles(baseDir string) map[string][]string {
 	manifestPath := pkg.FindManifest(baseDir)
 	if manifestPath == "" {
 		return nil
@@ -380,7 +623,7 @@ func resolvePackageModules(baseDir string) map[string]string {
 	if err != nil {
 		return nil
 	}
-	return resolution.ModuleMap
+	return resolution.PackageFiles
 }
 
 // makeEffectAliasResolver builds a ModuleEffectAliasResolver that parses
@@ -538,7 +781,7 @@ func wrapExprSource(source string) string {
 
 // cmdEval compiles, links, and runs the program, printing the final result value.
 func cmdEval(program *ast.Program, baseDir string, jsonOut bool) int {
-	linked := loader.LinkWithPackages(program, baseDir, resolvePackageModules(baseDir))
+	linked := loader.LinkWithPackages(program, baseDir, resolvePackageFiles(baseDir))
 	if linked.Error != nil {
 		return reportError(jsonOut, structuredError{
 			Stage:   "link",
@@ -1097,7 +1340,7 @@ func cmdTest(args []string, jsonOut bool, rawArgs []string) int {
 		// Link imports for this test file
 		absFile, _ := filepath.Abs(file)
 		fileDir := filepath.Dir(absFile)
-		linked := loader.LinkWithPackages(program, fileDir, resolvePackageModules(fileDir))
+		linked := loader.LinkWithPackages(program, fileDir, resolvePackageFiles(fileDir))
 		if linked.Error != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s: link error: %v\n", file, linked.Error)
 			continue
@@ -1197,36 +1440,50 @@ func cmdTest(args []string, jsonOut bool, rawArgs []string) int {
 
 // ── Pkg subcommand ──
 
-// cmdPkg implements: clank pkg <init|resolve|add|remove|verify> [flags]
+// cmdPkg implements: clank pkg <init|add|install|update|list|remove>
+//
+// `resolve` and `verify` were folded into `install` — both used to produce
+// state that made deps importable, but the split confused first-time
+// users. `install` now does fetch + resolve + lockfile + lint in one
+// step, and `add` does the same when given a new target.
 func cmdPkg(args []string, jsonOut bool, rawArgs []string) int {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: clank pkg <init|resolve|add|remove|install|verify>\n")
+		fmt.Fprintf(os.Stderr, "usage: clank pkg <init|add|install|update|list|remove>\nSee `clank pkg <subcommand> --help` for details.\n")
 		return 1
 	}
 
 	subCmd := args[0]
+	subArgs := args[1:]
 
 	switch subCmd {
 	case "init":
-		return cmdPkgInit(jsonOut, rawArgs)
+		return cmdPkgInit(subArgs, jsonOut, rawArgs)
 	case "add":
-		return cmdPkgAdd(jsonOut, rawArgs)
+		return cmdPkgAdd(subArgs, jsonOut, rawArgs)
 	case "remove":
-		return cmdPkgRemove(jsonOut, rawArgs)
-	case "resolve":
-		return cmdPkgResolve(jsonOut)
-	case "verify":
-		return cmdPkgVerify(jsonOut)
+		return cmdPkgRemove(subArgs, jsonOut, rawArgs)
 	case "install":
 		return cmdPkgInstall(jsonOut, rawArgs)
+	case "update":
+		return cmdPkgUpdate(subArgs, jsonOut, rawArgs)
+	case "list":
+		return cmdPkgList(jsonOut, rawArgs)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown pkg subcommand: %s\n", subCmd)
+		fmt.Fprintf(os.Stderr, "unknown pkg subcommand: %s\nsee `clank pkg --help`\n", subCmd)
 		return 1
 	}
 }
 
-func cmdPkgInit(jsonOut bool, rawArgs []string) int {
-	name := getFlagValue(rawArgs, "--name")
+func cmdPkgInit(args []string, jsonOut bool, rawArgs []string) int {
+	// `clank pkg init <name>` — positional name, falling back to the
+	// directory's base name inside PkgInit when omitted.
+	var name string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			name = a
+			break
+		}
+	}
 	entry := getFlagValue(rawArgs, "--entry")
 
 	result := pkg.PkgInit(pkg.PkgInitOptions{
@@ -1258,28 +1515,36 @@ func cmdPkgInit(jsonOut bool, rawArgs []string) int {
 	return 0
 }
 
-func cmdPkgAdd(jsonOut bool, rawArgs []string) int {
-	name := getFlagValue(rawArgs, "--name")
-	if name == "" {
-		msg := "Missing required --name flag for pkg add"
+// cmdPkgAdd implements: clank pkg add <target> [--dev]
+//
+// The target is one positional: a github slug (user/repo), a GitHub
+// URL (https/ssh), or a local path (./libs/util). Github targets are
+// fetched eagerly, cached, and the dep is keyed by its own manifest's
+// declared name — no --name flag needed.
+func cmdPkgAdd(args []string, jsonOut bool, rawArgs []string) int {
+	// Drop flags from positional args (main's flag loop already consumed
+	// known flags but leaves them in args).
+	var positional []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) == 0 {
+		msg := "usage: clank pkg add <target>\n  target: github.com/user/repo, user/repo, git@github.com:user/repo, or ./path"
 		if jsonOut {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			enc.Encode(map[string]interface{}{"ok": false, "error": msg})
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+			fmt.Fprintf(os.Stderr, "%s\n", msg)
 		}
 		return 1
 	}
 
-	result := pkg.PkgAdd(pkg.PkgAddOptions{
-		Name:       name,
-		Constraint: getFlagValue(rawArgs, "--version"),
-		Path:       getFlagValue(rawArgs, "--path"),
-		GitHub:     getFlagValue(rawArgs, "--github"),
-		Dev:        hasFlag(rawArgs, "--dev"),
-		Dir:        ".",
-	})
+	target := positional[0]
+	result := pkg.PkgAddFromTarget(target, hasFlag(rawArgs, "--dev"), ".")
 
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
@@ -1291,47 +1556,61 @@ func cmdPkgAdd(jsonOut bool, rawArgs []string) int {
 			"constraint": result.Constraint,
 			"path":       result.Path,
 			"github":     result.GitHub,
+			"updated":    result.Updated,
 			"error":      result.Error,
 		})
-	} else {
-		if result.Ok {
-			var desc string
-			if result.GitHub != "" {
-				desc = fmt.Sprintf(`{ github = "%s"`, result.GitHub)
-				if result.Constraint != "*" && result.Constraint != "" {
-					desc += fmt.Sprintf(`, version = "%s"`, result.Constraint)
-				}
-				desc += " }"
-			} else if result.Path != "" {
-				desc = fmt.Sprintf(`{ path = "%s" }`, result.Path)
-			} else {
-				desc = fmt.Sprintf(`"%s"`, result.Constraint)
-			}
-			fmt.Printf("Added %s = %s to [%s]\n", result.Name, desc, result.Section)
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
+		if !result.Ok {
 			return 1
 		}
+		return 0
 	}
+
+	if !result.Ok {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
+		return 1
+	}
+	var desc string
+	switch {
+	case result.GitHub != "" && result.Constraint != "*":
+		desc = fmt.Sprintf(`{ github = "%s", version = "%s" }`, result.GitHub, result.Constraint)
+	case result.GitHub != "":
+		desc = fmt.Sprintf(`{ github = "%s" }`, result.GitHub)
+	case result.Path != "":
+		desc = fmt.Sprintf(`{ path = "%s" }`, result.Path)
+	default:
+		desc = fmt.Sprintf(`"%s"`, result.Constraint)
+	}
+	verb := "Added"
+	if result.Updated {
+		verb = "Updated"
+	}
+	fmt.Printf("%s %s = %s in [%s]\n", verb, result.Name, desc, result.Section)
 	return 0
 }
 
-func cmdPkgRemove(jsonOut bool, rawArgs []string) int {
-	name := getFlagValue(rawArgs, "--name")
-	if name == "" {
-		msg := "Missing required --name flag for pkg remove"
+// cmdPkgRemove implements: clank pkg remove <name> [--dev]
+func cmdPkgRemove(args []string, jsonOut bool, rawArgs []string) int {
+	var positional []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) == 0 {
+		msg := "usage: clank pkg remove <name>"
 		if jsonOut {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			enc.Encode(map[string]interface{}{"ok": false, "error": msg})
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+			fmt.Fprintf(os.Stderr, "%s\n", msg)
 		}
 		return 1
 	}
 
 	result := pkg.PkgRemove(pkg.PkgRemoveOptions{
-		Name: name,
+		Name: positional[0],
 		Dev:  hasFlag(rawArgs, "--dev"),
 		Dir:  ".",
 	})
@@ -1356,98 +1635,54 @@ func cmdPkgRemove(jsonOut bool, rawArgs []string) int {
 	return 0
 }
 
-func cmdPkgResolve(jsonOut bool) int {
-	result := pkg.PkgResolve(".")
-
-	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		enc.Encode(map[string]interface{}{
-			"ok":       result.Ok,
-			"root":     result.Root,
-			"packages": result.Packages,
-			"error":    result.Error,
-		})
-	} else {
-		if result.Ok {
-			if len(result.Packages) == 0 {
-				fmt.Println("No local dependencies to resolve.")
-			} else {
-				fmt.Printf("Resolved %d package(s):\n", len(result.Packages))
-				for _, p := range result.Packages {
-					fmt.Printf("  %s@%s (%s)\n", p.Name, p.Version, p.Path)
-					for _, m := range p.Modules {
-						fmt.Printf("    %s\n", m)
-					}
-				}
-			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
-			return 1
-		}
+// cmdPkgInstall implements the collapsed post-clone install flow.
+// One command: fetch missing GitHub deps, resolve the full module graph,
+// rewrite the lockfile, and run package-level lint (duplicate-pub-name)
+// against each resolved dep. This replaces what used to be three
+// separate commands (install/resolve/verify) with overlapping
+// responsibilities.
+func cmdPkgInstall(jsonOut bool, rawArgs []string) int {
+	// Step 1: fetch any missing GitHub deps into the global cache.
+	installResult := pkg.PkgInstall(pkg.PkgInstallOptions{
+		Dev: hasFlag(rawArgs, "--dev"),
+		Dir: ".",
+	})
+	if !installResult.Ok {
+		return pkgInstallError(jsonOut, installResult.Error)
 	}
-	return 0
-}
 
-func cmdPkgVerify(jsonOut bool) int {
+	// Step 2: resolve the module graph. This picks up everything in
+	// ~/.clank/cache/ that matches the manifest.
 	manifestPath := pkg.FindManifest(".")
 	if manifestPath == "" {
-		msg := "No clank.pkg found in current directory or any parent"
-		if jsonOut {
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			enc.Encode(map[string]interface{}{"ok": false, "error": msg})
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
-		}
-		return 1
+		return pkgInstallError(jsonOut, "No clank.pkg found in current directory or any parent")
+	}
+	resolution, err := pkg.ResolvePackages(manifestPath, hasFlag(rawArgs, "--dev"))
+	if err != nil {
+		return pkgInstallError(jsonOut, err.Error())
 	}
 
-	result := pkg.VerifyLockfile(manifestPath, true)
+	// Step 3: write the lockfile.
+	if _, err := pkg.WriteLockfile(manifestPath, hasFlag(rawArgs, "--dev")); err != nil {
+		return pkgInstallError(jsonOut, "writing lockfile: "+err.Error())
+	}
+
+	// Step 4: run the package-level linter across each resolved dep.
+	// Duplicate-pub-name collisions within a single dep turn into
+	// install-time errors so consumers never hit them at use site.
+	var lintIssues []string
+	for _, dep := range resolution.Packages {
+		diags := linter.LintPackage(dep.Files)
+		for _, d := range diags {
+			lintIssues = append(lintIssues, fmt.Sprintf("[%s] %s: %s", dep.Name, d.Code, d.Message))
+		}
+	}
 
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(map[string]interface{}{
-			"ok":      result.Ok,
-			"stale":   result.Stale,
-			"missing": result.Missing,
-			"extra":   result.Extra,
-		})
-	} else {
-		if result.Ok {
-			fmt.Println("Lockfile is up to date.")
-		} else {
-			if len(result.Missing) > 0 {
-				fmt.Fprintf(os.Stderr, "Missing from lockfile: %s\n", strings.Join(result.Missing, ", "))
-			}
-			if len(result.Stale) > 0 {
-				fmt.Fprintf(os.Stderr, "Stale in lockfile: %s\n", strings.Join(result.Stale, ", "))
-			}
-			if len(result.Extra) > 0 {
-				fmt.Fprintf(os.Stderr, "Extra in lockfile: %s\n", strings.Join(result.Extra, ", "))
-			}
-			fmt.Fprintf(os.Stderr, "Run 'clank pkg resolve' to update the lockfile.\n")
-			return 1
-		}
-	}
-	return 0
-}
-
-func cmdPkgInstall(jsonOut bool, rawArgs []string) int {
-	name := getFlagValue(rawArgs, "--name")
-
-	result := pkg.PkgInstall(pkg.PkgInstallOptions{
-		Name: name,
-		Dev:  hasFlag(rawArgs, "--dev"),
-		Dir:  ".",
-	})
-
-	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		installed := make([]map[string]interface{}, len(result.Installed))
-		for i, p := range result.Installed {
+		installed := make([]map[string]interface{}, len(installResult.Installed))
+		for i, p := range installResult.Installed {
 			installed[i] = map[string]interface{}{
 				"name":    p.Name,
 				"version": p.Version,
@@ -1455,24 +1690,221 @@ func cmdPkgInstall(jsonOut bool, rawArgs []string) int {
 				"path":    p.Path,
 			}
 		}
-		enc.Encode(map[string]interface{}{
-			"ok":        result.Ok,
-			"installed": installed,
-			"error":     result.Error,
-		})
-	} else {
-		if result.Ok {
-			if len(result.Installed) == 0 {
-				fmt.Println("No GitHub dependencies to install.")
-			} else {
-				for _, p := range result.Installed {
-					fmt.Printf("Installed %s@%s from %s -> %s\n", p.Name, p.Version, p.GitHub, p.Path)
-				}
+		resolved := make([]map[string]interface{}, len(resolution.Packages))
+		for i, p := range resolution.Packages {
+			resolved[i] = map[string]interface{}{
+				"name":    p.Name,
+				"version": p.Manifest.Version,
+				"path":    p.Path,
+				"files":   p.Files,
 			}
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
+		}
+		enc.Encode(map[string]interface{}{
+			"ok":          true,
+			"installed":   installed,
+			"resolved":    resolved,
+			"lint_issues": lintIssues,
+		})
+		if len(lintIssues) > 0 {
 			return 1
 		}
+		return 0
+	}
+
+	if len(installResult.Installed) == 0 && len(resolution.Packages) == 0 {
+		fmt.Println("No dependencies to install.")
+	} else {
+		for _, p := range installResult.Installed {
+			fmt.Printf("Installed %s@%s from %s\n", p.Name, p.Version, p.GitHub)
+		}
+		fmt.Printf("Resolved %d package(s), wrote clank.lock.\n", len(resolution.Packages))
+	}
+	if len(lintIssues) > 0 {
+		fmt.Fprintf(os.Stderr, "\nPackage lint issues found:\n")
+		for _, issue := range lintIssues {
+			fmt.Fprintf(os.Stderr, "  %s\n", issue)
+		}
+		return 1
 	}
 	return 0
 }
+
+// cmdPkgUpdate implements: clank pkg update [<name>] [--dev]
+//
+// Re-fetches unpinned GitHub deps from their default branch, refreshes
+// the cache and lockfile, and reports what moved. Pinned deps are left
+// alone — change a pin with `clank pkg add user/repo@<ref>`.
+func cmdPkgUpdate(args []string, jsonOut bool, rawArgs []string) int {
+	var name string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			name = a
+			break
+		}
+	}
+
+	result := pkg.PkgUpdate(pkg.PkgUpdateOptions{
+		Name: name,
+		Dev:  hasFlag(rawArgs, "--dev"),
+		Dir:  ".",
+	})
+
+	if jsonOut {
+		updated := make([]map[string]interface{}, len(result.Updated))
+		for i, u := range result.Updated {
+			updated[i] = map[string]interface{}{
+				"name":        u.Name,
+				"github":      u.GitHub,
+				"old_version": u.OldVersion,
+				"new_version": u.NewVersion,
+				"changed":     u.Changed,
+			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{
+			"ok":      result.Ok,
+			"updated": updated,
+			"skipped": result.Skipped,
+			"error":   result.Error,
+		})
+		if !result.Ok {
+			return 1
+		}
+		return 0
+	}
+
+	if !result.Ok {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)
+		return 1
+	}
+	if len(result.Updated) == 0 && len(result.Skipped) == 0 {
+		fmt.Println("No GitHub dependencies to update.")
+		return 0
+	}
+	for _, u := range result.Updated {
+		switch {
+		case u.Changed && u.OldVersion != "":
+			fmt.Printf("Updated %s: %s -> %s\n", u.Name, u.OldVersion, u.NewVersion)
+		case u.Changed:
+			fmt.Printf("Updated %s to %s\n", u.Name, u.NewVersion)
+		default:
+			fmt.Printf("Refreshed %s (still %s)\n", u.Name, u.NewVersion)
+		}
+	}
+	for _, s := range result.Skipped {
+		fmt.Printf("Skipped %s (pinned — use `clank pkg add <repo>@<ref>` to change the pin)\n", s)
+	}
+	return 0
+}
+
+// cmdPkgList implements: clank pkg list [--dev]
+//
+// Shows every dependency the project resolves to, direct and transitive,
+// with versions and where they came from.
+func cmdPkgList(jsonOut bool, rawArgs []string) int {
+	manifestPath := pkg.FindManifest(".")
+	if manifestPath == "" {
+		return pkgInstallError(jsonOut, "No clank.pkg found in current directory or any parent")
+	}
+	manifest, err := pkg.LoadManifest(manifestPath)
+	if err != nil {
+		return pkgInstallError(jsonOut, err.Error())
+	}
+	includeDev := hasFlag(rawArgs, "--dev")
+	resolution, err := pkg.ResolvePackages(manifestPath, includeDev)
+	if err != nil {
+		return pkgInstallError(jsonOut, err.Error())
+	}
+
+	direct := make(map[string]pkg.Dependency)
+	for k, v := range manifest.Deps {
+		direct[k] = v
+	}
+	if includeDev {
+		for k, v := range manifest.DevDeps {
+			direct[k] = v
+		}
+	}
+	resolvedNames := make(map[string]bool)
+
+	type row struct {
+		Name       string `json:"name"`
+		Version    string `json:"version"`
+		Source     string `json:"source"`
+		Direct     bool   `json:"direct"`
+		Constraint string `json:"constraint,omitempty"`
+		Path       string `json:"path"`
+	}
+	var rows []row
+	for _, p := range resolution.Packages {
+		resolvedNames[p.Name] = true
+		src := "path"
+		constraint := ""
+		d, isDirect := direct[p.Name]
+		if isDirect {
+			constraint = d.Constraint
+			if d.GitHub != "" {
+				src = "github.com/" + d.GitHub
+			}
+		} else if p.Manifest.Repository != "" {
+			src = p.Manifest.Repository
+		}
+		rows = append(rows, row{
+			Name:       p.Name,
+			Version:    p.Manifest.Version,
+			Source:     src,
+			Direct:     isDirect,
+			Constraint: constraint,
+			Path:       p.Path,
+		})
+	}
+
+	// Deps declared in the manifest but not resolvable right now.
+	var missing []string
+	for name := range direct {
+		if !resolvedNames[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+
+	if jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{
+			"ok":       true,
+			"packages": rows,
+			"missing":  missing,
+		})
+		return 0
+	}
+
+	if len(rows) == 0 && len(missing) == 0 {
+		fmt.Println("No dependencies.")
+		return 0
+	}
+	for _, r := range rows {
+		kind := "direct"
+		if !r.Direct {
+			kind = "transitive"
+		}
+		fmt.Printf("%s@%s  %s  (%s)\n", r.Name, r.Version, r.Source, kind)
+	}
+	for _, name := range missing {
+		fmt.Printf("%s  MISSING — run `clank pkg install`\n", name)
+	}
+	return 0
+}
+
+func pkgInstallError(jsonOut bool, msg string) int {
+	if jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(map[string]interface{}{"ok": false, "error": msg})
+	} else {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", msg)
+	}
+	return 1
+}
+

@@ -258,8 +258,17 @@ func TestResolveSingleLocalDep(t *testing.T) {
 	if resolved[0].Manifest.Version != "0.2.0" {
 		t.Errorf("version: %q", resolved[0].Manifest.Version)
 	}
-	if _, ok := resolved[0].Modules["my-lib.utils"]; !ok {
-		t.Error("expected my-lib.utils module")
+	// Flat-package model: we just assert the utils file landed in the
+	// discovered file list. Internal module path is no longer a concept.
+	found := false
+	for _, f := range resolved[0].Files {
+		if strings.HasSuffix(f, "utils.clk") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected utils.clk in Files, got %v", resolved[0].Files)
 	}
 }
 
@@ -388,43 +397,49 @@ func TestSkipRegistryDeps(t *testing.T) {
 
 // ── Module discovery ──
 
-func TestDiscoverModules(t *testing.T) {
+func TestDiscoverPackageFiles(t *testing.T) {
 	tmp := t.TempDir()
 	os.MkdirAll(filepath.Join(tmp, "pkg", "src", "lib"), 0755)
 	os.WriteFile(filepath.Join(tmp, "pkg", "src", "main.clk"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(tmp, "pkg", "src", "lib", "parser.clk"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(tmp, "pkg", "src", "lib", "types.clk"), []byte(""), 0644)
 
-	modules := DiscoverModules(filepath.Join(tmp, "pkg"), "my-pkg")
-	if len(modules) != 3 {
-		t.Fatalf("expected 3 modules, got %d", len(modules))
+	files := DiscoverPackageFiles(filepath.Join(tmp, "pkg"))
+	if len(files) != 3 {
+		t.Fatalf("expected 3 files, got %d: %v", len(files), files)
 	}
-	if _, ok := modules["my-pkg.main"]; !ok {
-		t.Error("missing my-pkg.main")
-	}
-	if _, ok := modules["my-pkg.lib.parser"]; !ok {
-		t.Error("missing my-pkg.lib.parser")
-	}
-	if _, ok := modules["my-pkg.lib.types"]; !ok {
-		t.Error("missing my-pkg.lib.types")
+	// Files include every .clk recursively; internal module-path is
+	// no longer visible to consumers.
+	expectedSuffixes := []string{"main.clk", "parser.clk", "types.clk"}
+	for _, suffix := range expectedSuffixes {
+		found := false
+		for _, f := range files {
+			if strings.HasSuffix(f, suffix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected %s in files list", suffix)
+		}
 	}
 }
 
-func TestDiscoverModulesEmpty(t *testing.T) {
+func TestDiscoverPackageFilesEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	os.MkdirAll(filepath.Join(tmp, "pkg", "src"), 0755)
-	modules := DiscoverModules(filepath.Join(tmp, "pkg"), "my-pkg")
-	if len(modules) != 0 {
-		t.Errorf("expected 0 modules, got %d", len(modules))
+	files := DiscoverPackageFiles(filepath.Join(tmp, "pkg"))
+	if len(files) != 0 {
+		t.Errorf("expected 0 files, got %d", len(files))
 	}
 }
 
-func TestDiscoverModulesNoSrc(t *testing.T) {
+func TestDiscoverPackageFilesNoSrc(t *testing.T) {
 	tmp := t.TempDir()
 	os.MkdirAll(filepath.Join(tmp, "pkg"), 0755)
-	modules := DiscoverModules(filepath.Join(tmp, "pkg"), "my-pkg")
-	if len(modules) != 0 {
-		t.Errorf("expected 0 modules, got %d", len(modules))
+	files := DiscoverPackageFiles(filepath.Join(tmp, "pkg"))
+	if len(files) != 0 {
+		t.Errorf("expected 0 files, got %d", len(files))
 	}
 }
 
@@ -651,17 +666,23 @@ func TestPkgAddDevDep(t *testing.T) {
 	}
 }
 
-func TestPkgAddDuplicate(t *testing.T) {
+func TestPkgAddUpsert(t *testing.T) {
+	// Re-adding an existing dep replaces its entry (go-get semantics) —
+	// this is how a pin gets changed.
 	dir := filepath.Join(t.TempDir(), "add-dup-test")
 	os.MkdirAll(dir, 0755)
 	os.WriteFile(filepath.Join(dir, "clank.pkg"), []byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nfoo = \"1.0\"\n"), 0644)
 
 	result := PkgAdd(PkgAddOptions{Name: "foo", Constraint: "2.0", Dir: dir})
-	if result.Ok {
-		t.Error("expected failure")
+	if !result.Ok {
+		t.Fatalf("expected ok: %s", result.Error)
 	}
-	if !strings.Contains(result.Error, "already exists") {
-		t.Errorf("error: %q", result.Error)
+	if !result.Updated {
+		t.Error("expected Updated=true for existing dep")
+	}
+	m, _ := LoadManifest(filepath.Join(dir, "clank.pkg"))
+	if m.Deps["foo"].Constraint != "2.0" {
+		t.Errorf("constraint not replaced: %q", m.Deps["foo"].Constraint)
 	}
 }
 
@@ -961,8 +982,16 @@ func TestResolvePackagesFromGlobalCache(t *testing.T) {
 	if resolution.Packages[0].Path != cachedPkg {
 		t.Errorf("path: %q, want %q", resolution.Packages[0].Path, cachedPkg)
 	}
-	if _, ok := resolution.Packages[0].Modules["http-client.client"]; !ok {
-		t.Error("expected http-client.client module")
+	// Flat model: just assert the client file is in the package's file list.
+	found := false
+	for _, f := range resolution.Packages[0].Files {
+		if strings.HasSuffix(f, "client.clk") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected client.clk in Files, got %v", resolution.Packages[0].Files)
 	}
 }
 

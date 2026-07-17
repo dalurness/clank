@@ -174,7 +174,28 @@ func (p *parser) parseModDecl() ast.TopLevel {
 
 func (p *parser) parseUseDecl() ast.TopLevel {
 	loc := p.expect(token.Keyword, "use").Loc
+
+	// Optional `&` sigil marks the path as an external package reference,
+	// resolved through the package system instead of the local filesystem.
+	// External paths must be a single segment (the package name) — the
+	// package exposes one flat namespace, internal module layout is not
+	// visible to consumers.
+	external := false
+	if p.at(token.Delim, "&") {
+		p.advance()
+		external = true
+	}
+
 	path := p.parseModPath()
+
+	if external && len(path) != 1 {
+		panic(&ParseError{
+			Code: "E101",
+			Message: "external import must be a single package name: got `use &" + strings.Join(path, ".") +
+				"` (use `use &" + path[0] + "` and access members via `" + path[0] + ".<symbol>`)",
+			Location: loc,
+		})
+	}
 
 	// Qualified import: `use foo.bar` or `use foo.bar as name`
 	if !p.at(token.Delim, "(") {
@@ -183,7 +204,7 @@ func (p *parser) parseUseDecl() ast.TopLevel {
 			p.advance() // consume "as"
 			qualifier = p.expectIdentOrKeyword()
 		}
-		return ast.TopUseDecl{Path: path, Qualified: true, Qualifier: qualifier, Loc: loc}
+		return ast.TopUseDecl{Path: path, Qualified: true, Qualifier: qualifier, External: external, Loc: loc}
 	}
 
 	// Unqualified import: `use foo.bar (x, y)`
@@ -205,7 +226,7 @@ func (p *parser) parseUseDecl() ast.TopLevel {
 		}
 	}
 	p.expect(token.Delim, ")")
-	return ast.TopUseDecl{Path: path, Imports: imports, Loc: loc}
+	return ast.TopUseDecl{Path: path, Imports: imports, External: external, Loc: loc}
 }
 
 // ── Pub prefix ──

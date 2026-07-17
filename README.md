@@ -169,23 +169,43 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 ## CLI
 
 ```bash
-clank run <file>                # Run a .clk file
-clank check <file>              # Type-check without running
-clank eval <file>               # Evaluate and print result
-clank fmt <file>                # Canonical formatting
-clank lint <file>               # Lint source code
-clank doc [target]              # List documentation for a target (default: current project)
-clank doc search <q> [target]   # Search docs within target (or builtins)
-clank doc show <name> [target]  # Show one entry in detail
-clank test [files...]           # Run tests
-clank pkg init|add|remove       # Package management
-clank pretty <file>             # Expand terse identifiers
-clank terse <file>              # Compress to terse form
-clank version                   # Print the Clank version
-clank update                    # Update to the latest version
+clank run <file>                       # Run a .clk file
+clank check <file>                     # Type-check without running
+clank eval <expr>                      # Evaluate and print result
+clank fmt <file>                       # Canonical formatting
+clank lint <file>                      # Lint source code
+clank test [files...]                  # Run tests
+clank doc [target]                     # List/search/show docs
+clank pkg init [<name>]                # Create a new clank.pkg
+clank pkg add <target>                 # Add a dep (github URL/slug or ./path)
+clank pkg install                      # Fetch + resolve + lockfile + lint
+clank pkg update [<name>]              # Refresh unpinned deps to latest
+clank pkg list                         # List resolved deps
+clank pkg remove <name>                # Remove a dep
+clank pretty <file>                    # Expand terse identifiers
+clank terse <file>                     # Compress to terse form
+clank version                          # Print the clank version
+clank update                           # Self-update to the latest release
 ```
 
-All commands support `--json` for structured output.
+All commands support `--json` for structured output. Use
+`clank <command> --help` for per-command documentation.
+
+Adding a github dep fetches it immediately — no `--name`, no
+separate `install`/`resolve` steps:
+
+```bash
+clank pkg add github.com/user/repo       # fetches, caches, resolves, done
+```
+
+Importing an external package uses the `&` sigil so it's always
+visually distinct from local files:
+
+```clank
+use &hello-clank         # all public symbols as hello-clank.X
+use &hello-clank as hc   # aliased
+use &hello-clank (greet) # selective, unqualified
+```
 
 ## Project Structure
 

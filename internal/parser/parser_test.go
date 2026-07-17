@@ -639,6 +639,65 @@ effect State {
 	}
 }
 
+// ── Use declaration — external sigil ──
+
+func TestParseUseExternalQualified(t *testing.T) {
+	prog := mustParse(t, `use &hello-clank`)
+	if len(prog.TopLevels) != 1 {
+		t.Fatalf("expected 1 top-level, got %d", len(prog.TopLevels))
+	}
+	use, ok := prog.TopLevels[0].(ast.TopUseDecl)
+	if !ok {
+		t.Fatalf("expected TopUseDecl, got %T", prog.TopLevels[0])
+	}
+	if !use.External {
+		t.Error("expected External=true")
+	}
+	if !use.Qualified {
+		t.Error("expected Qualified=true")
+	}
+	if len(use.Path) != 1 || use.Path[0] != "hello-clank" {
+		t.Errorf("Path = %v, want [hello-clank]", use.Path)
+	}
+}
+
+func TestParseUseExternalWithAlias(t *testing.T) {
+	prog := mustParse(t, `use &hello-clank as hc`)
+	use := prog.TopLevels[0].(ast.TopUseDecl)
+	if !use.External {
+		t.Error("expected External=true")
+	}
+	if use.Qualifier != "hc" {
+		t.Errorf("Qualifier = %q, want hc", use.Qualifier)
+	}
+}
+
+func TestParseUseExternalSelective(t *testing.T) {
+	prog := mustParse(t, `use &hello-clank (greet, farewell)`)
+	use := prog.TopLevels[0].(ast.TopUseDecl)
+	if !use.External {
+		t.Error("expected External=true")
+	}
+	if use.Qualified {
+		t.Error("expected Qualified=false for selective")
+	}
+	if len(use.Imports) != 2 {
+		t.Fatalf("expected 2 imports, got %d", len(use.Imports))
+	}
+	if use.Imports[0].Name != "greet" || use.Imports[1].Name != "farewell" {
+		t.Errorf("imports = %v", use.Imports)
+	}
+}
+
+func TestParseUseLocalStillWorks(t *testing.T) {
+	// A local use (no sigil) must not accidentally get tagged External.
+	prog := mustParse(t, `use foo.bar`)
+	use := prog.TopLevels[0].(ast.TopUseDecl)
+	if use.External {
+		t.Error("local use should not be External")
+	}
+}
+
 // ── Pub modifier ──
 
 func TestParsePubDefinition(t *testing.T) {

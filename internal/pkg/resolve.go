@@ -44,7 +44,25 @@ func InstallToCache(name, version, sourcePath string) (string, error) {
 		return cachePath, nil
 	}
 
-	// Copy source into cache
+	return copyToCache(cachePath, sourcePath)
+}
+
+// ReplaceInCache is InstallToCache without the already-cached short
+// circuit: any existing entry for name@version is deleted first. Used by
+// `pkg update` so a default branch that moved without a version bump
+// still refreshes the cached copy.
+func ReplaceInCache(name, version, sourcePath string) (string, error) {
+	cachePath := CachedPackagePath(name, version)
+	if cachePath == "" {
+		return "", fmt.Errorf("cannot determine cache directory")
+	}
+	if err := os.RemoveAll(cachePath); err != nil {
+		return "", fmt.Errorf("clearing cache entry: %w", err)
+	}
+	return copyToCache(cachePath, sourcePath)
+}
+
+func copyToCache(cachePath, sourcePath string) (string, error) {
 	if err := os.MkdirAll(cachePath, 0755); err != nil {
 		return "", fmt.Errorf("creating cache dir: %w", err)
 	}
@@ -83,18 +101,25 @@ func copyDir(src, dst string) error {
 	return nil
 }
 
-// ResolvedDep is a resolved local dependency with its discovered modules.
+// ResolvedDep is a resolved dependency with the full list of its source
+// files. The old per-module qualified-path map is gone: packages now expose
+// a single flat namespace to consumers, so the loader only needs the list
+// of .clk files that contribute to that namespace.
 type ResolvedDep struct {
 	Name     string
 	Manifest *Manifest
-	Path     string            // absolute path to the dependency root
-	Modules  map[string]string // qualified module path -> absolute file path
+	Path     string   // absolute path to the dependency root
+	Files    []string // absolute paths to every .clk file under src/
 }
 
 // PackageResolution is the result of resolving all packages for a manifest.
+// PackageFiles maps package name → absolute paths of every .clk file in
+// that package's src/ tree. The loader uses this to route `use &pkg`
+// imports: it loads every file in the list and merges their pub symbols
+// into one qualifier namespace.
 type PackageResolution struct {
-	Packages  []ResolvedDep
-	ModuleMap map[string]string // qualified module path -> absolute file path
+	Packages     []ResolvedDep
+	PackageFiles map[string][]string
 }
 
 // ── Find manifest ──
@@ -183,13 +208,11 @@ func resolveLocalDep(dep Dependency, baseDir string, resolved *[]ResolvedDep, vi
 		return &PkgError{"E508", fmt.Sprintf("Dependency name mismatch: expected '%s' but clank.pkg at %s declares '%s'", dep.Name, depPath, depManifest.Name)}
 	}
 
-	modules := DiscoverModules(depPath, dep.Name)
-
 	*resolved = append(*resolved, ResolvedDep{
 		Name:     dep.Name,
 		Manifest: depManifest,
 		Path:     depPath,
-		Modules:  modules,
+		Files:    DiscoverPackageFiles(depPath),
 	})
 
 	// Recursively resolve transitive local deps
@@ -204,63 +227,88 @@ func resolveLocalDep(dep Dependency, baseDir string, resolved *[]ResolvedDep, vi
 	return nil
 }
 
-// resolveCachedDep looks up a dependency in the global cache directory.
-// It scans for entries matching <name>@<version> and picks the first match
-// that satisfies the dependency's constraint.
-func resolveCachedDep(dep Dependency, cacheDir string, resolved *[]ResolvedDep, resolvedNames map[string]bool) error {
+// FindCachedPackage scans the global cache for entries matching
+// <name>@<version> that satisfy the constraint and returns the best match:
+// the highest semver wins; non-semver cache keys (like a branch snapshot)
+// are used only when no semver entry qualifies. Returns ("", "") when
+// nothing in the cache satisfies the constraint.
+func FindCachedPackage(name, constraint string) (path, version string) {
+	cacheDir := GlobalCacheDir()
+	if cacheDir == "" {
+		return "", ""
+	}
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
-		return err
+		return "", ""
 	}
 
-	prefix := dep.Name + "@"
+	prefix := name + "@"
+	var bestVer *semver
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
 			continue
 		}
-		version := strings.TrimPrefix(entry.Name(), prefix)
-		if !VersionSatisfies(version, dep.Constraint) {
+		v := strings.TrimPrefix(entry.Name(), prefix)
+		if !VersionSatisfies(v, constraint) {
 			continue
 		}
-
-		depPath := filepath.Join(cacheDir, entry.Name())
-		depManifestPath := filepath.Join(depPath, "clank.pkg")
-		if _, err := os.Stat(depManifestPath); os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(cacheDir, entry.Name(), "clank.pkg")); err != nil {
 			continue
 		}
-		depManifest, err := LoadManifest(depManifestPath)
-		if err != nil {
+		parsed := parseSemver(v)
+		switch {
+		case path == "":
+			// first qualifying entry
+		case parsed == nil:
+			continue // never prefer a non-semver entry over an existing pick
+		case bestVer != nil && compareSemver(*parsed, *bestVer) <= 0:
 			continue
 		}
-		modules := DiscoverModules(depPath, depManifest.Name)
-		*resolved = append(*resolved, ResolvedDep{
-			Name:     depManifest.Name,
-			Manifest: depManifest,
-			Path:     depPath,
-			Modules:  modules,
-		})
-		resolvedNames[depManifest.Name] = true
-		return nil
+		path = filepath.Join(cacheDir, entry.Name())
+		version = v
+		bestVer = parsed
 	}
+	return path, version
+}
 
-	return fmt.Errorf("package %s not found in cache", dep.Name)
+// resolveCachedDep looks up a dependency in the global cache directory,
+// picking the highest cached version that satisfies the constraint.
+func resolveCachedDep(dep Dependency, resolved *[]ResolvedDep, resolvedNames map[string]bool) error {
+	depPath, _ := FindCachedPackage(dep.Name, dep.Constraint)
+	if depPath == "" {
+		return fmt.Errorf("package %s not found in cache", dep.Name)
+	}
+	depManifest, err := LoadManifest(filepath.Join(depPath, "clank.pkg"))
+	if err != nil {
+		return err
+	}
+	*resolved = append(*resolved, ResolvedDep{
+		Name:     depManifest.Name,
+		Manifest: depManifest,
+		Path:     depPath,
+		Files:    DiscoverPackageFiles(depPath),
+	})
+	resolvedNames[depManifest.Name] = true
+	return nil
 }
 
 // ── Module discovery ──
 
-// DiscoverModules finds all .clk files in a package's src/ directory.
-func DiscoverModules(packageDir, packageName string) map[string]string {
-	modules := make(map[string]string)
+// DiscoverPackageFiles returns the sorted list of .clk files under a
+// package's src/ directory, recursively. Internal subdirectory structure
+// is invisible to consumers — the whole set contributes to one flat
+// package namespace. Returns an empty slice if there's no src/ dir.
+func DiscoverPackageFiles(packageDir string) []string {
 	srcDir := filepath.Join(packageDir, "src")
 	if _, err := os.Stat(srcDir); os.IsNotExist(err) {
-		return modules
+		return nil
 	}
-
-	walkModules(srcDir, "", packageName, modules)
-	return modules
+	var files []string
+	walkPackageFiles(srcDir, &files)
+	return files
 }
 
-func walkModules(dir, prefix, packageName string, modules map[string]string) {
+func walkPackageFiles(dir string, out *[]string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -268,19 +316,9 @@ func walkModules(dir, prefix, packageName string, modules map[string]string) {
 	for _, entry := range entries {
 		fullPath := filepath.Join(dir, entry.Name())
 		if entry.IsDir() {
-			newPrefix := entry.Name()
-			if prefix != "" {
-				newPrefix = prefix + "." + entry.Name()
-			}
-			walkModules(fullPath, newPrefix, packageName, modules)
+			walkPackageFiles(fullPath, out)
 		} else if strings.HasSuffix(entry.Name(), ".clk") {
-			modName := strings.TrimSuffix(entry.Name(), ".clk")
-			modPath := modName
-			if prefix != "" {
-				modPath = prefix + "." + modName
-			}
-			qualifiedPath := packageName + "." + modPath
-			modules[qualifiedPath] = fullPath
+			*out = append(*out, fullPath)
 		}
 	}
 }
@@ -299,9 +337,11 @@ func ResolvePackages(manifestPath string, includeDev bool) (*PackageResolution, 
 		return nil, err
 	}
 
-	// Also pick up installed deps from ~/.clank/cache/
-	cacheDir := GlobalCacheDir()
-	if cacheDir != "" {
+	// Also pick up installed deps from ~/.clank/cache/, walking the
+	// dependency graph transitively: a github dep's own github deps are
+	// resolved from the cache too, so consumers only declare what they
+	// use directly.
+	if GlobalCacheDir() != "" {
 		resolvedNames := make(map[string]bool)
 		for _, p := range packages {
 			resolvedNames[p.Name] = true
@@ -323,23 +363,33 @@ func ResolvePackages(manifestPath string, includeDev bool) (*PackageResolution, 
 				continue // skip local and already-resolved deps
 			}
 			// Check global cache for this dep
-			if err := resolveCachedDep(dep, cacheDir, &packages, resolvedNames); err != nil {
+			if err := resolveCachedDep(dep, &packages, resolvedNames); err != nil {
 				continue // silently skip unresolvable cached deps
 			}
 		}
-	}
 
-	moduleMap := make(map[string]string)
-	for _, p := range packages {
-		for modPath, filePath := range p.Modules {
-			if _, exists := moduleMap[modPath]; exists {
-				return nil, &PkgError{"E509", fmt.Sprintf("Module path collision: '%s' is provided by multiple packages", modPath)}
+		// Breadth-first over every resolved package's own github deps.
+		for i := 0; i < len(packages); i++ {
+			for _, dep := range sortedDeps(packages[i].Manifest.Deps) {
+				if dep.GitHub == "" || resolvedNames[dep.Name] {
+					continue
+				}
+				if err := resolveCachedDep(dep, &packages, resolvedNames); err != nil {
+					continue
+				}
 			}
-			moduleMap[modPath] = filePath
 		}
 	}
 
-	return &PackageResolution{Packages: packages, ModuleMap: moduleMap}, nil
+	// Build the package-name → file-list map the loader uses to resolve
+	// `use &pkg` imports. Collisions on package name are impossible by
+	// construction — PkgAdd rejects duplicate names at add time.
+	pkgFiles := make(map[string][]string, len(packages))
+	for _, p := range packages {
+		pkgFiles[p.Name] = p.Files
+	}
+
+	return &PackageResolution{Packages: packages, PackageFiles: pkgFiles}, nil
 }
 
 // ── pkg init ──
@@ -449,7 +499,102 @@ type PkgAddResult struct {
 	Constraint string
 	Path       string
 	GitHub     string
+	Updated    bool // true when an existing dep entry was replaced
 	Error      string
+}
+
+// PkgAddFromTarget handles the user-facing `clank pkg add <target>` flow.
+// The target is one positional string — a github slug/URL, a local path,
+// or a github target with a version suffix. For github targets this
+// function fetches the package eagerly, reads its own clank.pkg to get
+// the authoritative package name, and writes the full github form to the
+// consumer manifest. For local paths it loads the path dep's clank.pkg
+// and uses its declared name as the dep key. No --name flag required;
+// no surprises where the written form is an un-resolvable bare constraint.
+func PkgAddFromTarget(target string, dev bool, dir string) PkgAddResult {
+	if dir == "" {
+		dir = "."
+	}
+	dir, _ = filepath.Abs(dir)
+	manifestPath := FindManifest(dir)
+	if manifestPath == "" {
+		return PkgAddResult{Ok: false, Error: "No clank.pkg found in current directory or any parent"}
+	}
+
+	// Local path target — resolve manifest locally, no fetch.
+	if strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../") || strings.HasPrefix(target, "/") {
+		absDep := target
+		if !filepath.IsAbs(absDep) {
+			absDep = filepath.Join(filepath.Dir(manifestPath), target)
+		}
+		depManifestPath := filepath.Join(absDep, "clank.pkg")
+		if _, err := os.Stat(depManifestPath); os.IsNotExist(err) {
+			return PkgAddResult{Ok: false, Error: fmt.Sprintf("No clank.pkg found at %s", absDep)}
+		}
+		depManifest, err := LoadManifest(depManifestPath)
+		if err != nil {
+			return PkgAddResult{Ok: false, Error: err.Error()}
+		}
+		return PkgAdd(PkgAddOptions{
+			Name:       depManifest.Name,
+			Constraint: depManifest.Version,
+			Path:       target,
+			Dev:        dev,
+			Dir:        dir,
+		})
+	}
+
+	// GitHub target — normalize, fetch eagerly, read manifest for real name.
+	if !LooksLikeGitHubTarget(target) {
+		return PkgAddResult{Ok: false, Error: fmt.Sprintf("unrecognized target %q: expected github slug (user/repo), URL, or local path (./...)", target)}
+	}
+	slug, ref, err := NormalizeGitHubTarget(target)
+	if err != nil {
+		return PkgAddResult{Ok: false, Error: err.Error()}
+	}
+	// Normalize v-prefixed tags up front: the fetcher tries the
+	// v-prefixed tag URL first, so "0.1.0" finds tag v0.1.0 directly.
+	ref = strings.TrimPrefix(ref, "v")
+
+	tmpDir, err := FetchGitHub(slug, ref)
+	if err != nil {
+		return PkgAddResult{Ok: false, Error: fmt.Sprintf("fetching %s: %s", slug, err)}
+	}
+	defer os.RemoveAll(tmpDir)
+
+	fetchedManifestPath := filepath.Join(tmpDir, "clank.pkg")
+	if _, err := os.Stat(fetchedManifestPath); os.IsNotExist(err) {
+		return PkgAddResult{Ok: false, Error: fmt.Sprintf("fetched %s does not contain a clank.pkg at its root", slug)}
+	}
+	fetchedManifest, err := LoadManifest(fetchedManifestPath)
+	if err != nil {
+		return PkgAddResult{Ok: false, Error: fmt.Sprintf("parsing fetched clank.pkg: %s", err)}
+	}
+
+	// Cache the fetched package under the authoritative name + version.
+	// Pinned refs are normalized (v1.2.3 → 1.2.3) so cache keys and
+	// constraints compare as plain semver.
+	cacheVersion := fetchedManifest.Version
+	constraint := "*"
+	if ref != "" && ref != "latest" {
+		cacheVersion = strings.TrimPrefix(ref, "v")
+		constraint = cacheVersion
+	}
+	if _, err := InstallToCache(fetchedManifest.Name, cacheVersion, tmpDir); err != nil {
+		return PkgAddResult{Ok: false, Error: fmt.Sprintf("caching %s: %s", fetchedManifest.Name, err)}
+	}
+
+	// Unpinned deps record "*" — they track the repo's default branch.
+	// A fresh `clank pkg install` fetches whatever the branch holds; the
+	// lockfile records what was actually resolved. Pin with @<tag> for
+	// an exact version.
+	return PkgAdd(PkgAddOptions{
+		Name:       fetchedManifest.Name,
+		Constraint: constraint,
+		GitHub:     slug,
+		Dev:        dev,
+		Dir:        dir,
+	})
 }
 
 // PkgAdd adds a dependency to the manifest.
@@ -477,9 +622,9 @@ func PkgAdd(opts PkgAddOptions) PkgAddResult {
 		targetMap = manifest.DevDeps
 	}
 
-	if _, exists := targetMap[opts.Name]; exists {
-		return PkgAddResult{Ok: false, Error: fmt.Sprintf("Dependency '%s' already exists in [%s]", opts.Name, section)}
-	}
+	// Re-adding an existing dep replaces its entry (go-get semantics):
+	// `clank pkg add user/repo@v2` is how you change a pin.
+	_, updated := targetMap[opts.Name]
 
 	constraint := opts.Constraint
 	if constraint == "" {
@@ -522,6 +667,7 @@ func PkgAdd(opts PkgAddOptions) PkgAddResult {
 		Constraint: dep.Constraint,
 		Path:       dep.Path,
 		GitHub:     dep.GitHub,
+		Updated:    updated,
 	}
 }
 
@@ -592,7 +738,7 @@ type ResolvedPkgInfo struct {
 	Name    string
 	Version string
 	Path    string
-	Modules []string
+	Files   []string
 }
 
 // PkgResolve resolves all packages for the current project.
@@ -620,15 +766,11 @@ func PkgResolve(dir string) PkgResolveResult {
 
 	var pkgs []ResolvedPkgInfo
 	for _, p := range resolution.Packages {
-		modules := make([]string, 0, len(p.Modules))
-		for modPath := range p.Modules {
-			modules = append(modules, modPath)
-		}
 		pkgs = append(pkgs, ResolvedPkgInfo{
 			Name:    p.Name,
 			Version: p.Manifest.Version,
 			Path:    p.Path,
-			Modules: modules,
+			Files:   p.Files,
 		})
 	}
 

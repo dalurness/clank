@@ -3,7 +3,7 @@
 # Hello, world!
 # wow!
 
-use mylib.utils (greet, add-exclaim)
+use &mylib (greet, add-exclaim)
 
 main : () -> <io> () =
   let _ = print(greet("world"))

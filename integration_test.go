@@ -124,15 +124,15 @@ func runProgram(source string, baseDir string) (string, error) {
 	// Link imports if baseDir is set
 	linked := desugared
 	if baseDir != "" {
-		// Check for package module map
-		var packageModules map[string]string
+		// Check for package files map
+		var packageFiles map[string][]string
 		manifestPath := pkg.FindManifest(baseDir)
 		if manifestPath != "" {
 			if resolution, err := pkg.ResolvePackages(manifestPath, false); err == nil {
-				packageModules = resolution.ModuleMap
+				packageFiles = resolution.PackageFiles
 			}
 		}
-		result := loader.LinkWithPackages(desugared, baseDir, packageModules)
+		result := loader.LinkWithPackages(desugared, baseDir, packageFiles)
 		if result.Error != nil {
 			return "", result.Error
 		}

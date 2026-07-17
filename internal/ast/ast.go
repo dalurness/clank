@@ -563,6 +563,7 @@ type TopUseDecl struct {
 	Imports   []ImportItem
 	Qualified bool   // true for `use foo.bar` (no parens) — qualified access only
 	Qualifier string // override qualifier name from `use foo.bar as name`
+	External  bool   // true for `use &pkg` — route via the package system, not the local filesystem
 	Loc       token.Loc
 }
 

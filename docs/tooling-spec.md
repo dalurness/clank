@@ -345,16 +345,68 @@ The `smt_query`, `smt_result`, and `smt_model` fields are refinement-specific ex
 ### 6.1 `clank pkg` Subcommands
 
 ```bash
-clank pkg init                    # create clank.pkg in current dir
-clank pkg add <name> [version]    # add dependency
-clank pkg remove <name>           # remove dependency
-clank pkg update [name]           # update to latest compatible version
-clank pkg list                    # list all dependencies (direct + transitive)
-clank pkg search <query>          # search registry
-clank pkg info <name>             # package metadata
-clank pkg publish                 # publish to registry
-clank pkg audit                   # check for known issues
+clank pkg init [<name>]           # create clank.pkg in current dir
+clank pkg add <target>            # add a dep — github URL, slug, or ./path
+clank pkg install                 # post-clone: fetch + resolve + lockfile + lint
+clank pkg update [<name>]         # refresh unpinned github deps to latest
+clank pkg list                    # list resolved deps (direct + transitive)
+clank pkg remove <name>           # remove a dep
 ```
+
+There's intentionally no `resolve` or `verify` subcommand. `install`
+does the full post-clone flow in one step: fetches missing GitHub deps
+(including transitive ones) into `~/.clank/cache/`, rebuilds the module
+graph, writes `clank.lock`, and runs the package-level
+`duplicate-pub-name` lint against each resolved dep.
+
+`pkg add` takes a single positional target. There's no `--name`,
+`--github`, or `--version` flag. Clank fetches the package
+immediately, reads its own `clank.pkg`, and uses its declared name
+as the local dep key.
+
+```bash
+clank pkg add github.com/user/repo        # latest, default branch
+clank pkg add github.com/user/repo@v1.2   # pinned tag
+clank pkg add user/repo                   # bare slug
+clank pkg add https://github.com/user/repo
+clank pkg add git@github.com:user/repo.git
+clank pkg add ./libs/util                 # local path dep
+```
+
+Re-adding an existing dep replaces its entry (go-get semantics) —
+`clank pkg add user/repo@v2.0.0` is how a pin gets changed.
+
+### 6.1.0 Versioning model
+
+A dep added without `@<ref>` records constraint `*`: it tracks the
+repo's **default branch**. `clank pkg install` reuses whatever
+satisfying version is already cached (deterministic, offline-friendly);
+`clank pkg update` is the explicit action that re-fetches the branch
+and refreshes the cache and lockfile. A dep added with `@<tag>` is
+pinned to that exact version; `pkg update` skips pinned deps.
+
+The cache lives in `~/.clank/cache/<name>@<version>/`, keyed by the
+version each package's own `clank.pkg` declares. When several cached
+versions satisfy a constraint, the highest semver wins. `clank.lock`
+records what was actually resolved (version + content hash) as the
+drift-detection breadcrumb.
+
+### 6.1.1 Consuming a dependency
+
+External imports use the `&` sigil so they're visually distinct from
+local file imports. A package is a single flat namespace from the
+consumer's perspective — internal subdirectory layout is invisible.
+
+```clank
+use &hello-clank                 # all public symbols as hello-clank.X
+use &hello-clank as hc           # alias: hc.X
+use &hello-clank (greet)         # selective, unqualified
+```
+
+If two files in the same package declare the same `pub` name (function,
+type, variant, effect, or op), the `duplicate-pub-name` linter (rule
+`W220`) flags it at `pkg install` time — consumers never hit these
+collisions at use site.
 
 ### 6.2 Package Manifest (`clank.pkg`)
 

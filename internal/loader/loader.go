@@ -49,17 +49,24 @@ func Link(program *ast.Program, baseDir string) LinkResult {
 	return LinkWithPackages(program, baseDir, nil)
 }
 
-// LinkWithPackages is like Link but also accepts a package module map for
-// resolving imports from external packages. The packageModules map is
-// qualified module path → absolute file path, as produced by pkg.ResolvePackages.
-func LinkWithPackages(program *ast.Program, baseDir string, packageModules map[string]string) LinkResult {
+// LinkWithPackages is like Link but also accepts a package files map for
+// resolving `use &pkg` imports from external packages. The packageFiles
+// map is package name → list of every .clk file under that package's
+// src/ tree, as produced by pkg.ResolvePackages. When a consumer writes
+// `use &foo`, the loader loads every file in packageFiles["foo"] and
+// merges their pub symbols into a single flat namespace qualified by
+// the package name (or a user-supplied alias).
+func LinkWithPackages(program *ast.Program, baseDir string, packageFiles map[string][]string) LinkResult {
 	l := &linker{
-		baseDir:        baseDir,
-		loaded:         make(map[string]bool),
-		loading:        make(map[string]bool),
-		pubMap:         make(map[string]map[string]bool),
-		typeMap:        make(map[string]map[string][]string),
-		packageModules: packageModules,
+		baseDir:       baseDir,
+		loaded:        make(map[string]bool),
+		loading:       make(map[string]bool),
+		pubMap:        make(map[string]map[string]bool),
+		typeMap:       make(map[string]map[string][]string),
+		packageFiles:  packageFiles,
+		packagePubs:   make(map[string]map[string]bool),
+		packageTypes:  make(map[string]map[string][]string),
+		packageLoaded: make(map[string]bool),
 	}
 
 	result, err := l.link(program, baseDir)
@@ -70,14 +77,17 @@ func LinkWithPackages(program *ast.Program, baseDir string, packageModules map[s
 }
 
 type linker struct {
-	baseDir        string
-	loaded         map[string]bool            // absolute path → fully loaded
-	loading        map[string]bool            // absolute path → currently being loaded (cycle detection)
-	loadChain      []string                   // current import chain for error messages
-	pubMap         map[string]map[string]bool // absolute path → set of pub names
-	typeMap        map[string]map[string][]string // absolute path → type name → constructor names
-	packageModules map[string]string          // qualified module path → abs file path (from pkg system)
-	collected      []ast.TopLevel             // top-levels collected from all modules
+	baseDir       string
+	loaded        map[string]bool                // absolute path → fully loaded (local files)
+	loading       map[string]bool                // absolute path → currently being loaded (cycle detection)
+	loadChain     []string                       // current import chain for error messages
+	pubMap        map[string]map[string]bool     // absolute path → pub names (per local file)
+	typeMap       map[string]map[string][]string // absolute path → type → ctors (per local file)
+	packageFiles  map[string][]string            // package name → every .clk under src/
+	packagePubs   map[string]map[string]bool     // package name → merged pub names across all files
+	packageTypes  map[string]map[string][]string // package name → merged type → ctors across all files
+	packageLoaded map[string]bool                // which external packages have already been loaded
+	collected     []ast.TopLevel                 // top-levels collected from all modules
 }
 
 func (l *linker) link(program *ast.Program, currentDir string) (*ast.Program, error) {
@@ -87,13 +97,19 @@ func (l *linker) link(program *ast.Program, currentDir string) (*ast.Program, er
 		if !ok {
 			continue
 		}
+		if useDecl.External {
+			if err := l.loadExternalPackage(useDecl.Path[0]); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if err := l.loadModule(useDecl.Path, currentDir); err != nil {
 			return nil, err
 		}
 	}
 
 	// Expand use declarations: importing a type name also imports its constructors
-	expanded := l.expandImports(program.TopLevels, currentDir)
+	expanded := l.expandImports(program.TopLevels, currentDir, l.baseDir)
 
 	// Build the flat program: imported module top-levels first, then original program
 	var merged []ast.TopLevel
@@ -104,9 +120,14 @@ func (l *linker) link(program *ast.Program, currentDir string) (*ast.Program, er
 }
 
 // expandImports rewrites use declarations:
-// 1. For qualified imports (no parens), fills in the import list with all pub names
-// 2. For any import, if a type name is imported, adds its constructors
-func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir string) []ast.TopLevel {
+// 1. For qualified imports (no parens), fills in the import list with all
+//    pub names from the resolved module or package.
+// 2. For any import, if a type name is imported, adds its constructors.
+//
+// fallbackDir is tried when a module path doesn't resolve relative to
+// currentDir — the project root for local files, the package's src/ root
+// for files inside an external package.
+func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir, fallbackDir string) []ast.TopLevel {
 	result := make([]ast.TopLevel, 0, len(topLevels))
 	for _, tl := range topLevels {
 		useDecl, ok := tl.(ast.TopUseDecl)
@@ -115,33 +136,34 @@ func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir string) []as
 			continue
 		}
 
-		// Resolve the module path
-		absPath, err := ResolveModulePath(useDecl.Path, currentDir)
-		if err != nil && currentDir != l.baseDir {
-			absPath, err = ResolveModulePath(useDecl.Path, l.baseDir)
-		}
-		if err != nil && l.packageModules != nil {
-			qualifiedPath := strings.Join(useDecl.Path, ".")
-			if pkgPath, ok := l.packageModules[qualifiedPath]; ok {
-				absPath = pkgPath
-				err = nil
+		// External packages have their pub sets merged across every file
+		// in the package's src/ tree, keyed by package name.
+		var pubNames map[string]bool
+		var typeCtors map[string][]string
+		if useDecl.External {
+			pubNames = l.packagePubs[useDecl.Path[0]]
+			typeCtors = l.packageTypes[useDecl.Path[0]]
+		} else {
+			absPath, err := ResolveModulePath(useDecl.Path, currentDir)
+			if err != nil && currentDir != fallbackDir {
+				absPath, err = ResolveModulePath(useDecl.Path, fallbackDir)
 			}
-		}
-		if err != nil {
-			result = append(result, tl)
-			continue
+			if err != nil {
+				result = append(result, tl)
+				continue
+			}
+			pubNames = l.pubMap[absPath]
+			typeCtors = l.typeMap[absPath]
 		}
 
 		// For qualified imports, populate the import list with all pub names
 		if useDecl.Qualified && len(useDecl.Imports) == 0 {
-			pubNames := l.pubMap[absPath]
 			for name := range pubNames {
 				useDecl.Imports = append(useDecl.Imports, ast.ImportItem{Name: name})
 			}
 		}
 
 		// Expand type imports: importing a type name includes its constructors
-		typeCtors := l.typeMap[absPath]
 		if typeCtors != nil {
 			existing := make(map[string]bool)
 			for _, imp := range useDecl.Imports {
@@ -175,16 +197,11 @@ func (l *linker) loadModule(modPath []string, currentDir string) error {
 		if currentDir != l.baseDir {
 			absPath, err = ResolveModulePath(modPath, l.baseDir)
 		}
-		// Fall back to the package module map (external packages)
-		if err != nil && l.packageModules != nil {
-			qualifiedPath := strings.Join(modPath, ".")
-			if pkgPath, ok := l.packageModules[qualifiedPath]; ok {
-				absPath = pkgPath
-				err = nil
-			}
-		}
+		// No fallthrough to external packages — those require the `&`
+		// sigil. This keeps local and external namespaces visually
+		// distinct at every call site.
 		if err != nil {
-			return err
+			return l.enrichNotFound(err, modPath)
 		}
 	}
 
@@ -287,13 +304,19 @@ func (l *linker) loadModule(modPath []string, currentDir string) error {
 		if !ok {
 			continue
 		}
+		if useDecl.External {
+			if err := l.loadExternalPackage(useDecl.Path[0]); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := l.loadModule(useDecl.Path, modDir); err != nil {
 			return err
 		}
 	}
 
 	// Expand type imports in this module's use declarations
-	expandedTLs := l.expandImports(program.TopLevels, modDir)
+	expandedTLs := l.expandImports(program.TopLevels, modDir, l.baseDir)
 
 	// Add this module's top-levels (skip mod/test declarations)
 	for _, tl := range expandedTLs {
@@ -316,4 +339,266 @@ func (l *linker) loadModule(modPath []string, currentDir string) error {
 	l.loaded[absPath] = true
 
 	return nil
+}
+
+// loadExternalPackage loads every .clk file in a package's src/ tree and
+// merges their pub symbols into a single flat namespace keyed by package
+// name. Collisions across files are reported as errors at link time with
+// both declaration sites named.
+//
+// Two passes: first parse every file and register its symbols, then
+// resolve each file's own imports. The split matters because package
+// files may import each other in any order (all of them are merged
+// anyway), and may import other external packages (`use &dep`), which
+// must recurse before import expansion fills in qualified names.
+func (l *linker) loadExternalPackage(pkgName string) error {
+	if l.packageLoaded[pkgName] {
+		return nil
+	}
+	// Mark before recursing so mutually-dependent packages terminate.
+	l.packageLoaded[pkgName] = true
+
+	files, ok := l.packageFiles[pkgName]
+	if !ok {
+		return l.unknownPackageError(pkgName)
+	}
+
+	mergedPubs := make(map[string]bool)
+	mergedTypes := make(map[string][]string)
+	pubOrigin := make(map[string]string) // symbol → first file that defined it, for collision messages
+
+	inPackage := make(map[string]bool, len(files))
+	for _, f := range files {
+		inPackage[f] = true
+	}
+	// The package's src/ root — fallback for imports between package
+	// files that are written relative to the source root.
+	var srcRoot string
+	if len(files) > 0 {
+		srcRoot = packageSrcRoot(files[0])
+	}
+
+	type parsedFile struct {
+		path    string
+		program *ast.Program
+	}
+	var parsed []parsedFile
+
+	// ── Pass 1: parse, desugar, and register every file's symbols ──
+	for _, absPath := range files {
+		source, err := os.ReadFile(absPath)
+		if err != nil {
+			return fmt.Errorf("cannot read package file '%s': %v", absPath, err)
+		}
+		tokens, lexErr := lexer.Lex(string(source))
+		if lexErr != nil {
+			return fmt.Errorf("lex error in package file '%s': %s", absPath, lexErr.Message)
+		}
+		program, parseErr := parser.Parse(tokens)
+		if parseErr != nil {
+			return fmt.Errorf("parse error in package file '%s': %s", absPath, parseErr.Message)
+		}
+
+		// Desugar bodies, same as loadModule does for local files.
+		for i, tl := range program.TopLevels {
+			switch decl := tl.(type) {
+			case ast.TopDefinition:
+				decl.Body = desugar.Desugar(decl.Body)
+				program.TopLevels[i] = decl
+			case ast.TopImplBlock:
+				methods := make([]ast.ImplMethod, len(decl.Methods))
+				for j, m := range decl.Methods {
+					methods[j] = ast.ImplMethod{Name: m.Name, Body: desugar.Desugar(m.Body)}
+				}
+				decl.Methods = methods
+				program.TopLevels[i] = decl
+			}
+		}
+
+		// Collect pub symbols. Any collision between two files in the
+		// same package is an author error — report it with both sites.
+		addPub := func(name string) error {
+			if other, exists := pubOrigin[name]; exists {
+				return fmt.Errorf(
+					"duplicate export '%s' in package '%s'\n  first:  %s\n  second: %s\nhint: rename one, mark it private, or choose a more specific name",
+					name, pkgName, other, absPath,
+				)
+			}
+			mergedPubs[name] = true
+			pubOrigin[name] = absPath
+			return nil
+		}
+		filePubs := make(map[string]bool)
+		fileTypes := make(map[string][]string)
+		for _, tl := range program.TopLevels {
+			switch decl := tl.(type) {
+			case ast.TopDefinition:
+				if decl.Pub {
+					if err := addPub(decl.Name); err != nil {
+						return err
+					}
+					filePubs[decl.Name] = true
+				}
+			case ast.TopTypeDecl:
+				if decl.Pub {
+					if err := addPub(decl.Name); err != nil {
+						return err
+					}
+					filePubs[decl.Name] = true
+					var ctors []string
+					for _, v := range decl.Variants {
+						if err := addPub(v.Name); err != nil {
+							return err
+						}
+						filePubs[v.Name] = true
+						ctors = append(ctors, v.Name)
+					}
+					mergedTypes[decl.Name] = ctors
+					fileTypes[decl.Name] = ctors
+				}
+			case ast.TopEffectDecl:
+				if decl.Pub {
+					if err := addPub(decl.Name); err != nil {
+						return err
+					}
+					filePubs[decl.Name] = true
+					for _, op := range decl.Ops {
+						if err := addPub(op.Name); err != nil {
+							return err
+						}
+						filePubs[op.Name] = true
+					}
+				}
+			case ast.TopEffectAlias:
+				if decl.Pub {
+					if err := addPub(decl.Name); err != nil {
+						return err
+					}
+					filePubs[decl.Name] = true
+				}
+			case ast.TopInterfaceDecl:
+				if decl.Pub {
+					for _, m := range decl.Methods {
+						if err := addPub(m.Name); err != nil {
+							return err
+						}
+						filePubs[m.Name] = true
+					}
+				}
+			}
+		}
+
+		// Register per-file maps so imports *between* package files
+		// (e.g. `use lib.helpers` for qualified access) expand normally.
+		l.pubMap[absPath] = filePubs
+		l.typeMap[absPath] = fileTypes
+		l.loaded[absPath] = true
+
+		parsed = append(parsed, parsedFile{path: absPath, program: program})
+	}
+
+	// Publish the merged namespace before resolving imports — a dep that
+	// circularly imports this package must see its symbols.
+	l.packagePubs[pkgName] = mergedPubs
+	l.packageTypes[pkgName] = mergedTypes
+
+	// ── Pass 2: resolve each file's own imports, then collect ──
+	for _, pf := range parsed {
+		fileDir := filepath.Dir(pf.path)
+		for _, tl := range pf.program.TopLevels {
+			useDecl, ok := tl.(ast.TopUseDecl)
+			if !ok {
+				continue
+			}
+			if useDecl.External {
+				// Transitive package dependency.
+				if err := l.loadExternalPackage(useDecl.Path[0]); err != nil {
+					return err
+				}
+				continue
+			}
+			// Imports between files of this package are already merged;
+			// only load modules that resolve outside the package.
+			absPath, err := ResolveModulePath(useDecl.Path, fileDir)
+			if err != nil && fileDir != srcRoot {
+				absPath, err = ResolveModulePath(useDecl.Path, srcRoot)
+			}
+			if err == nil && inPackage[absPath] {
+				continue
+			}
+			if err := l.loadModule(useDecl.Path, fileDir); err != nil {
+				return err
+			}
+		}
+
+		// Expand qualified imports and type constructors, resolving
+		// against the file's dir with the package src/ root as fallback.
+		expanded := l.expandImports(pf.program.TopLevels, fileDir, srcRoot)
+
+		// Append this file's top-levels to the collected pool, skipping
+		// mod/test decls like loadModule does.
+		for _, tl := range expanded {
+			switch tl.(type) {
+			case ast.TopModDecl, ast.TopTestDecl:
+				continue
+			default:
+				l.collected = append(l.collected, tl)
+			}
+		}
+	}
+
+	return nil
+}
+
+// packageSrcRoot walks up from a package source file to find the src/
+// directory that contains it. Falls back to the file's own directory when
+// no src/ segment exists (shouldn't happen for discovered package files).
+func packageSrcRoot(file string) string {
+	dir := filepath.Dir(file)
+	for d := dir; ; {
+		if filepath.Base(d) == "src" {
+			return d
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return dir
+		}
+		d = parent
+	}
+}
+
+// unknownPackageError returns a helpful error when an external use cannot
+// find the named package, listing what packages the loader does know about.
+func (l *linker) unknownPackageError(pkgName string) error {
+	if len(l.packageFiles) == 0 {
+		return fmt.Errorf(
+			"external package '%s' not resolved — no dependencies are installed\nhint: run `clank pkg add <url>` to install a package",
+			pkgName,
+		)
+	}
+	var available []string
+	for name := range l.packageFiles {
+		available = append(available, name)
+	}
+	return fmt.Errorf(
+		"external package '%s' not found\n  available: %s\nhint: run `clank pkg add <url>` to install it, or check the spelling",
+		pkgName, strings.Join(available, ", "),
+	)
+}
+
+// enrichNotFound wraps a plain "module not found" error with a list of
+// available dep packages, so a user who meant `use &foo` gets a concrete
+// hint instead of just "we tried these two files and neither existed."
+func (l *linker) enrichNotFound(err error, modPath []string) error {
+	if len(l.packageFiles) == 0 {
+		return err
+	}
+	var available []string
+	for name := range l.packageFiles {
+		available = append(available, name)
+	}
+	return fmt.Errorf(
+		"%v\n  available packages: %s\nhint: did you mean `use &%s`?",
+		err, strings.Join(available, ", "), modPath[0],
+	)
 }

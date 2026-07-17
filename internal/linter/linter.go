@@ -25,6 +25,7 @@ var LintRules = map[string]string{
 	"W104": "unreachable-match-arm",
 	"W105": "empty-effect-handler",
 	"W106": "builtin-shadow",
+	"W220": "duplicate-pub-name",
 }
 
 // ruleNameToCode is a reverse mapping.

@@ -268,40 +268,37 @@ fetch : (url: Str) -> <io> Str =
 Packages are declared in `clank.pkg` at the project root:
 
 ```
-[package]
-name = my-project
-version = 0.1.0
+name = "my-project"
+version = "0.1.0"
 
 [deps]
-utils = { github = "user/clank-utils", version = ">=1.0.0" }
+utils = { github = "user/clank-utils", version = "1.2.0" }
 local-lib = { path = "../lib" }
 ```
 
-Commands: `clank pkg init`, `clank pkg add <name>`, `clank pkg remove <name>`, `clank pkg resolve`, `clank pkg verify`.
+Dependencies come straight from GitHub URLs or local paths — no registry,
+no package manager account. `clank pkg add github.com/user/repo` fetches,
+caches, and records the dep in one step; `clank pkg install` restores
+everything after a fresh clone.
 
-Dependencies are resolved from GitHub repositories or local paths. Use imported packages with `use`:
+Importing an external package uses the `&` sigil, keeping external names
+visually distinct from local modules. A package is one flat namespace —
+its internal file layout is invisible to consumers:
 
 ```
-use utils.helpers (format-date, parse-url)
+use &utils                       # qualified: utils.format-date
+use &utils as u                  # aliased:   u.format-date
+use &utils (format-date)         # selective: format-date
 ```
 
 ## 6. CLI
 
-```bash
-clank <file>                    # Run a .clk file
-clank check <file>              # Type-check only
-clank eval <file>               # Evaluate and print result
-clank fmt <file>                # Format source code
-clank lint <file>               # Lint source code
-clank doc [target]              # List docs for a target (default: current project)
-clank doc search <q> [target]   # Search docs; target is optional
-clank doc show <name> [target]  # Show one entry in detail
-clank test [dir]                # Run tests
-clank pkg <init|add|remove>     # Package management
-clank spec                      # Print this specification
-```
+See `clank --help` for the current command list and `clank <command> --help`
+for per-command documentation. This specification intentionally does not
+duplicate CLI reference material — the binary's help system is the
+source of truth.
 
-All commands support `--json` for structured output.
+All commands support `--json` for structured output suitable for agents.
 
 ## 7. Example
 
