@@ -10,8 +10,10 @@ import (
 )
 
 // skillMarkdown is the agent skill installed by `clank skill install`.
-// It follows the Claude Code skill format (SKILL.md with frontmatter)
-// but is plain markdown — any agent harness can consume it.
+// It follows the Agent Skills open standard (agentskills.io): a SKILL.md
+// with YAML frontmatter, installed under .agents/skills/ — the
+// cross-client convention scanned by Claude Code, Codex, Copilot,
+// Cursor, Gemini CLI, and other compliant harnesses.
 //
 // Keep this compact: it's meant to be loaded into a context window at
 // the start of a session, not to replace `clank spec` or `clank doc`.
@@ -110,8 +112,8 @@ clank pkg list                               # what's resolved (add --json)
 //
 //	clank skill               print the skill markdown to stdout
 //	clank skill show          same
-//	clank skill install       write .claude/skills/clank/SKILL.md at the project root
-//	clank skill install --user  write to ~/.claude/skills/clank/SKILL.md instead
+//	clank skill install       write .agents/skills/clank/SKILL.md at the project root
+//	clank skill install --user  write to ~/.agents/skills/clank/SKILL.md instead
 func cmdSkill(args []string, jsonOut bool, rawArgs []string) int {
 	sub := "show"
 	for _, a := range args {
@@ -141,7 +143,7 @@ func cmdSkill(args []string, jsonOut bool, rawArgs []string) int {
 		baseDir, _ = os.Getwd()
 	}
 
-	skillDir := filepath.Join(baseDir, ".claude", "skills", "clank")
+	skillDir := filepath.Join(baseDir, ".agents", "skills", "clank")
 	if err := os.MkdirAll(skillDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "error: creating %s: %v\n", skillDir, err)
 		return 1
@@ -159,6 +161,6 @@ func cmdSkill(args []string, jsonOut bool, rawArgs []string) int {
 		return 0
 	}
 	fmt.Printf("Installed agent skill: %s\n", skillPath)
-	fmt.Println("Claude Code will pick it up automatically in this project.")
+	fmt.Println("Any harness supporting the Agent Skills standard (Claude Code, Codex, Copilot, Cursor, ...) will pick it up.")
 	return 0
 }

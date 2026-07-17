@@ -33,7 +33,7 @@ func TestSkillInstallWritesFile(t *testing.T) {
 	if code := cmdSkill([]string{"install"}, false, nil); code != 0 {
 		t.Fatalf("install returned %d", code)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, ".claude", "skills", "clank", "SKILL.md"))
+	data, err := os.ReadFile(filepath.Join(dir, ".agents", "skills", "clank", "SKILL.md"))
 	if err != nil {
 		t.Fatalf("SKILL.md not written: %v", err)
 	}

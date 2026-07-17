@@ -59,12 +59,16 @@ Working in a Clank project with an AI agent? One command teaches it the
 language and toolchain:
 
 ```bash
-clank skill install        # writes .claude/skills/clank/SKILL.md
+clank skill install        # writes .agents/skills/clank/SKILL.md
 ```
 
-Claude Code picks the skill up automatically. Beyond that, `clank spec`
-prints the whole language spec in one context-window-sized read, and
-every command supports `--json` for structured output.
+The skill follows the [Agent Skills](https://agentskills.io) open
+standard, installed at the cross-client `.agents/skills/` location — so
+Claude Code, Codex, Copilot, Cursor, Gemini CLI, and any other
+compliant harness picks it up automatically (`--user` installs to
+`~/.agents/` for all projects). Beyond that, `clank spec` prints the
+whole language spec in one context-window-sized read, and every command
+supports `--json` for structured output.
 
 ## Examples
 

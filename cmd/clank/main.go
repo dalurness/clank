@@ -248,13 +248,14 @@ the [dev-deps] section instead of [deps].
 
 Print or install the agent skill for working with clank — a compact
 SKILL.md covering the write/check/run/test loop, syntax essentials,
-and package management.
+and package management. Uses the Agent Skills open standard
+(agentskills.io), so any compliant harness picks it up: Claude Code,
+Codex, Copilot, Cursor, Gemini CLI, and others.
 
   clank skill                  print to stdout
-  clank skill install          write .claude/skills/clank/SKILL.md at
-                               the project root (Claude Code loads it
-                               automatically)
-  clank skill install --user   install for all projects (~/.claude/)
+  clank skill install          write .agents/skills/clank/SKILL.md at
+                               the project root
+  clank skill install --user   install for all projects (~/.agents/)
 `,
 
 	"update": `clank update
