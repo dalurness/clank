@@ -6,6 +6,12 @@
 **Dependencies:** plan/features/package-management.md, plan/features/module-system.md
 **Extends:** Package Management Specification v1.0
 
+> **Status (2026-07):** local `path` deps are implemented (with
+> transitive resolution and the flat `use &pkg` import model — see
+> [tooling-spec.md §6](tooling-spec.md)). Workspace support
+> (`clank.workspace`, `pkg link`, per-member commands) is design
+> history, not yet implemented.
+
 ---
 
 ## 1. Overview

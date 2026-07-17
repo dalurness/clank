@@ -5,6 +5,16 @@
 **Date:** 2026-03-19
 **Dependencies:** plan/features/tooling-spec.md, plan/features/module-system.md, plan/SPEC.md
 
+> **Status (2026-07):** this is the original registry-based design. The
+> implemented system went a different, simpler direction: **go-style
+> GitHub URL dependencies with no registry** — `clank pkg add
+> github.com/user/repo[@tag]`, a global content cache, `use &pkg` flat
+> imports, and `pkg install`/`update`/`list`. See
+> [tooling-spec.md §6](tooling-spec.md) for what actually exists. The
+> registry protocol, signature search, and MVS-from-registry sections
+> below are unimplemented design history; the manifest and lockfile
+> sections remain broadly accurate.
+
 ---
 
 ## 1. Overview

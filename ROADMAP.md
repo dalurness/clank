@@ -69,7 +69,8 @@ Clank is implemented in Go. The execution model is: source → lexer → parser 
 - Import linking via `internal/loader` (resolves all `use` declarations before compilation)
 - `pub`/private visibility
 - Transitive imports
-- Package management with GitHub dependency support
+- Go-style package management: GitHub URL deps, global cache, transitive resolution
+- External package imports via the `&` sigil (`use &pkg`) with one flat namespace per package
 
 ### Tooling
 - `clank run` — execute programs
@@ -80,9 +81,11 @@ Clank is implemented in Go. The execution model is: source → lexer → parser 
 - `clank doc [target]` — list/search/show docs. Target is any of: empty (current project), `/path` or `./path` (project-relative file or dir), `github.com/user/repo[@ref]` (remote fetch, prompts y/N), or an installed dep name `<lib>[@version]`
 - `clank test` — test runner with `--filter`
 - `clank spec` — print embedded language specification
-- `clank pkg init|add|remove|resolve|verify` — package management
+- `clank pkg init|add|install|update|list|remove` — package management (add takes a github URL/slug/@tag or local path)
 - `clank pretty`/`clank terse` — terse/verbose identifier transformation
-- All commands support `--json` for structured output
+- `clank skill [install]` — print/install the agent skill (SKILL.md) for the toolchain
+- `clank update` — self-update the binary from the latest GitHub release
+- All commands support `--json` for structured output and per-command `--help`
 
 ### Infrastructure
 - Cross-platform prebuilt binaries (linux, macOS, Windows; amd64, arm64)

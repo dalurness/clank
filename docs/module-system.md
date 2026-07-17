@@ -395,19 +395,24 @@ my-app/
 ### 7.3 Package Namespacing
 
 Modules within a package are referenced by their path relative to `src/`.
-Modules from other packages are prefixed by the package name:
+External packages are imported with the `&` sigil and expose a **single
+flat namespace** — the dependency's internal file layout is invisible to
+consumers:
 
 ```
-# Import from same package
+# Import from same package (local module)
 use lib.parser (parse)
 
-# Import from dependency
-use net-http.client (fetch)
+# Import from a dependency (external package)
+use &net-http (fetch)        # selective
+use &net-http                # qualified: net-http.fetch
+use &net-http as http        # aliased:   http.fetch
 ```
 
-The package name acts as the top-level namespace. There is no aliasing of
-package names at the import site — the package name in `clank.pkg` is
-authoritative.
+The package name (from the dependency's own `clank.pkg`) is the default
+qualifier; `as` renames it locally. If two files inside one package
+export the same `pub` name, that's a package-author error, caught by
+the `duplicate-pub-name` lint at install time and at link time.
 
 ### 7.4 Standard Library
 
