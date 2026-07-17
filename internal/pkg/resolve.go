@@ -470,7 +470,7 @@ func PkgInit(opts PkgInitOptions) PkgInitResult {
 	if opts.Entry != "" {
 		entryFile := filepath.Join(srcDir, opts.Entry+".clk")
 		if _, err := os.Stat(entryFile); os.IsNotExist(err) {
-			content := fmt.Sprintf("mod %s.%s\n\nmain : () -> <> ()\nmain = fn () -> print(\"hello from %s\")\n", name, opts.Entry, name)
+			content := fmt.Sprintf("mod %s\n\nmain : () -> <io> () =\n  print(\"hello from %s\")\n", opts.Entry, name)
 			os.WriteFile(entryFile, []byte(content), 0644)
 			createdFiles = append(createdFiles, "src/"+opts.Entry+".clk")
 		}
