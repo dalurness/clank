@@ -244,6 +244,19 @@ Remove a dependency from clank.pkg by name. --dev removes from
 the [dev-deps] section instead of [deps].
 `,
 
+	"skill": `clank skill [show|install] [--user]
+
+Print or install the agent skill for working with clank — a compact
+SKILL.md covering the write/check/run/test loop, syntax essentials,
+and package management.
+
+  clank skill                  print to stdout
+  clank skill install          write .claude/skills/clank/SKILL.md at
+                               the project root (Claude Code loads it
+                               automatically)
+  clank skill install --user   install for all projects (~/.claude/)
+`,
+
 	"update": `clank update
 
 Self-update: download the latest clank release for this platform
@@ -405,6 +418,8 @@ func run() int {
 			return cmdPkg(positional[1:], jsonOut, rawArgs)
 		case "spec":
 			return cmdSpec()
+		case "skill":
+			return cmdSkill(positional[1:], jsonOut, rawArgs)
 		case "version":
 			fmt.Println(Version)
 			return 0

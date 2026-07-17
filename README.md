@@ -53,6 +53,19 @@ clank run test/examples/01-factorial.clk
 go test ./...
 ```
 
+### For agents
+
+Working in a Clank project with an AI agent? One command teaches it the
+language and toolchain:
+
+```bash
+clank skill install        # writes .claude/skills/clank/SKILL.md
+```
+
+Claude Code picks the skill up automatically. Beyond that, `clank spec`
+prints the whole language spec in one context-window-sized read, and
+every command supports `--json` for structured output.
+
 ## Examples
 
 ### Factorial with type annotations
@@ -184,6 +197,8 @@ clank pkg list                         # List resolved deps
 clank pkg remove <name>                # Remove a dep
 clank pretty <file>                    # Expand terse identifiers
 clank terse <file>                     # Compress to terse form
+clank spec                             # Print the language spec (~3500 tokens)
+clank skill [install]                  # Print/install the agent skill
 clank version                          # Print the clank version
 clank update                           # Self-update to the latest release
 ```
