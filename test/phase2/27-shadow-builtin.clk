@@ -1,0 +1,28 @@
+# Test: a let binding shadows a builtin of the same name in the checker.
+# Regression: `let head = "H"` was still typed as the builtin head : [a] -> a.
+
+shadowed : () -> <> Str =
+  let head = "H" in
+  let sep = "-" in
+  join([head, sep], "")
+
+# if/else branch with None first must unify Option<t> with Option<Str>
+maybe-name : (flag: Bool) -> <> Option<Str> =
+  if flag then None
+  else {
+    let n = "clank"
+    Some(n)
+  }
+
+type Option<a> = Some(a) | None
+
+main : () -> <io> () =
+  print(shadowed())
+  match maybe-name(false) {
+    Some(n) => print(n)
+    None => print("none")
+  }
+
+# Expected output:
+# H-
+# clank

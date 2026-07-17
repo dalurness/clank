@@ -251,10 +251,11 @@ func desugarBlock(exprs []ast.Expr, loc token.Loc) ast.Expr {
 		}
 	}
 	if letPat, ok := head.(ast.ExprLetPattern); ok && letPat.Body == nil {
-		return ast.ExprLetPattern{
-			Pattern: letPat.Pattern,
-			Value:   Desugar(letPat.Value),
-			Body:    rest,
+		// Desugar to a single-arm match, same as the ExprLetPattern case in
+		// Desugar — leaving the sugared node here panics the compiler.
+		return ast.ExprMatch{
+			Subject: Desugar(letPat.Value),
+			Arms:    []ast.MatchArm{{Pattern: letPat.Pattern, Body: rest}},
 			Loc:     letPat.Loc,
 		}
 	}

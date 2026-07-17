@@ -716,3 +716,38 @@ pub add : (a: Int, b: Int) -> <> Int =
 		t.Error("expected pub=true")
 	}
 }
+
+// ── Newline-sensitive call parsing ──
+
+func TestParseNewlineParenIsNotCall(t *testing.T) {
+	// A '(' at the start of a new line begins a new expression, not call
+	// args: `let x = 5` + newline + `(1, 2)` must not parse as `5(1, 2)`.
+	prog := mustParse(t, `
+main : () -> <io> () =
+  let x = 5
+  (1, 2) |> fst |> show |> print
+  print(show(x))
+`)
+	def := prog.TopLevels[0].(ast.TopDefinition)
+	letExpr, ok := def.Body.(ast.ExprLet)
+	if !ok {
+		t.Fatalf("expected let body, got %T", def.Body)
+	}
+	if _, isApply := letExpr.Value.(ast.ExprApply); isApply {
+		t.Fatal("let value parsed as a call — '(' on next line was joined to it")
+	}
+	if _, isLit := letExpr.Value.(ast.ExprLiteral); !isLit {
+		t.Fatalf("let value should be the literal 5, got %T", letExpr.Value)
+	}
+}
+
+func TestParseSameLineCallStillWorks(t *testing.T) {
+	prog := mustParse(t, `
+main : () -> <io> () =
+  print(show(1))
+`)
+	def := prog.TopLevels[0].(ast.TopDefinition)
+	if _, ok := def.Body.(ast.ExprApply); !ok {
+		t.Fatalf("expected call body, got %T", def.Body)
+	}
+}

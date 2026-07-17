@@ -1,0 +1,30 @@
+# Test: generic constructors are instantiated fresh per match pattern.
+# Regression: matches on Some with different payload types shared one
+# type variable, so an earlier Some(Str) match poisoned a later
+# Some(Item) match program-wide.
+
+type Option<a> = Some(a) | None
+
+type Item = Item({label: Str})
+
+label-of : (i: Item) -> <> Str = match i { Item(r) => r.label }
+
+use-str : (o: Option<Str>) -> <> Int =
+  match o {
+    Some(s) => str.len(s)
+    None => 0
+  }
+
+use-item : (o: Option<Item>) -> <> Str =
+  match o {
+    Some(i) => label-of(i)
+    None => ""
+  }
+
+main : () -> <io> () =
+  print(show(use-str(Some("four"))))
+  print(use-item(Some(Item({label: "ok"}))))
+
+# Expected output:
+# 4
+# ok

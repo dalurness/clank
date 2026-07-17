@@ -328,3 +328,13 @@ func TestLexStringAdjacentInterp(t *testing.T) {
 		}
 	}
 }
+
+func TestLexSkipsUTF8BOM(t *testing.T) {
+	tokens, err := lexer.Lex("\xef\xbb\xbfmain : () -> <> Int = 1")
+	if err != nil {
+		t.Fatalf("BOM should be skipped, got error: %s", err.Message)
+	}
+	if len(tokens) == 0 || tokens[0].Value != "main" {
+		t.Errorf("expected first token 'main', got %v", tokens[0])
+	}
+}

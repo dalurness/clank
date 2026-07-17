@@ -1052,6 +1052,11 @@ func (e *typeEnv) getScheme(name string) (TypeScheme, bool) {
 	if s, ok := e.schemes[name]; ok {
 		return s, true
 	}
+	if _, ok := e.bindings[name]; ok {
+		// A monotype binding at this level shadows any outer scheme —
+		// `let head = "H"` must hide the builtin head : [a] -> a.
+		return TypeScheme{}, false
+	}
 	if e.parent != nil {
 		return e.parent.getScheme(name)
 	}
@@ -1446,6 +1451,14 @@ func showType(t Type) string {
 
 func typeEqual(a, b Type) bool {
 	if isAnyType(a) || isAnyType(b) {
+		return true
+	}
+	// Unresolved type variables are compatible with anything — checked
+	// before the generic cases so Option<t1> matches Option<Wrap>.
+	if _, ok := a.(TVar); ok {
+		return true
+	}
+	if _, ok := b.(TVar); ok {
 		return true
 	}
 	// Named generics: compare structurally
@@ -3032,7 +3045,14 @@ func (s *checkerState) bindPatternVars(pat ast.Pattern, env *typeEnv, aff *affin
 			s.bindPatternVars(elem, env, aff, elemType)
 		}
 	case ast.PatVariant:
+		// Instantiate generic constructors fresh per pattern — the
+		// registered ctor type's variables are shared program-wide, so
+		// reusing them directly would leak one match's payload type into
+		// every other match on the same constructor.
 		ctorType, ok := env.get(p.Name)
+		if scheme, sok := env.getScheme(p.Name); sok && len(scheme.TypeVars) > 0 {
+			ctorType, ok = s.instantiateScheme(scheme), true
+		}
 		if ok {
 			if fn, ok := ctorType.(TFn); ok {
 				var fieldTypes []Type
@@ -3045,10 +3065,16 @@ func (s *checkerState) bindPatternVars(pat ast.Pattern, env *typeEnv, aff *affin
 						break
 					}
 				}
+				// Unify the constructor's result with the subject so the
+				// payload picks up the subject's type arguments (e.g.
+				// matching Option<Entry> binds Some's payload to Entry).
+				if subjectType != nil {
+					s.unifyTypes(cur, subjectType)
+				}
 				for i, arg := range p.Args {
 					var ft Type
 					if i < len(fieldTypes) {
-						ft = fieldTypes[i]
+						ft = s.applyTypeSubst(fieldTypes[i])
 					}
 					s.bindPatternVars(arg, env, aff, ft)
 				}
@@ -3291,6 +3317,9 @@ func registerBuiltins(env *typeEnv) {
 	env.set("str.chars", NewTFn(TStr, TList{Element: TStr}))
 	env.set("str.int", NewTFn(TStr, TAny))
 	env.set("str.rat", NewTFn(TStr, TAny))
+	env.set("str.len", NewTFn(TStr, TInt))
+	env.set("str.chr", NewTFn(TInt, TStr))
+	env.set("str.ord", NewTFn(TStr, TInt))
 
 	// HTTP Server (std.srv)
 	env.set("srv.new", NewTFn(TUnit, TAny))
@@ -3833,10 +3862,21 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 						resolvedType = t
 					}
 				}
-				env.set(localName, resolvedType)
-				if moduleTypes != nil {
-					// Clear any builtin scheme that would shadow this import
-					env.setScheme(localName, TypeScheme{})
+				// In a linked program the imported definition is present with
+				// its real signature (registered earlier in this pass). Never
+				// clobber that with TAny — reuse it for aliases and the
+				// qualified name below.
+				if existing, ok := env.get(imp.Name); ok && isAnyType(resolvedType) && !isAnyType(existing) {
+					resolvedType = existing
+					if localName != imp.Name {
+						env.set(localName, resolvedType)
+					}
+				} else {
+					env.set(localName, resolvedType)
+					if moduleTypes != nil {
+						// Clear any builtin scheme that would shadow this import
+						env.setScheme(localName, TypeScheme{})
+					}
 				}
 
 				// For qualified imports, also register as qualifier.name

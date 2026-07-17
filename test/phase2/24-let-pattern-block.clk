@@ -1,0 +1,27 @@
+# Test: tuple-destructuring let in block position (no 'in')
+# Regression: desugarBlock left ExprLetPattern undesugared -> compiler panic
+
+sum-pair : (p: (Int, Int)) -> <> Int = {
+  let (a, b) = p
+  a + b
+}
+
+swap-add : (p: (Int, Int)) -> <> (Int, Int) =
+  let f = fn(q) => {
+    let (a, b) = q
+    (b, a + 1)
+  } in f(p)
+
+main : () -> <io> () =
+  print(show(sum-pair((3, 4))))
+  let r = for w in [1, 2, 3] fold acc = (0, 0) do {
+    let (s, n) = acc
+    (s + w, n + 1)
+  }
+  print(show(r))
+  print(show(swap-add((5, 6))))
+
+# Expected output:
+# 7
+# (6, 3)
+# (6, 6)

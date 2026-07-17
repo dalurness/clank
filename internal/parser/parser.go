@@ -1429,11 +1429,27 @@ func (p *parser) parseUnaryExpr() ast.Expr {
 	return p.parsePostfixExpr()
 }
 
+// callParenOnSameLine reports whether the upcoming '(' starts on the same
+// line the previous token ended on. A '(' at the start of a new line begins
+// a new expression (e.g. a tuple in a block), never call arguments — without
+// this, `let x = 5` followed by `(1, 2)` on the next line parses as `5(1, 2)`.
+func (p *parser) callParenOnSameLine() bool {
+	if p.pos == 0 {
+		return true
+	}
+	prev := p.tokens[p.pos-1].Loc
+	prevLine := prev.EndLine
+	if prevLine == 0 {
+		prevLine = prev.Line
+	}
+	return p.peek().Loc.Line == prevLine
+}
+
 // Level 9-10: f(args), expr.field
 func (p *parser) parsePostfixExpr() ast.Expr {
 	expr := p.parseAtom()
 	for {
-		if p.at(token.Delim, "(") {
+		if p.at(token.Delim, "(") && p.callParenOnSameLine() {
 			p.advance()
 			var args []ast.Expr
 			if !p.at(token.Delim, ")") {

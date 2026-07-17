@@ -25,6 +25,9 @@ func isWhitespace(ch byte) bool {
 
 // Lex tokenizes source into a slice of tokens, or returns a LexError.
 func Lex(source string) ([]token.Token, *token.LexError) {
+	// Skip a UTF-8 byte-order mark — common in files written by Windows
+	// tools (PowerShell's utf8 encoding, Notepad).
+	source = strings.TrimPrefix(source, "\xef\xbb\xbf")
 	l := &lexer{source: source, line: 1, col: 1}
 	return l.lex()
 }

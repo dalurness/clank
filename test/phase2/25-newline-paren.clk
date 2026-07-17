@@ -1,0 +1,11 @@
+# Test: '(' at the start of a line begins a new expression, not call args
+# Regression: `let x = 5` + newline + `(1, 2)` used to parse as `5(1, 2)`
+
+main : () -> <io> () =
+  let x = 5
+  (1, 2) |> fst |> show |> print
+  print(show(x))
+
+# Expected output:
+# 1
+# 5
