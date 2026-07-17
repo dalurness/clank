@@ -30,7 +30,7 @@ main : () -> <io> () =
 func TestIterRangeEmptyWhenStartGteEnd(t *testing.T) {
 	src := `
 main : () -> <io> () =
-  let r1 = iter.range(5, 5) |> iter.collect
+  let r1 = iter.range(5, 4) |> iter.collect
   let _ = print(show(r1))
   let r2 = iter.range(10, 3) |> iter.collect
   print(show(r2))
@@ -157,7 +157,7 @@ main : () -> <io> () =
 func TestForLoopOverLazyIterator(t *testing.T) {
 	src := `
 main : () -> <io> () =
-  for x in iter.range(1, 4) do print(show(x))
+  for x in iter.range(1, 3) do print(show(x))
 `
 	out, err := runProgram(src, "")
 	if err != nil {
@@ -178,7 +178,7 @@ main : () -> <io> () =
 func TestForFoldOverLazyRange(t *testing.T) {
 	src := `
 main : () -> <io> () =
-  let result = for x in iter.range(1, 6) fold acc = 0 do acc + x
+  let result = for x in iter.range(1, 5) fold acc = 0 do acc + x
   print(show(result))
 `
 	out, err := runProgram(src, "")
@@ -461,7 +461,7 @@ main : () -> <io> () =
 func TestIterLazyChainDoesNotMaterializeSecond(t *testing.T) {
 	src := `
 main : () -> <io> () =
-  let result = iter.chain(iter.range(0, 3), iter.range(100, 10000000))
+  let result = iter.chain(iter.range(0, 2), iter.range(100, 10000000))
     |> iter.take(5)
     |> iter.collect
   print(show(result))

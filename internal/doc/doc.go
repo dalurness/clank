@@ -308,6 +308,9 @@ func builtinRegistry() []BuiltinEntry {
 		{"str.chars", fn(tStr, tAnyList), "Split into individual characters"},
 		{"str.int", fn(tStr, tAny), "Parse integer, returns Option[Int]"},
 		{"str.rat", fn(tStr, tAny), "Parse float, returns Option[Rat]"},
+		{"str.len", fn(tStr, tInt), "String length in characters"},
+		{"str.chr", fn(tInt, tStr), "Character from Unicode code point (27 -> escape)"},
+		{"str.ord", fn(tStr, tInt), "Unicode code point of first character"},
 
 		// HTTP Server
 		{"srv.new", fn(tUnit, tAny), "Create empty route table"},
@@ -371,7 +374,7 @@ func builtinRegistry() []BuiltinEntry {
 
 		// Iterator combinators
 		{"iter.of", fn(tAnyList, tAny), "Create iterator from list"},
-		{"iter.range", fn(tInt, fn(tInt, tAny)), "Create iterator over integer range"},
+		{"iter.range", fn(tInt, fn(tInt, tAny)), "Create iterator over integer range (inclusive of end, like range)"},
 		{"iter.collect", fn(tAny, tAnyList), "Collect iterator into list"},
 		{"iter.map", fn(tAny, fn(fn(tAny, tAny), tAny)), "Lazily map function over iterator"},
 		{"iter.filter", fn(tAny, fn(fn(tAny, tBool), tAny)), "Lazily filter iterator by predicate"},

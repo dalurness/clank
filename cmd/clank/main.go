@@ -78,11 +78,14 @@ Global flags:
 See 'clank <command> --help' for per-command details.
 `,
 
-	"run": `clank run <file>
+	"run": `clank run <file> [args...]
 
 Run a Clank program. The file may import other modules via 'use'
 (local or '&external') — they'll be resolved automatically. The
 file's 'main' function, if present, is called as the entry point.
+
+Arguments after the file — or anything after '--' — are passed to
+the program and are visible via cli.args() / cli.parse().
 
 Flags:
   --json    Emit VM errors as structured JSON
@@ -342,7 +345,14 @@ func run() int {
 	var ruleFlags []string
 
 	var positional []string
+	var programArgs []string // args after "--" or trailing run args, passed to cli.args
 	for i := 0; i < len(rawArgs); i++ {
+		if rawArgs[i] == "--" {
+			// Everything after "--" belongs to the program under `run`,
+			// not to clank.
+			programArgs = append(programArgs, rawArgs[i+1:]...)
+			break
+		}
 		switch rawArgs[i] {
 		case "--json":
 			jsonOut = true
@@ -447,6 +457,8 @@ func run() int {
 				return 1
 			} else {
 				file = positional[1]
+				// Positionals after the file are the program's args.
+				programArgs = append(positional[2:], programArgs...)
 			}
 
 		case "fmt", "lint", "pretty", "terse":
@@ -463,6 +475,7 @@ func run() int {
 		default:
 			// No command specified — default to "run" with file
 			file = positional[0]
+			programArgs = append(positional[1:], programArgs...)
 		}
 	} else if inlineCode != "" {
 		// clank -e '<code>' — defaults to run
@@ -556,7 +569,17 @@ func run() int {
 	case "lint":
 		return cmdLint(program, file, jsonOut, ruleFlags)
 	case "check":
-		return cmdCheck(desugared, baseDir, jsonOut)
+		// Link imports first, same as run — checking only the entry file
+		// would misreport imported modules and packages (unbound names,
+		// unknown types). check and run must always agree.
+		checkLinked := loader.LinkWithPackages(desugared, baseDir, resolvePackageFiles(baseDir))
+		if checkLinked.Error != nil {
+			return reportError(jsonOut, structuredError{
+				Stage:   "link",
+				Message: withFloorHint(checkLinked.Error.Error(), baseDir),
+			})
+		}
+		return cmdCheck(checkLinked.Program, baseDir, jsonOut)
 	case "eval":
 		return cmdEval(desugared, baseDir, jsonOut)
 	case "run":
@@ -610,7 +633,7 @@ func run() int {
 			}
 			return 1
 		}
-		exitCode := cmdRun(linked.Program, jsonOut)
+		exitCode := cmdRun(linked.Program, programArgs, jsonOut)
 		if exitCode == 0 {
 			// Stamp the lockfile with the running binary's version so the
 			// project records which clank actually executed it. Scoped to
@@ -708,12 +731,12 @@ func desugarProgram(program *ast.Program) *ast.Program {
 }
 
 // cmdRun compiles and executes via the bytecode VM.
-func cmdRun(program *ast.Program, jsonOut bool) int {
+func cmdRun(program *ast.Program, programArgs []string, jsonOut bool) int {
 	mod := compiler.CompileProgram(program)
 	if mod.EntryWordID == nil {
 		return 0 // no main function
 	}
-	result, stdout, err := vm.Execute(mod)
+	result, stdout, err := vm.ExecuteArgs(mod, programArgs)
 	for _, line := range stdout {
 		fmt.Println(line)
 	}
@@ -1330,6 +1353,7 @@ func cmdTest(args []string, jsonOut bool, rawArgs []string) int {
 	}
 
 	var allResults []testrunner.TestResult
+	typeFailedFiles := 0
 
 	for _, file := range files {
 		program, err := parseFile(file)
@@ -1359,6 +1383,21 @@ func cmdTest(args []string, jsonOut bool, rawArgs []string) int {
 		linked := loader.LinkWithPackages(program, fileDir, resolvePackageFiles(fileDir))
 		if linked.Error != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s: link error: %v\n", file, linked.Error)
+			continue
+		}
+
+		// Type-check before running — green tests on a file that doesn't
+		// compile would be a lie.
+		typeErrors := checker.TypeCheckWithResolvers(linked.Program, nil, makeEffectAliasResolver(fileDir))
+		hardErrors := false
+		for _, te := range typeErrors {
+			if !strings.HasPrefix(te.Code, "W") {
+				fmt.Fprintf(os.Stderr, "%s: %s\n", file, te.Error())
+				hardErrors = true
+			}
+		}
+		if hardErrors {
+			typeFailedFiles++
 			continue
 		}
 
@@ -1411,7 +1450,7 @@ func cmdTest(args []string, jsonOut bool, rawArgs []string) int {
 		}
 	}
 
-	ok := totalFailed == 0 && len(allResults) > 0
+	ok := totalFailed == 0 && typeFailedFiles == 0 && len(allResults) > 0
 
 	if jsonOut {
 		type summary struct {

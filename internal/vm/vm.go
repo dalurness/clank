@@ -1963,6 +1963,12 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinStrInt()
 	case 368: // str.rat
 		return vm.builtinStrRat()
+	case 369: // str.len
+		return vm.builtinStrLen()
+	case 370: // str.chr
+		return vm.builtinStrChr()
+	case 371: // str.ord
+		return vm.builtinStrOrd()
 
 	// Collections (std.col)
 	case 320: // col.rev
@@ -2725,7 +2731,8 @@ func (vm *VM) builtinIterRange() error {
 	iter := &IteratorState{
 		ID: root.nextIterID, GeneratorFn: ValUnit(), CleanupFn: ValUnit(),
 		NativeNext: func() *Value {
-			if current >= end {
+			// Inclusive of end, matching the list builtin range(a, b).
+			if current > end {
 				return nil
 			}
 			v := ValInt(current)
@@ -3305,6 +3312,19 @@ func (vm *VM) opSelectWait(code []byte) error {
 // Execute creates a VM, runs the module, and returns the result + captured stdout.
 func Execute(mod *compiler.BytecodeModule) (*Value, []string, error) {
 	v := New(mod)
+	result, err := v.Run()
+	return result, v.Stdout, err
+}
+
+// ExecuteArgs runs a module with an explicit program argument list —
+// cli.args and cli.parse see these instead of raw os.Args, so programs
+// receive only their own args (not "run" and the script path).
+func ExecuteArgs(mod *compiler.BytecodeModule, args []string) (*Value, []string, error) {
+	v := New(mod)
+	if args == nil {
+		args = []string{}
+	}
+	v.testArgs = args
 	result, err := v.Run()
 	return result, v.Stdout, err
 }

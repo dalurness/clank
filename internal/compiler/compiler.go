@@ -108,7 +108,8 @@ var vmBuiltins = map[string]int{
 	"str.ridx": 354, "str.pfx": 355, "str.sfx": 356, "str.up": 357,
 	"str.lo": 358, "str.rep": 359, "str.rep1": 360, "str.pad": 361,
 	"str.lpad": 362, "str.rev": 363, "str.lines": 364, "str.words": 365,
-	"str.chars": 366, "str.int": 367, "str.rat": 368,
+	"str.chars": 366, "str.int": 367, "str.rat": 368, "str.len": 369,
+	"str.chr": 370, "str.ord": 371,
 	// Collections
 	"col.rev": 320, "col.sort": 321, "col.sortby": 322, "col.uniq": 323,
 	"col.zip": 324, "col.unzip": 325, "col.flat": 326, "col.flatmap": 327,

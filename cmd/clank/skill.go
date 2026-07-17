@@ -38,8 +38,9 @@ one pass.
 
 1. Write ` + "`file.clk`" + `
 2. ` + "`clank check file.clk`" + ` — type-check without running (structured errors with --json)
-3. ` + "`clank run file.clk`" + ` — run (calls ` + "`main : () -> <io> ()`" + `)
-4. ` + "`clank test`" + ` — runs inline ` + "`test \"name\" = expr`" + ` blocks
+3. ` + "`clank run file.clk [args...]`" + ` — run (calls ` + "`main : () -> <io> ()`" + `);
+   args after the file (or after ` + "`--`" + `) reach the program via ` + "`cli.args()`" + `
+4. ` + "`clank test`" + ` — type-checks, then runs inline ` + "`test \"name\" = expr`" + ` blocks
 5. ` + "`clank fmt file.clk`" + ` — canonical formatting (in place)
 
 Quick sanity checks: ` + "`clank eval '1 + 2'`" + `.
@@ -69,6 +70,15 @@ main : () -> <io> () =
   ` + "`http.get`" + `, ` + "`proc.sh`" + `, ` + "`env.get`" + `, ` + "`rx.find`" + `, ` + "`math.abs`" + `, ` + "`str.*`" + `,
   ` + "`col.*`" + `, ` + "`iter.*`" + `
 - Effects are part of the type: pure ` + "`<>`" + `, ` + "`<io>`" + `, ` + "`<exn[E]>`" + `, ` + "`<async>`" + `
+
+Gotchas:
+
+- ` + "`len`" + ` is for lists; string length is ` + "`str.len`" + `. ` + "`str.rep`" + ` is replace,
+  not repeat (repeat: ` + "`join(col.rep(s, n), \"\")`" + `)
+- ` + "`range(a, b)`" + ` and ` + "`iter.range(a, b)`" + ` include ` + "`b`" + `
+- No list patterns in ` + "`match`" + ` — destructure with ` + "`head`" + `/` + "`tail`" + `/` + "`col.nth`" + `
+- Effect operations take exactly one parameter (use a tuple for more)
+- Sort with a comparator: ` + "`col.sortby(xs, fn(a, b) => ...)`" + ` returning Int
 
 ## Modules and packages
 

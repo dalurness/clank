@@ -93,6 +93,10 @@ Every function type includes an effect annotation: `T -> <effects> U`.
 
 Built-in effects: `io`, `exn[E]`, `async`. User-defined via `effect Name { op : T -> U }`. Effect aliases: `effect alias Pure = <>`.
 
+Each effect operation takes exactly one parameter — for multiple values,
+declare a tuple type and perform with a tuple: `put : ((Str, Str)) -> ()`,
+`perform put(("k", "v"))`.
+
 Handlers interpret effects. The `return` clause transforms the final value. Operation clauses bind the operation's arguments, then the `resume` keyword, then a continuation identifier `k`. Use `k(value)` to resume the computation, or omit it to abort:
 ```
 handle computation {
@@ -131,7 +135,11 @@ Resources that must be used at most once:
 ```
 affine type File = File(Int)
 ```
-Tracked via move semantics. Explicit `clone` required for reuse.
+Tracked via move semantics. Reuse requires an explicit clone through a
+borrow — `clone x` would itself consume `x`, so the idiom is:
+```
+let f2 = clone &f     # f still usable; type must derive (Clone)
+```
 
 ### 3.6 Type Inference
 Hindley-Milner with: literal types, let-binding, if/match branch unification, lambda/application, exhaustiveness checking, path-sensitive refinement tracking.
@@ -164,8 +172,13 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 | Arithmetic | `add`, `sub`, `mul`, `div`, `mod`, `negate` |
 | Comparison | `eq`, `neq`, `lt`, `gt`, `lte`, `gte` |
 | Logic | `and`, `or`, `not` |
-| Strings | `str.cat`, `show`, `print`, `split`, `join`, `trim`, `str.get`, `str.slc`, `str.has`, `str.idx`, `str.ridx`, `str.pfx`, `str.sfx`, `str.up`, `str.lo`, `str.rep`, `str.rep1`, `str.pad`, `str.lpad`, `str.rev`, `str.lines`, `str.words`, `str.chars`, `str.int`, `str.rat` |
+| Strings | `str.cat`, `show`, `print`, `split`, `join`, `trim`, `str.len`, `str.chr`, `str.ord`, `str.get`, `str.slc`, `str.has`, `str.idx`, `str.ridx`, `str.pfx`, `str.sfx`, `str.up`, `str.lo`, `str.rep`, `str.rep1`, `str.pad`, `str.lpad`, `str.rev`, `str.lines`, `str.words`, `str.chars`, `str.int`, `str.rat` |
 | Lists | `len`, `head`, `tail`, `cons`, `cat`, `rev`, `get`, `map`, `filter`, `fold`, `flat-map`, `range`, `zip` |
+
+Notes: `len` is list length — use `str.len` for strings. `range(a, b)` and
+`iter.range(a, b)` are both inclusive of `b`. Match patterns cover
+literals, variables, tuples, records, variants, and `_` — there are no
+list patterns; destructure lists with `head`/`tail`/`col.nth` or iterators.
 | Tuples | `fst`, `snd`, `tuple.get` |
 | Concat | `concat` (`++` operator — works on strings and lists) |
 | Effects | `raise` |

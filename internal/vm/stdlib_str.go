@@ -307,3 +307,38 @@ func (vm *VM) builtinStrRat() error {
 	}
 	return nil
 }
+
+func (vm *VM) builtinStrLen() error {
+	s, err := vm.popStr()
+	if err != nil {
+		return err
+	}
+	vm.push(ValInt(len([]rune(s))))
+	return nil
+}
+
+func (vm *VM) builtinStrChr() error {
+	nVal, err := vm.pop()
+	if err != nil {
+		return err
+	}
+	n := numVal(nVal)
+	if n < 0 || n > 0x10FFFF {
+		return vm.trap("E002", fmt.Sprintf("str.chr: code point %d out of range", n))
+	}
+	vm.push(ValStr(string(rune(n))))
+	return nil
+}
+
+func (vm *VM) builtinStrOrd() error {
+	s, err := vm.popStr()
+	if err != nil {
+		return err
+	}
+	runes := []rune(s)
+	if len(runes) == 0 {
+		return vm.trap("E002", "str.ord: empty string")
+	}
+	vm.push(ValInt(int(runes[0])))
+	return nil
+}

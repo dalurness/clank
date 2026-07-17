@@ -780,7 +780,7 @@ main : () -> <io> () =
 func TestIterMapFilterCollect(t *testing.T) {
 	source := `
 main : () -> <io> () =
-  let result = iter.range(1, 11)
+  let result = iter.range(1, 10)
     |> iter.filter(fn(x) => x % 2 == 0)
     |> iter.map(fn(x) => x * x)
     |> iter.collect
@@ -798,9 +798,9 @@ main : () -> <io> () =
 func TestIterChunkWindow(t *testing.T) {
 	source := `
 main : () -> <io> () =
-  let chunks = iter.range(1, 8) |> iter.chunk(3) |> iter.collect
+  let chunks = iter.range(1, 7) |> iter.chunk(3) |> iter.collect
   let _ = print(show(chunks))
-  let wins = iter.range(1, 6) |> iter.window(3) |> iter.collect
+  let wins = iter.range(1, 5) |> iter.window(3) |> iter.collect
   print(show(wins))
 `
 	output, err := runProgram(source, "")
@@ -842,7 +842,7 @@ type Option<a> = Some(a) | None
 
 main : () -> <io> () =
   # scan: running sum
-  let scanned = iter.range(1, 6) |> iter.scan(0, fn(acc, x) => acc + x) |> iter.collect
+  let scanned = iter.range(1, 5) |> iter.scan(0, fn(acc, x) => acc + x) |> iter.collect
   let _ = print(show(scanned))
 
   # unfold: generate fibonacci-like

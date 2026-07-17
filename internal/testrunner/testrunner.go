@@ -93,15 +93,25 @@ func FilterTests(tests []TestCase, filter string) []TestCase {
 
 // DiscoverTestFiles finds .clk files in a directory (non-recursive).
 func DiscoverTestFiles(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// Don't descend into hidden directories (.git, .agents, ...).
+			if name := d.Name(); strings.HasPrefix(name, ".") && path != dir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".clk") {
+			files = append(files, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".clk") {
-			files = append(files, filepath.Join(dir, e.Name()))
-		}
 	}
 	return files, nil
 }

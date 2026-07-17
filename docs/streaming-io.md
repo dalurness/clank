@@ -323,7 +323,7 @@ These consume the iterator and produce a final value.
 | Word | Signature | Description |
 |------|-----------|-------------|
 | `iter.of` | `([a]) -> <> Iter[a]` | From list |
-| `iter.range` | `(Int, Int) -> <> Iter[Int]` | Range [start, end) |
+| `iter.range` | `(Int, Int) -> <> Iter[Int]` | Range [start, end] (inclusive, like `range`) |
 | `iter.repeat` | `(a) -> <> Iter[a]` | Infinite repetition |
 | `iter.cycle` | `(Iter[a]) -> <> Iter[a]` | Infinite cycle (buffers) |
 | `iter.once` | `(a) -> <> Iter[a]` | Single element |

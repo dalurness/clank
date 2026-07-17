@@ -169,6 +169,7 @@ All stdlib functions are available without imports, using module-qualified names
 | `http` | `get`, `post`, `put`, `del` | HTTP client |
 | `rx` | `ok`, `find`, `replace`, `split` | Regex |
 | `math` | `abs`, `min`, `max`, `floor`, `ceil`, `sqrt` | Math |
+| `str` | `len`, `chr`, `ord`, `slc`, `pad`, `rep`, + 20 more | String ops |
 
 Plus core builtins: arithmetic, comparison, logic, string ops, list ops (`map`, `filter`, `fold`, `flat-map`, `range`, `zip`, etc.), tuples, effects, async (`spawn`, `await`, `channel`, `send`, `recv`).
 
@@ -186,7 +187,7 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 ## CLI
 
 ```bash
-clank run <file>                       # Run a .clk file
+clank run <file> [args...]             # Run a .clk file (args reach cli.args)
 clank check <file>                     # Type-check without running
 clank eval <expr>                      # Evaluate and print result
 clank fmt <file>                       # Canonical formatting
