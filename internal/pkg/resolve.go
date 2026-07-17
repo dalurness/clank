@@ -181,12 +181,21 @@ func ResolveLocalDeps(manifest *Manifest, manifestDir string, includeDev bool) (
 	return resolved, nil
 }
 
+// resolveDepPath resolves a path dependency against baseDir, leaving
+// absolute paths (e.g. "C:/lib" or "/home/x/lib") untouched.
+func resolveDepPath(baseDir, depPath string) string {
+	if filepath.IsAbs(depPath) {
+		return filepath.Clean(depPath)
+	}
+	return filepath.Join(baseDir, depPath)
+}
+
 func resolveLocalDep(dep Dependency, baseDir string, resolved *[]ResolvedDep, visited map[string]bool) error {
 	if dep.Path == "" {
 		return nil
 	}
 
-	depPath := filepath.Join(baseDir, dep.Path)
+	depPath := resolveDepPath(baseDir, dep.Path)
 	depPath, _ = filepath.Abs(depPath)
 
 	if visited[depPath] {
@@ -640,7 +649,7 @@ func PkgAdd(opts PkgAddOptions) PkgAddResult {
 
 	// Validate path dep
 	if dep.Path != "" {
-		depDir := filepath.Join(filepath.Dir(manifestPath), dep.Path)
+		depDir := resolveDepPath(filepath.Dir(manifestPath), dep.Path)
 		depManifestPath := filepath.Join(depDir, "clank.pkg")
 		if _, err := os.Stat(depManifestPath); os.IsNotExist(err) {
 			return PkgAddResult{Ok: false, Error: fmt.Sprintf("No clank.pkg found at %s", depDir)}

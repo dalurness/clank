@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/dalurness/clank/internal/ast"
@@ -109,7 +110,10 @@ func (l *linker) link(program *ast.Program, currentDir string) (*ast.Program, er
 	}
 
 	// Expand use declarations: importing a type name also imports its constructors
-	expanded := l.expandImports(program.TopLevels, currentDir, l.baseDir)
+	expanded, err := l.expandImports(program.TopLevels, currentDir, l.baseDir)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build the flat program: imported module top-levels first, then original program
 	var merged []ast.TopLevel
@@ -127,7 +131,7 @@ func (l *linker) link(program *ast.Program, currentDir string) (*ast.Program, er
 // fallbackDir is tried when a module path doesn't resolve relative to
 // currentDir — the project root for local files, the package's src/ root
 // for files inside an external package.
-func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir, fallbackDir string) []ast.TopLevel {
+func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir, fallbackDir string) ([]ast.TopLevel, error) {
 	result := make([]ast.TopLevel, 0, len(topLevels))
 	for _, tl := range topLevels {
 		useDecl, ok := tl.(ast.TopUseDecl)
@@ -140,9 +144,11 @@ func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir, fallbackDir
 		// in the package's src/ tree, keyed by package name.
 		var pubNames map[string]bool
 		var typeCtors map[string][]string
+		origin := strings.Join(useDecl.Path, ".")
 		if useDecl.External {
 			pubNames = l.packagePubs[useDecl.Path[0]]
 			typeCtors = l.packageTypes[useDecl.Path[0]]
+			origin = "package '" + useDecl.Path[0] + "'"
 		} else {
 			absPath, err := ResolveModulePath(useDecl.Path, currentDir)
 			if err != nil && currentDir != fallbackDir {
@@ -154,6 +160,23 @@ func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir, fallbackDir
 			}
 			pubNames = l.pubMap[absPath]
 			typeCtors = l.typeMap[absPath]
+			origin = "module '" + origin + "'"
+		}
+
+		// Selective imports must name actual exports — catching this here
+		// beats an opaque failure at runtime.
+		if pubNames != nil {
+			for _, imp := range useDecl.Imports {
+				if !pubNames[imp.Name] {
+					available := make([]string, 0, len(pubNames))
+					for name := range pubNames {
+						available = append(available, name)
+					}
+					sort.Strings(available)
+					return nil, fmt.Errorf("%s has no export '%s'\navailable: %s",
+						origin, imp.Name, strings.Join(available, ", "))
+				}
+			}
 		}
 
 		// For qualified imports, populate the import list with all pub names
@@ -187,7 +210,7 @@ func (l *linker) expandImports(topLevels []ast.TopLevel, currentDir, fallbackDir
 
 		result = append(result, useDecl)
 	}
-	return result
+	return result, nil
 }
 
 func (l *linker) loadModule(modPath []string, currentDir string) error {
@@ -316,7 +339,10 @@ func (l *linker) loadModule(modPath []string, currentDir string) error {
 	}
 
 	// Expand type imports in this module's use declarations
-	expandedTLs := l.expandImports(program.TopLevels, modDir, l.baseDir)
+	expandedTLs, err := l.expandImports(program.TopLevels, modDir, l.baseDir)
+	if err != nil {
+		return err
+	}
 
 	// Add this module's top-levels (skip mod/test declarations)
 	for _, tl := range expandedTLs {
@@ -533,7 +559,10 @@ func (l *linker) loadExternalPackage(pkgName string) error {
 
 		// Expand qualified imports and type constructors, resolving
 		// against the file's dir with the package src/ root as fallback.
-		expanded := l.expandImports(pf.program.TopLevels, fileDir, srcRoot)
+		expanded, err := l.expandImports(pf.program.TopLevels, fileDir, srcRoot)
+		if err != nil {
+			return err
+		}
 
 		// Append this file's top-levels to the collected pool, skipping
 		// mod/test decls like loadModule does.

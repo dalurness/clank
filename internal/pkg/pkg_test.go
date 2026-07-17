@@ -1276,3 +1276,17 @@ func TestLockfileSorted(t *testing.T) {
 		t.Error("alpha-lib should appear before zeta-lib in serialized output")
 	}
 }
+
+func TestResolveDepPathAbsolute(t *testing.T) {
+	tmp := t.TempDir()
+	// Absolute paths must be used as-is, not joined onto the base dir.
+	if got := resolveDepPath(`C:\some\project`, tmp); got != filepath.Clean(tmp) {
+		t.Errorf("absolute path mangled: %s", got)
+	}
+	// Relative paths resolve against the base dir.
+	got := resolveDepPath(tmp, "../lib")
+	want := filepath.Join(tmp, "../lib")
+	if got != want {
+		t.Errorf("relative path: got %s, want %s", got, want)
+	}
+}

@@ -227,3 +227,50 @@ pub x : () -> <> Int =
 		t.Errorf("expected &foo hint, got: %v", result.Error)
 	}
 }
+
+func TestLinkUnknownExportInPackage(t *testing.T) {
+	tmp := t.TempDir()
+	a := writeFile(t, tmp, "pkg/src/greet.clk", `
+pub hello : () -> <> Str =
+  "hi"
+`)
+
+	program := parseSource(t, `
+use &mylib (greet)
+
+main : () -> <> Str =
+  greet()
+`)
+	result := LinkWithPackages(program, tmp, map[string][]string{"mylib": {a}})
+	if result.Error == nil {
+		t.Fatal("expected link error for unknown export, got none")
+	}
+	msg := result.Error.Error()
+	if !strings.Contains(msg, "has no export 'greet'") || !strings.Contains(msg, "hello") {
+		t.Errorf("error should name the missing export and list available ones, got: %s", msg)
+	}
+}
+
+func TestLinkUnknownExportInLocalModule(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "helpers.clk", `
+mod helpers
+
+pub double : (n: Int) -> <> Int =
+  n * 2
+`)
+
+	program := parseSource(t, `
+use helpers (triple)
+
+main : () -> <> Int =
+  triple(2)
+`)
+	result := Link(program, tmp)
+	if result.Error == nil {
+		t.Fatal("expected link error for unknown module export, got none")
+	}
+	if !strings.Contains(result.Error.Error(), "has no export 'triple'") {
+		t.Errorf("unexpected error: %s", result.Error.Error())
+	}
+}
