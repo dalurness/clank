@@ -1,0 +1,35 @@
+# Test: functions are curried at runtime too — partial application and
+# over-application both work, for lambdas and top-level words.
+
+add3 : (a: Int, b: Int, c: Int) -> <> Int =
+  a + b + c
+
+make-adder : (n: Int) -> <> (Int -> Int) =
+  fn(m) => n + m
+
+main : () -> <io> () =
+  # partial application of a lambda
+  let add = fn(a, b) => a + b
+  let add5 = add(5)
+  let _ = print(show(add5(10)))
+
+  # partial application of a top-level word, twice
+  let f1 = add3(1)
+  let f2 = f1(2)
+  let _ = print(show(f2(30)))
+
+  # partial with two of three args
+  let g = add3(100, 20)
+  let _ = print(show(g(3)))
+
+  # over-application: manually curried functions take all args at once
+  let curried = fn(a) => fn(b) => a * b
+  let _ = print(show(curried(6, 7)))
+  print(show(make-adder(100, 23)))
+
+# Expected output:
+# 15
+# 33
+# 123
+# 42
+# 123

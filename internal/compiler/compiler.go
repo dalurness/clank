@@ -239,6 +239,7 @@ type Compiler struct {
 	rationalIdx  map[float64]int
 	words        []BytecodeWord
 	wordIDs      map[string]int
+	wordParams   map[string]int // top-level word name → declared param count
 	nextWordID   int
 	resumeVars   map[string]int
 	lambdaBodies []deferredLambda
@@ -257,6 +258,7 @@ func NewCompiler() *Compiler {
 		stringIndex:          make(map[string]int),
 		rationalIdx:          make(map[float64]int),
 		wordIDs:              make(map[string]int),
+		wordParams:           make(map[string]int),
 		nextWordID:           450,
 		resumeVars:           make(map[string]int),
 		variantInfos:         make(map[string]variantInfo),
@@ -322,7 +324,7 @@ func (c *Compiler) Compile(program *ast.Program) *BytecodeModule {
 			copy(code, ops)
 			code[len(ops)] = OpRET
 			c.words = append(c.words, BytecodeWord{
-				Name: name, WordID: id, Code: code, IsPublic: false,
+				Name: name, WordID: id, Code: code, NumParams: -1, IsPublic: false,
 			})
 		}
 	}
@@ -381,6 +383,7 @@ func (c *Compiler) firstPass(tl ast.TopLevel) {
 	switch t := tl.(type) {
 	case ast.TopDefinition:
 		c.allocWordID(t.Name)
+		c.wordParams[t.Name] = len(t.Sig.Params)
 	case ast.TopTypeDecl:
 		for _, v := range t.Variants {
 			if existing, ok := c.variantInfos[v.Name]; ok {
@@ -485,7 +488,7 @@ func (c *Compiler) compileTopLevel(tl ast.TopLevel) {
 
 		c.words = append(c.words, BytecodeWord{
 			Name: t.Name, WordID: wordID, Code: e.code,
-			LocalCount: scope.count(), IsPublic: t.Pub,
+			LocalCount: scope.count(), NumParams: len(t.Sig.Params), IsPublic: t.Pub,
 			Lines: e.lines,
 		})
 
@@ -506,7 +509,9 @@ func (c *Compiler) compileTopLevel(tl ast.TopLevel) {
 			e := &codeEmitter{}
 			scope := newLocalScope()
 
+			numParams := -1
 			if lam, ok := m.Body.(ast.ExprLambda); ok {
+				numParams = len(lam.Params)
 				for _, p := range lam.Params {
 					scope.allocate(p.Name)
 				}
@@ -520,6 +525,7 @@ func (c *Compiler) compileTopLevel(tl ast.TopLevel) {
 				if pc, ok := c.interfaceMethodParam[m.Name]; ok {
 					paramCount = pc
 				}
+				numParams = paramCount
 				for i := 0; i < paramCount; i++ {
 					scope.allocate(fmt.Sprintf("__arg%d", i))
 				}
@@ -533,12 +539,13 @@ func (c *Compiler) compileTopLevel(tl ast.TopLevel) {
 				}
 				c.compileExpr(m.Body, e, scope, false)
 				e.emit(OpTAIL_CALL_DYN)
+				e.code = append(e.code, byte(paramCount&0xFF))
 			}
 			e.emit(OpRET)
 
 			c.words = append(c.words, BytecodeWord{
 				Name: implWordName, WordID: wordID, Code: e.code,
-				LocalCount: scope.count(), IsPublic: false,
+				LocalCount: scope.count(), NumParams: numParams, IsPublic: false,
 				Lines: e.lines,
 			})
 		}
@@ -774,17 +781,21 @@ func (c *Compiler) compileApply(expr ast.ExprApply, e *codeEmitter, scope *local
 				return
 			}
 
-			// Known word
+			// Known word. Static calls require an exact arity match; partial
+			// and over-application go through the dynamic path below, where
+			// the VM adapts the call (functions are curried).
 			if wordID, ok := c.wordIDs[name]; ok {
-				for _, arg := range expr.Args {
-					c.compileExpr(arg, e, scope, false)
+				if want, known := c.wordParams[name]; !known || want == len(expr.Args) {
+					for _, arg := range expr.Args {
+						c.compileExpr(arg, e, scope, false)
+					}
+					if tail {
+						e.emitU16(OpTAIL_CALL, wordID)
+					} else {
+						e.emitU16(OpCALL, wordID)
+					}
+					return
 				}
-				if tail {
-					e.emitU16(OpTAIL_CALL, wordID)
-				} else {
-					e.emitU16(OpCALL, wordID)
-				}
-				return
 			}
 		}
 	}
@@ -824,6 +835,7 @@ func (c *Compiler) compileApply(expr ast.ExprApply, e *codeEmitter, scope *local
 	} else {
 		e.emit(OpCALL_DYN)
 	}
+	e.code = append(e.code, byte(len(expr.Args)&0xFF))
 }
 
 func (c *Compiler) compileHandle(expr ast.ExprHandle, e *codeEmitter, scope *localScope, tail bool) {
@@ -1123,7 +1135,7 @@ func (c *Compiler) flushLambdaBodies() {
 
 			c.words = append(c.words, BytecodeWord{
 				Name: lam.name, WordID: wordID, Code: e.code,
-				LocalCount: bodyScope.count(), IsPublic: false,
+				LocalCount: bodyScope.count(), NumParams: len(lam.params), IsPublic: false,
 				Lines: e.lines,
 			})
 		}
@@ -1478,7 +1490,7 @@ func (c *Compiler) registerPrimitiveDefaultImpls() {
 		e.emit(OpDROP)
 		emitValue(e)
 		e.emit(OpRET)
-		c.words = append(c.words, BytecodeWord{Name: implName, WordID: wordID, Code: e.code, IsPublic: false})
+		c.words = append(c.words, BytecodeWord{Name: implName, WordID: wordID, Code: e.code, NumParams: -1, IsPublic: false})
 		if _, ok := c.dispatchTable["default"]; !ok {
 			c.dispatchTable["default"] = make(map[string]int)
 		}
@@ -1502,7 +1514,7 @@ func (c *Compiler) finalizeBuiltinImpls() {
 		copy(code, opcodes)
 		code[len(opcodes)] = OpRET
 		c.words = append(c.words, BytecodeWord{
-			Name: implName, WordID: wordID, Code: code, IsPublic: false,
+			Name: implName, WordID: wordID, Code: code, NumParams: -1, IsPublic: false,
 		})
 		if _, ok := c.dispatchTable[name]; !ok {
 			c.dispatchTable[name] = make(map[string]int)
@@ -1680,7 +1692,7 @@ func (c *Compiler) compileDerivedShow(v ast.Variant) {
 	e.emit(OpRET)
 	c.words = append(c.words, BytecodeWord{
 		Name: implName, WordID: wordID, Code: e.code,
-		LocalCount: scope.count(), IsPublic: false,
+		LocalCount: scope.count(), NumParams: -1, IsPublic: false,
 	})
 }
 
@@ -1732,7 +1744,7 @@ func (c *Compiler) compileDerivedEq(v ast.Variant) {
 	e.emit(OpRET)
 	c.words = append(c.words, BytecodeWord{
 		Name: implName, WordID: wordID, Code: e.code,
-		LocalCount: scope.count(), IsPublic: false,
+		LocalCount: scope.count(), NumParams: -1, IsPublic: false,
 	})
 }
 
@@ -1762,7 +1774,7 @@ func (c *Compiler) compileDerivedClone(v ast.Variant) {
 	e.emit(OpRET)
 	c.words = append(c.words, BytecodeWord{
 		Name: implName, WordID: wordID, Code: e.code,
-		LocalCount: scope.count(), IsPublic: false,
+		LocalCount: scope.count(), NumParams: -1, IsPublic: false,
 	})
 }
 
@@ -1842,7 +1854,7 @@ func (c *Compiler) compileDerivedOrd(variants []ast.Variant) {
 		e.emit(OpRET)
 		c.words = append(c.words, BytecodeWord{
 			Name: implName, WordID: wordID, Code: e.code,
-			LocalCount: scope.count(), IsPublic: false,
+			LocalCount: scope.count(), NumParams: -1, IsPublic: false,
 		})
 	}
 }
@@ -1857,7 +1869,7 @@ func (c *Compiler) compileDerivedDefault(v ast.Variant) {
 	e.code = append(e.code, 0)
 	e.emit(OpRET)
 	c.words = append(c.words, BytecodeWord{
-		Name: implName, WordID: wordID, Code: e.code, IsPublic: false,
+		Name: implName, WordID: wordID, Code: e.code, NumParams: -1, IsPublic: false,
 	})
 }
 

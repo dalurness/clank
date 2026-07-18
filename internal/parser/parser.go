@@ -537,6 +537,18 @@ func (p *parser) parseTypeExpr() ast.TypeExpr {
 			subtracted = ann.subtracted
 		}
 		result := p.parseTypeExpr()
+		// (A, B) -> C is a curried multi-argument function A -> (B -> C),
+		// matching fn(a, b) lambdas and f(x, y) calls. Effects live on the
+		// last arrow (the application that runs the body). A function
+		// taking an actual tuple is written ((A, B)) -> C.
+		if tuple, ok := base.(ast.TypeTuple); ok && len(tuple.Elements) > 0 && !tuple.Paren {
+			n := len(tuple.Elements)
+			fn := ast.TypeFn{Param: tuple.Elements[n-1], Effects: effects, Subtracted: subtracted, Result: result, Loc: tuple.Elements[n-1].TypeLoc()}
+			for i := n - 2; i >= 0; i-- {
+				fn = ast.TypeFn{Param: tuple.Elements[i], Result: fn, Loc: tuple.Elements[i].TypeLoc()}
+			}
+			return fn
+		}
 		return ast.TypeFn{Param: base, Effects: effects, Subtracted: subtracted, Result: result, Loc: base.TypeLoc()}
 	}
 
@@ -571,6 +583,12 @@ func (p *parser) parseBaseTypeExpr() ast.TypeExpr {
 			return ast.TypeTuple{Elements: elements, Loc: loc}
 		}
 		p.expect(token.Delim, ")")
+		// ((A, B)) — extra parens pin the tuple reading, so a following
+		// -> means a function taking one tuple argument.
+		if tuple, ok := first.(ast.TypeTuple); ok {
+			tuple.Paren = true
+			return tuple
+		}
 		return first
 	}
 

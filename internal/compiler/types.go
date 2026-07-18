@@ -16,8 +16,12 @@ type BytecodeWord struct {
 	WordID     int
 	Code       []byte
 	LocalCount int
-	IsPublic   bool
-	Lines      []LineEntry // pc → source location, for runtime error reporting
+	// NumParams is the number of declared parameters, used by the VM to
+	// adapt dynamic calls (partial and over-application). -1 = unknown:
+	// the VM then assumes the caller pushed exactly what the word pops.
+	NumParams int
+	IsPublic  bool
+	Lines     []LineEntry // pc → source location, for runtime error reporting
 }
 
 // LocAt returns the source location of the code at bytecode offset pc,

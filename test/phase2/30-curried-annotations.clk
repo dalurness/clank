@@ -1,0 +1,21 @@
+# Test: (A, B) -> C annotations mean curried multi-arg functions,
+# matching fn(a, b) lambdas; ((A, B)) -> C takes an actual tuple.
+
+apply2 : (f: ((Int, Int) -> Int), x: Int, y: Int) -> <> Int =
+  f(x, y)
+
+sum-pair : (p: ((Int, Int))) -> <> Int =
+  fst(p) + snd(p)
+
+run2 : (f: ((Str, Int) -> <io> ()), s: Str, n: Int) -> <io> () =
+  f(s, n)
+
+main : () -> <io> () =
+  let _ = print(show(apply2(fn(a, b) => a + b, 3, 4)))
+  let _ = print(show(sum-pair((3, 4))))
+  run2(fn(s, n) => print(s ++ ": " ++ show(n)), "count", 7)
+
+# Expected output:
+# 7
+# 7
+# count: 7

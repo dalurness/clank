@@ -542,11 +542,12 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		return vm.doCall(wordID)
 
 	case compiler.OpCALL_DYN:
+		argc := int(vm.readU8(code))
 		callee, err := vm.pop()
 		if err != nil {
 			return err
 		}
-		return vm.doCallDyn(callee)
+		return vm.doCallDynN(callee, argc)
 
 	case compiler.OpRET:
 		if len(vm.callStack) == 0 {
@@ -560,11 +561,12 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		return vm.doTailCall(wordID)
 
 	case compiler.OpTAIL_CALL_DYN:
+		argc := int(vm.readU8(code))
 		callee, err := vm.pop()
 		if err != nil {
 			return err
 		}
-		return vm.doTailCallDyn(callee)
+		return vm.doTailCallDynN(callee, argc)
 
 	// ── Quotations and Closures ──
 	case compiler.OpQUOTE:
@@ -1390,6 +1392,128 @@ func (vm *VM) doTailCall(wordID int) error {
 	return nil
 }
 
+// calleeArity reports how many parameters a callable value expects, or
+// known=false when the word has no declared arity (internal words).
+func (vm *VM) calleeArity(callee Value) (int, bool) {
+	root := vm.root()
+	switch callee.Tag {
+	case TagQUOTE:
+		if w := root.wordMap[callee.WordID]; w != nil && w.NumParams >= 0 {
+			return w.NumParams, true
+		}
+	case TagHEAP:
+		switch callee.Heap.Kind {
+		case KindClosure:
+			if w := root.wordMap[callee.Heap.WordID]; w != nil && w.NumParams >= 0 {
+				return w.NumParams, true
+			}
+		case KindNative:
+			return callee.Heap.NativeArity, true
+		}
+	}
+	return 0, false
+}
+
+// adaptArity reconciles the number of pushed args with the callee's arity.
+// Returns (handled, result, err): when handled, result is the value to push
+// (partial application or over-application chain outcome).
+//
+// Functions are curried: f(x) on a two-param function builds a partial
+// application, and f(x, y) on a one-param function applies the returned
+// function to the next argument.
+func (vm *VM) adaptArity(callee Value, argc, arity int) (bool, Value, error) {
+	if argc == arity {
+		return false, Value{}, nil
+	}
+	if argc < arity {
+		saved := make([]Value, argc)
+		for i := argc - 1; i >= 0; i-- {
+			v, err := vm.pop()
+			if err != nil {
+				return true, Value{}, err
+			}
+			saved[i] = v
+		}
+		partial := ValNative(arity-argc, func(nvm *VM, rest []Value) (Value, error) {
+			all := make([]Value, 0, len(saved)+len(rest))
+			all = append(all, saved...)
+			all = append(all, rest...)
+			return nvm.callBuiltinFn(callee, all)
+		})
+		return true, partial, nil
+	}
+	// argc > arity: unit-call of a zero-param word discards the unit arg;
+	// otherwise apply the first arity args, then feed the extras one at a
+	// time into each returned function.
+	extras := make([]Value, argc-arity)
+	for i := len(extras) - 1; i >= 0; i-- {
+		v, err := vm.pop()
+		if err != nil {
+			return true, Value{}, err
+		}
+		extras[i] = v
+	}
+	if arity == 0 && argc == 1 && extras[0].Tag == TagUNIT {
+		return false, Value{}, nil
+	}
+	first := make([]Value, arity)
+	for i := arity - 1; i >= 0; i-- {
+		v, err := vm.pop()
+		if err != nil {
+			return true, Value{}, err
+		}
+		first[i] = v
+	}
+	result, err := vm.callBuiltinFn(callee, first)
+	if err != nil {
+		return true, Value{}, err
+	}
+	for _, extra := range extras {
+		result, err = vm.callBuiltinFn(result, []Value{extra})
+		if err != nil {
+			return true, Value{}, err
+		}
+	}
+	return true, result, nil
+}
+
+func (vm *VM) doCallDynN(callee Value, argc int) error {
+	if arity, known := vm.calleeArity(callee); known {
+		handled, result, err := vm.adaptArity(callee, argc, arity)
+		if err != nil {
+			return err
+		}
+		if handled {
+			vm.push(result)
+			return nil
+		}
+	}
+	return vm.doCallDyn(callee)
+}
+
+func (vm *VM) doTailCallDynN(callee Value, argc int) error {
+	if arity, known := vm.calleeArity(callee); known {
+		gen := vm.transferGen
+		handled, result, err := vm.adaptArity(callee, argc, arity)
+		if err != nil {
+			return err
+		}
+		if handled {
+			if vm.transferGen != gen {
+				return nil
+			}
+			vm.push(result)
+			if len(vm.callStack) == 0 {
+				vm.halted = true
+				return nil
+			}
+			vm.doReturn()
+			return nil
+		}
+	}
+	return vm.doTailCallDyn(callee)
+}
+
 func (vm *VM) doCallDyn(callee Value) error {
 	switch callee.Tag {
 	case TagQUOTE:
@@ -1465,7 +1589,7 @@ func (vm *VM) callBuiltinFn(fn Value, args []Value) (Value, error) {
 		vm.push(arg)
 	}
 	savedCallDepth := len(vm.callStack)
-	if err := vm.doCallDyn(fn); err != nil {
+	if err := vm.doCallDynN(fn, len(args)); err != nil {
 		return ValUnit(), err
 	}
 	for !vm.halted && len(vm.callStack) > savedCallDepth {

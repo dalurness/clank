@@ -17,6 +17,8 @@ Primitives: `Int` (64-bit signed, overflow traps), `Rat` (IEEE 754 double, overf
 
 Compounds: `[T]` (list), `(T, U)` (tuple), `{k: T}` (record), `T | U` (tagged union), `T -> <E> U` (function with effects E).
 
+Functions are curried: `(A, B) -> C` in type position means `A -> (B -> C)`, matching `fn(a, b)` lambdas and `f(x, y)` calls. Partial application (`f(x)`) and over-application of a curried chain (`g(x, y)` where `g : A -> (B -> C)`) both work. A function taking an actual tuple is written `((A, B)) -> C` and called `f((x, y))`. In multi-arg annotations, effects attach to the last arrow: `(A, B) -> <io> C` is `A -> (B -> <io> C)`.
+
 String interpolation: `"hello ${expr}"` desugars to `"hello " ++ show(expr)`. Escape with `\$`.
 
 String escapes: `\n` `\t` `\r` `\\` `\"` `\$` `\e` (ESC, 0x1B), `\xNN` (byte, two hex digits), `\u{N...}` (Unicode code point, 1-6 hex digits, e.g. `"\u{1F600}"`).

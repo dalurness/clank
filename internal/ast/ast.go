@@ -134,7 +134,11 @@ type TypeList struct {
 
 type TypeTuple struct {
 	Elements []TypeExpr
-	Loc      token.Loc
+	// Paren marks an explicitly re-parenthesized tuple type: ((A, B)).
+	// Distinguishes ((A, B)) -> C (function taking one tuple) from
+	// (A, B) -> C (curried two-argument function).
+	Paren bool
+	Loc   token.Loc
 }
 
 type TypeRecord struct {
