@@ -3192,7 +3192,7 @@ func (vm *VM) opChanNew() error {
 	}
 	root := vm.root()
 	root.mu.Lock()
-	ch := &Channel{ID: root.nextChannelID, GoCh: make(chan Value, cap), Capacity: cap, SenderOpen: true, ReceiverOpen: true}
+	ch := &Channel{ID: root.nextChannelID, GoCh: make(chan Value, cap), Capacity: cap, SenderOpen: true, ReceiverOpen: true, Closed: make(chan struct{})}
 	root.nextChannelID++
 	root.mu.Unlock()
 	vm.push(ValTuple([]Value{ValSender(ch), ValReceiver(ch)}))
@@ -3218,6 +3218,11 @@ func (vm *VM) opChanSend(code []byte) error {
 	select {
 	case ch.GoCh <- val:
 		// sent
+	case <-ch.Closed:
+		if !vm.doRaise("channel closed") {
+			return vm.trap("E012", "CHAN_SEND: channel is closed")
+		}
+		return nil
 	case <-vm.ctx.Done():
 		return vm.trap("E011", "task cancelled")
 	}
@@ -3248,7 +3253,7 @@ func (vm *VM) opChanRecv(code []byte) error {
 		}
 		return nil
 	}
-	// Block until a value arrives or context is cancelled
+	// Block until a value arrives, the channel closes, or context is cancelled
 	select {
 	case v, ok := <-ch.GoCh:
 		if !ok {
@@ -3258,6 +3263,18 @@ func (vm *VM) opChanRecv(code []byte) error {
 			return nil
 		}
 		vm.push(v)
+		return nil
+	case <-ch.Closed:
+		// A value may have raced in just before the close — drain it if so.
+		select {
+		case v := <-ch.GoCh:
+			vm.push(v)
+			return nil
+		default:
+		}
+		if !vm.doRaise("channel closed") {
+			return vm.trap("E012", "CHAN_RECV: channel is closed and empty")
+		}
 		return nil
 	case <-vm.ctx.Done():
 		return vm.trap("E011", "task cancelled")
@@ -3291,11 +3308,13 @@ func (vm *VM) opChanClose() error {
 		ch.mu.Lock()
 		ch.SenderOpen = false
 		ch.mu.Unlock()
+		ch.SignalClose()
 	} else if endVal.Heap.Kind == KindReceiver {
 		ch := endVal.Heap.Channel
 		ch.mu.Lock()
 		ch.ReceiverOpen = false
 		ch.mu.Unlock()
+		ch.SignalClose()
 	} else {
 		return vm.trap("E002", "CHAN_CLOSE: expected Sender or Receiver")
 	}

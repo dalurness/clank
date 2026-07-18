@@ -98,6 +98,18 @@ type Channel struct {
 	mu           sync.Mutex // protects SenderOpen, ReceiverOpen
 	SenderOpen   bool
 	ReceiverOpen bool
+	Closed       chan struct{} // closed when either side closes; wakes blocked send/recv
+	closeOnce    sync.Once
+}
+
+// SignalClose wakes any goroutine blocked on this channel. Safe to call
+// multiple times and from both ends.
+func (c *Channel) SignalClose() {
+	c.closeOnce.Do(func() {
+		if c.Closed != nil {
+			close(c.Closed)
+		}
+	})
 }
 
 // SelectArm is one arm of a select expression.

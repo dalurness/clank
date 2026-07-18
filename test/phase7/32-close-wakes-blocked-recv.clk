@@ -1,0 +1,22 @@
+# Test: close-sender wakes a receiver that is already blocked in recv.
+# Previously this deadlocked: close only set a flag, so a consumer blocked
+# before the close never woke up.
+
+consume : (rx: _, acc: Int) -> <async> Int =
+  let v = recv(rx)
+  consume(rx, acc + v)
+
+main : () -> <io, async> () =
+  let (tx, rx) = channel(4)
+  let consumer = spawn(fn() =>
+    handle consume(rx, 0) {
+      return n -> n,
+      raise msg resume _ -> -1
+    }
+  )
+  let _ = sleep(50)   # ensure the consumer is blocked in recv first
+  let _ = close-sender(tx)
+  print(show(await(consumer)))
+
+# Expected output:
+# -1
