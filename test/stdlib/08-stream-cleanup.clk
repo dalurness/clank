@@ -1,0 +1,17 @@
+# Test: a short-circuited fs.stream-lines releases its file handle.
+# iter.take(n) stops pulling before EOF; the file must still be closable —
+# previously fs.rm failed on Windows because the handle stayed open.
+
+main : () -> <io> () =
+  let dir = "stream-cleanup-tmp"
+  let _ = fs.mkdir(dir)
+  let path = dir ++ "/lines.txt"
+  let _ = fs.write(path, "a\nb\nc\nd\ne\n")
+  let first = fs.stream-lines(path) |> iter.take(2) |> iter.collect
+  let _ = print(show(first))
+  let _ = fs.rm(dir)
+  print("removed: " ++ show(not(fs.exists(dir))))
+
+# Expected output:
+# [a, b]
+# removed: true

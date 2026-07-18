@@ -29,7 +29,7 @@ func (vm *VM) builtinFsStreamLines() error {
 	}
 	scanner := bufio.NewScanner(f)
 	done := false
-	vm.push(vm.newIter(func() *Value {
+	vm.push(vm.newIterWithCleanup(func() *Value {
 		if done {
 			return nil
 		}
@@ -38,8 +38,10 @@ func (vm *VM) builtinFsStreamLines() error {
 			return &v
 		}
 		done = true
-		f.Close()
 		return nil
+	}, func() {
+		done = true
+		f.Close()
 	}))
 	return nil
 }
@@ -71,7 +73,7 @@ func (vm *VM) builtinHttpStreamLines() error {
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	done := false
-	vm.push(vm.newIter(func() *Value {
+	vm.push(vm.newIterWithCleanup(func() *Value {
 		if done {
 			return nil
 		}
@@ -80,8 +82,10 @@ func (vm *VM) builtinHttpStreamLines() error {
 			return &v
 		}
 		done = true
-		resp.Body.Close()
 		return nil
+	}, func() {
+		done = true
+		resp.Body.Close()
 	}))
 	return nil
 }
@@ -108,7 +112,7 @@ func (vm *VM) builtinProcStream() error {
 	}
 	scanner := bufio.NewScanner(stdout)
 	done := false
-	vm.push(vm.newIter(func() *Value {
+	vm.push(vm.newIterWithCleanup(func() *Value {
 		if done {
 			return nil
 		}
@@ -117,8 +121,16 @@ func (vm *VM) builtinProcStream() error {
 			return &v
 		}
 		done = true
-		cmd.Wait()
 		return nil
+	}, func() {
+		if !done {
+			// short-circuited mid-stream: stop the process, don't wait for it
+			done = true
+			if cmd.Process != nil {
+				cmd.Process.Kill()
+			}
+		}
+		cmd.Wait()
 	}))
 	return nil
 }

@@ -2732,6 +2732,10 @@ func (vm *VM) iterNext(iter *IteratorState, iterVal Value) *Value {
 	// Native next function (lazy iterators)
 	if iter.NativeNext != nil {
 		v := iter.NativeNext()
+		if v == nil {
+			iter.Done = true
+			iter.ReleaseResources()
+		}
 		return v
 	}
 	// List-backed fast path

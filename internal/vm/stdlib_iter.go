@@ -17,13 +17,21 @@ func (vm *VM) extractIter(v Value) (*IteratorState, Value, error) {
 
 // newIter creates a new IteratorState with a NativeNext function.
 func (vm *VM) newIter(next func() *Value) Value {
+	return vm.newIterWithCleanup(next, nil)
+}
+
+// newIterWithCleanup creates a lazy iterator that owns an external resource
+// (file handle, response body, process). The cleanup fn runs when the
+// iterator is exhausted or short-circuited (e.g. by iter.take).
+func (vm *VM) newIterWithCleanup(next func() *Value, cleanup func()) Value {
 	root := vm.root()
 	root.mu.Lock()
 	iter := &IteratorState{
-		ID:          root.nextIterID,
-		GeneratorFn: ValUnit(),
-		CleanupFn:   ValUnit(),
-		NativeNext:  next,
+		ID:            root.nextIterID,
+		GeneratorFn:   ValUnit(),
+		CleanupFn:     ValUnit(),
+		NativeNext:    next,
+		NativeCleanup: cleanup,
 	}
 	root.nextIterID++
 	root.mu.Unlock()
@@ -96,6 +104,11 @@ func (vm *VM) builtinIterTake() error {
 			return nil
 		}
 		taken++
+		if taken >= n {
+			// The source will never be pulled again — free its resources
+			// (open files etc.) instead of waiting for EOF.
+			srcIter.ReleaseResources()
+		}
 		return v
 	}))
 	return nil
@@ -143,6 +156,7 @@ func (vm *VM) builtinIterTakeWhile() error {
 		result, callErr := vm.callBuiltinFn(fn, []Value{*v})
 		if callErr != nil || (result.Tag == TagBOOL && !result.BoolVal) {
 			done = true
+			srcIter.ReleaseResources()
 			return nil
 		}
 		return v

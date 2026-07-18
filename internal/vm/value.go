@@ -167,6 +167,16 @@ type IteratorState struct {
 	NativeCleanup func()
 }
 
+// ReleaseResources runs the iterator's native cleanup (close file handles,
+// response bodies, processes). Idempotent; safe on iterators without one.
+func (it *IteratorState) ReleaseResources() {
+	if it.NativeCleanup != nil {
+		cleanup := it.NativeCleanup
+		it.NativeCleanup = nil
+		cleanup()
+	}
+}
+
 // HandlerFrame represents an installed effect handler.
 type HandlerFrame struct {
 	EffectID          int
