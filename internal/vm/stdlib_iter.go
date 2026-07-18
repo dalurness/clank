@@ -6,6 +6,11 @@ package vm
 
 // extractIter validates and extracts an IteratorState from a Value.
 func (vm *VM) extractIter(v Value) (*IteratorState, Value, error) {
+	// Channel receivers act as iterators: blocking next, ends when the
+	// channel is closed and drained.
+	if v.Tag == TagHEAP && v.Heap.Kind == KindReceiver {
+		v = vm.receiverToIter(v)
+	}
 	if v.Tag != TagHEAP || v.Heap.Kind != KindIterator {
 		return nil, v, vm.trap("E002", "expected Iterator")
 	}

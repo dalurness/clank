@@ -3365,6 +3365,9 @@ func registerBuiltins(env *typeEnv) {
 	env.set("send", NewTFn(TAny, NewTFn(TAny, TUnit)))
 	env.set("recv", NewTFn(TAny, TAny))
 	env.set("try-recv", NewTFn(TAny, TAny))
+	env.set("recv-opt", NewTFn(TAny, TAny))
+	env.set("iter-recv", NewTFn(TAny, TAny))
+	env.set("select-wait", NewTFn(TAny, TAny))
 	env.set("close-sender", NewTFn(TAny, TUnit))
 	env.set("close-receiver", NewTFn(TAny, TUnit))
 

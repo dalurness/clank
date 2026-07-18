@@ -78,8 +78,8 @@ var vmBuiltins = map[string]int{
 	"iter.nth": 104, "iter.min": 105, "iter.max": 106,
 	"iter.generate": 107,
 	"iter-of": 70, "iter-range": 71, "iter-recv": 108,
-	"iter-send": 109, "iter-spawn": 110,
-	"collect": 72, "drain": 84, "close-iter": 111, "next": 112,
+	"collect": 72, "drain": 84, "next": 112,
+	"recv-opt": 375,
 	// Streaming I/O
 	"fs.stream-lines": 190, "http.stream-lines": 191,
 	"proc.stream": 192, "io.stdin-lines": 193,

@@ -1,0 +1,107 @@
+# Test: recv-opt drain loop, for-in over a receiver, iter.* directly on a
+# receiver, rendezvous backpressure on channel(0), and select-wait.
+
+drain : (rx: Any) -> <io, async> [Int] =
+  match recv-opt(rx) {
+    Some(v) => cons(v, drain(rx))
+    None => []
+  }
+
+main : () -> <io, async> () =
+  # recv-opt: Some until closed and drained, then None
+  let (tx, rx) = channel(8)
+  let producer = spawn(fn() => {
+    let _ = send(tx, 1)
+    let _ = send(tx, 2)
+    let _ = send(tx, 3)
+    close-sender(tx)
+  })
+  let got = drain(rx)
+  let _ = await(producer)
+  let _ = print("drain: " ++ show(got))
+
+  # for-in consumes a receiver directly
+  let (tx2, rx2) = channel(8)
+  let p2 = spawn(fn() => {
+    let _ = send(tx2, 10)
+    let _ = send(tx2, 20)
+    close-sender(tx2)
+  })
+  let doubled = for x in rx2 do x * 2
+  let _ = await(p2)
+  let _ = print("for-in: " ++ show(doubled))
+
+  # iter.* combinators consume a receiver directly
+  let (tx3, rx3) = channel(8)
+  let p3 = spawn(fn() => {
+    let _ = send(tx3, 1)
+    let _ = send(tx3, 2)
+    let _ = send(tx3, 3)
+    let _ = send(tx3, 4)
+    close-sender(tx3)
+  })
+  let summed = rx3 |> iter.filter(fn(x) => x % 2 == 0) |> iter.sum
+  let _ = await(p3)
+  let _ = print("iter sum: " ++ show(summed))
+
+  # channel(0) is a rendezvous: three sends must wait for three delayed
+  # recvs, so the producer's wall clock reflects the consumer's pace
+  let (tx4, rx4) = channel(0)
+  let p4 = spawn(fn() => {
+    let t0 = dt.unix-ms(())
+    let _ = send(tx4, 1)
+    let _ = send(tx4, 2)
+    let _ = send(tx4, 3)
+    close-sender(tx4)
+    dt.unix-ms(()) - t0
+  })
+  let _ = sleep(60)
+  let _ = recv(rx4)
+  let _ = sleep(60)
+  let _ = recv(rx4)
+  let _ = sleep(60)
+  let _ = recv(rx4)
+  let elapsed = await(p4)
+  let _ = print("rendezvous blocked: " ++ show(elapsed > 90))
+
+  # select-wait: ready channel wins, timeout fires when nothing is ready,
+  # futures are selectable, all-closed raises catchably
+  let (tx5, rx5) = channel(4)
+  let (tx6, rx6) = channel(4)
+  let _ = send(tx6, 99)
+  let r1 = select-wait([
+    (rx5, fn(v) => "rx5 ${v}"),
+    (rx6, fn(v) => "rx6 ${v}"),
+    (2000, fn(u) => "timeout")
+  ])
+  let _ = print("select ready: " ++ r1)
+
+  let r2 = select-wait([
+    (rx5, fn(v) => "rx5 ${v}"),
+    (40, fn(u) => "timeout")
+  ])
+  let _ = print("select timeout: " ++ r2)
+
+  let f = spawn(fn() => { let _ = sleep(20) 42 })
+  let r3 = select-wait([
+    (f, fn(v) => "future ${v}"),
+    (2000, fn(u) => "timeout")
+  ])
+  let _ = print("select future: " ++ r3)
+
+  let _ = close-sender(tx5)
+  let r4 = handle select-wait([(rx5, fn(v) => "got ${v}")]) {
+    return v -> v,
+    raise msg resume _ -> "raised: ${msg}"
+  }
+  print("select closed: " ++ r4)
+
+# Expected output:
+# drain: [1, 2, 3]
+# for-in: [20, 40]
+# iter sum: 6
+# rendezvous blocked: true
+# select ready: rx6 99
+# select timeout: timeout
+# select future: future 42
+# select closed: raised: select-wait: all channels closed

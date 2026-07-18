@@ -284,6 +284,21 @@ func builtinRegistry() []BuiltinEntry {
 		{"math.ceil", fn(tAny, tInt), "Ceiling (round up to integer)"},
 		{"math.sqrt", fn(tAny, tAny), "Square root (returns Rat)"},
 
+		// Concurrency
+		{"spawn", fn(tAny, tAny), "Spawn task in parallel goroutine, returns Future"},
+		{"await", fn(tAny, tAny), "Wait for Future result (raises if the task failed)"},
+		{"task-group", fn(tAny, tAny), "Structured concurrency: cancels children on failure"},
+		{"sleep", fn(tInt, tUnit), "Sleep milliseconds (interruptible by cancellation)"},
+		{"channel", fn(tInt, tAny), "Create channel with buffer n, returns (Sender, Receiver); channel(0) = rendezvous (send blocks until recv)"},
+		{"send", fn(tAny, fn(tAny, tUnit)), "Send value (blocks when buffer full; raises \"channel closed\")"},
+		{"recv", fn(tAny, tAny), "Blocking receive (raises \"channel closed\" when closed and drained)"},
+		{"try-recv", fn(tAny, tAny), "Non-blocking receive, returns Option"},
+		{"recv-opt", fn(tAny, tAny), "Blocking receive returning Option: Some(v), or None once closed — idiomatic drain loop"},
+		{"iter-recv", fn(tAny, tAny), "Channel receiver as lazy iterator; receivers also work directly in for-in and iter.*"},
+		{"select-wait", fn(tAny, tAny), "Block until first ready arm: list of (Receiver|Future|Int-timeout-ms, handler) tuples"},
+		{"close-sender", fn(tAny, tUnit), "Close channel from sender side (wakes blocked ops)"},
+		{"close-receiver", fn(tAny, tUnit), "Close channel from receiver side"},
+
 		// Streaming I/O
 		{"fs.stream-lines", fn(tStr, tAny), "Stream file lines as lazy iterator"},
 		{"http.stream-lines", fn(tStr, tAny), "Stream HTTP response lines as lazy iterator"},

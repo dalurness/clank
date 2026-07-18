@@ -236,11 +236,14 @@ Each `spawn` launches a real goroutine — spawned tasks run in parallel. This m
 |----------|-----------|---------|
 | `spawn` | `(() -> a) -> <async> Future[a]` | Spawn task (runs in parallel goroutine) |
 | `await` | `Future[a] -> <async> a` | Wait for result |
-| `channel` | `Int -> <async> (Sender[a], Receiver[a])` | Create channel |
-| `send` | `(Sender[a], a) -> <async> ()` | Send value |
-| `recv` | `Receiver[a] -> <async> a` | Receive value (blocks until available) |
+| `channel` | `Int -> <async> (Sender[a], Receiver[a])` | Create channel with buffer capacity n; `channel(0)` is a rendezvous channel (send blocks until a receiver is ready — real backpressure) |
+| `send` | `(Sender[a], a) -> <async> ()` | Send value (blocks when buffer full; raises `"channel closed"` if closed) |
+| `recv` | `Receiver[a] -> <async> a` | Receive value (blocks until available; raises `"channel closed"` when closed and drained) |
 | `try-recv` | `Receiver[a] -> <async> Option[a]` | Non-blocking receive |
-| `close-sender` | `Sender[a] -> <async> ()` | Close sender half |
+| `recv-opt` | `Receiver[a] -> <async> Option[a]` | Blocking receive: `Some(v)`, or `None` once closed and drained — the idiomatic drain loop |
+| `iter-recv` | `Receiver[a] -> <async> Iterator[a]` | Channel as lazy iterator (receivers also work directly in `for x in rx` and all `iter.*` combinators) |
+| `select-wait` | `[(source, a -> b)] -> <async> b` | Block until first ready arm; source is a `Receiver` (handler gets value), `Future` (handler gets result), or `Int` timeout in ms (handler gets `()`). Raises `"channel closed"` if every channel arm closes with no timeout arm |
+| `close-sender` | `Sender[a] -> <async> ()` | Close sender half (wakes blocked senders/receivers) |
 | `close-receiver` | `Receiver[a] -> <async> ()` | Close receiver half |
 | `sleep` | `Int -> <async> ()` | Sleep milliseconds (interruptible) |
 | `task-group` | `(() -> a) -> <async> a` | Structured concurrency (cancels children on failure) |
@@ -278,7 +281,7 @@ type Option<a> = Some(a) | None
 type Ordering = Lt | Eq_ | Gt
 ```
 
-Functions that return `Option`: `json.get`, `env.get`, `col.nth`, `col.find`, `iter.find`, `iter.first`, `iter.last`, `iter.nth`, `iter.min`, `iter.max`, `str.int`, `str.rat`, `cli.get`, `cli.pos`, `try-recv`.
+Functions that return `Option`: `json.get`, `env.get`, `col.nth`, `col.find`, `iter.find`, `iter.first`, `iter.last`, `iter.nth`, `iter.min`, `iter.max`, `str.int`, `str.rat`, `cli.get`, `cli.pos`, `try-recv`, `recv-opt`.
 
 ### Error Handling
 

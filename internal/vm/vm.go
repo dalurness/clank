@@ -1765,6 +1765,8 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinIterMax()
 	case 107: // iter.generate
 		return vm.builtinIterGenerate()
+	case 108: // iter-recv
+		return vm.builtinIterRecv()
 	case 112: // next
 		return vm.builtinIterNextFn()
 
@@ -1861,6 +1863,8 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinRxGroupsAll()
 	case 374: // dt.unix-ms
 		return vm.builtinDtUnixMs()
+	case 375: // recv-opt
+		return vm.builtinRecvOpt()
 
 	// Math
 	case 224: // math.abs
@@ -2349,6 +2353,9 @@ func copyLocals(src []Value) []Value {
 func (vm *VM) builtinMap() error {
 	fn, _ := vm.pop()
 	collection, _ := vm.pop()
+	if collection.Tag == TagHEAP && collection.Heap.Kind == KindReceiver {
+		collection = vm.receiverToIter(collection)
+	}
 	if collection.Tag == TagHEAP && collection.Heap.Kind == KindIterator {
 		iter := collection.Heap.Iter
 		if iter.Closed {
@@ -2390,6 +2397,9 @@ func (vm *VM) builtinMap() error {
 func (vm *VM) builtinFilter() error {
 	fn, _ := vm.pop()
 	collection, _ := vm.pop()
+	if collection.Tag == TagHEAP && collection.Heap.Kind == KindReceiver {
+		collection = vm.receiverToIter(collection)
+	}
 	if collection.Tag == TagHEAP && collection.Heap.Kind == KindIterator {
 		iter := collection.Heap.Iter
 		if iter.Closed {
@@ -2436,6 +2446,9 @@ func (vm *VM) builtinFold() error {
 	fn, _ := vm.pop()
 	init, _ := vm.pop()
 	collection, _ := vm.pop()
+	if collection.Tag == TagHEAP && collection.Heap.Kind == KindReceiver {
+		collection = vm.receiverToIter(collection)
+	}
 	if collection.Tag == TagHEAP && collection.Heap.Kind == KindIterator {
 		iter := collection.Heap.Iter
 		if iter.Closed {
@@ -2925,6 +2938,9 @@ func (vm *VM) opIterNext(code []byte) error {
 func (vm *VM) builtinForEach() error {
 	fn, _ := vm.pop()
 	collection, _ := vm.pop()
+	if collection.Tag == TagHEAP && collection.Heap.Kind == KindReceiver {
+		collection = vm.receiverToIter(collection)
+	}
 	if collection.Tag == TagHEAP && collection.Heap.Kind == KindIterator {
 		iter := collection.Heap.Iter
 		var results []Value
@@ -3187,13 +3203,12 @@ func (vm *VM) opTaskGroupExit(code []byte) error {
 func (vm *VM) opChanNew() error {
 	capVal, _ := vm.pop()
 	cap := 0
-	if capVal.Tag == TagINT {
+	if capVal.Tag == TagINT && capVal.IntVal > 0 {
 		cap = capVal.IntVal
 	}
-	// Minimum buffer of 256 to avoid deadlock when send+recv happen on the same goroutine
-	if cap < 256 {
-		cap = 256
-	}
+	// cap 0 is a true rendezvous channel: send blocks until a receiver is
+	// ready, giving real backpressure. (Spawn is goroutine-backed, so
+	// blocking one task doesn't stall the scheduler.)
 	root := vm.root()
 	root.mu.Lock()
 	ch := &Channel{ID: root.nextChannelID, GoCh: make(chan Value, cap), Capacity: cap, SenderOpen: true, ReceiverOpen: true, Closed: make(chan struct{})}
@@ -3341,68 +3356,6 @@ func (vm *VM) opSelectBuild(code []byte) error {
 	return nil
 }
 
-func (vm *VM) opSelectWait(code []byte) error {
-	setVal, _ := vm.pop()
-	if setVal.Tag != TagHEAP || setVal.Heap.Kind != KindSelectSet {
-		return vm.trap("E002", "SELECT_WAIT: expected SelectSet")
-	}
-	arms := setVal.Heap.SelectArms
-	root := vm.root()
-	for _, arm := range arms {
-		src := arm.Source
-		if src.Tag == TagHEAP && src.Heap.Kind == KindReceiver {
-			ch := src.Heap.Channel
-			// Try non-blocking receive from Go channel
-			select {
-			case v := <-ch.GoCh:
-				result, err := vm.callBuiltinFn(arm.Handler, []Value{v})
-				if err != nil {
-					return err
-				}
-				vm.push(result)
-				return nil
-			default:
-			}
-		} else if src.Tag == TagHEAP && src.Heap.Kind == KindFuture {
-			root.mu.Lock()
-			task, ok := root.tasks[src.Heap.TaskID]
-			root.mu.Unlock()
-			if ok {
-				// Check if already completed
-				root.mu.Lock()
-				status := task.status
-				root.mu.Unlock()
-				if status == "running" || status == "suspended" {
-					<-task.resultCh
-				}
-				root.mu.Lock()
-				status = task.status
-				taskResult := task.result
-				root.mu.Unlock()
-				if status == "completed" {
-					v := ValUnit()
-					if taskResult != nil {
-						v = *taskResult
-					}
-					result, err := vm.callBuiltinFn(arm.Handler, []Value{v})
-					if err != nil {
-						return err
-					}
-					vm.push(result)
-					return nil
-				}
-			}
-		} else if src.Tag == TagINT {
-			result, err := vm.callBuiltinFn(arm.Handler, []Value{ValUnit()})
-			if err != nil {
-				return err
-			}
-			vm.push(result)
-			return nil
-		}
-	}
-	return vm.trap("E015", "SELECT_WAIT: no arms ready and no timeout")
-}
 
 // ── Public API ──
 
