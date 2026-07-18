@@ -36,6 +36,7 @@ const (
 	KindReceiver     = "receiver"
 	KindSelectSet    = "select-set"
 	KindServer       = "server"
+	KindNative       = "native-fn"
 )
 
 // Value is a tagged VM value.
@@ -68,7 +69,13 @@ type HeapObject struct {
 	TVar       *TVar              // tvar
 	SelectArms []SelectArm        // select-set
 	Server     *HttpServerState  // server
+	NativeFn    NativeFunc        // native-fn
+	NativeArity int               // native-fn
 }
+
+// NativeFunc is a Go function callable from Clank code like a closure.
+// It receives the calling VM and its arguments left-to-right.
+type NativeFunc func(vm *VM, args []Value) (Value, error)
 
 // ContinuationData captures execution state for effect handler resume.
 type ContinuationData struct {
@@ -219,6 +226,11 @@ func ValRef(ref *RefCell) Value {
 
 func ValServer(srv *HttpServerState) Value {
 	return Value{Tag: TagHEAP, Heap: &HeapObject{Kind: KindServer, Server: srv}}
+}
+
+// ValNative wraps a Go function as a Clank-callable value taking arity args.
+func ValNative(arity int, fn NativeFunc) Value {
+	return Value{Tag: TagHEAP, Heap: &HeapObject{Kind: KindNative, NativeFn: fn, NativeArity: arity}}
 }
 
 func ValSender(ch *Channel) Value {

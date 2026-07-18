@@ -1,0 +1,31 @@
+# Test: HTTP server — routes, path params, middleware composition, clean stop
+# Middleware registered first runs outermost; each middleware's 'next' invokes
+# the rest of the chain exactly once.
+
+main : () -> <io, async> () =
+  let routes = srv.new(())
+    |> srv.get("/hello/:who", fn(req) => srv.res(200, "hello " ++ req.params.who))
+    |> srv.mw(fn(req, next) => {
+      let resp = next(req)
+      srv.hdr(resp, "X-Outer", "1")
+    })
+    |> srv.mw(fn(req, next) => {
+      let resp = next(req)
+      srv.hdr(resp, "X-Inner", "2")
+    })
+  let server = srv.start(routes, 8942)
+  let resp = http.get("http://127.0.0.1:8942/hello/clank")
+  let _ = print(resp.body)
+  let outer = resp.headers |> filter(fn(h) => fst(h) == "X-Outer") |> len
+  let inner = resp.headers |> filter(fn(h) => fst(h) == "X-Inner") |> len
+  let _ = print("outer: " ++ show(outer) ++ ", inner: " ++ show(inner))
+  let missing = http.get("http://127.0.0.1:8942/nope")
+  let _ = print("missing: " ++ show(missing.status))
+  let _ = srv.stop(server)
+  print("stopped")
+
+# Expected output:
+# hello clank
+# outer: 1, inner: 1
+# missing: 404
+# stopped

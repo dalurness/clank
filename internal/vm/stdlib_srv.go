@@ -122,15 +122,17 @@ func (vm *VM) builtinSrvStart() error {
 	})
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	srvState.Server = server
 
 	// Start listening
 	ln, listenErr := net.Listen("tcp", server.Addr)
 	if listenErr != nil {
-		return vm.trap("E900", fmt.Sprintf("srv.start: %v", listenErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("srv.start: %v", listenErr))
 	}
 
 	go func() {
@@ -199,20 +201,18 @@ func (vm *VM) handleRequest(srvState *HttpServerState, w http.ResponseWriter, r 
 	rootVM := srvState.RootVM.(*VM)
 	child := rootVM.spawnRequestVM()
 
-	handler := matchedRoute.Handler
-
-	// Apply middleware in reverse order (outer first)
+	// Compose middleware around the handler: first-registered runs outermost.
+	// Each middleware is fn(req, next); its next is the rest of the chain.
+	chain := matchedRoute.Handler
 	for i := len(srvState.Middleware) - 1; i >= 0; i-- {
 		mw := srvState.Middleware[i]
-		result, callErr := child.callBuiltinFn(mw, []Value{reqRecord, handler})
-		if callErr == nil {
-			writeResponse(w, result)
-			return
-		}
+		inner := chain
+		chain = ValNative(1, func(nvm *VM, args []Value) (Value, error) {
+			return nvm.callBuiltinFn(mw, []Value{args[0], inner})
+		})
 	}
 
-	// Call handler
-	result, callErr := child.callBuiltinFn(handler, []Value{reqRecord})
+	result, callErr := child.callBuiltinFn(chain, []Value{reqRecord})
 	if callErr != nil {
 		http.Error(w, fmt.Sprintf("handler error: %v", callErr), 500)
 		return
@@ -280,10 +280,15 @@ func (vm *VM) builtinSrvStop() error {
 		return vm.trap("E002", "srv.stop: expected Server")
 	}
 	srv := v.Heap.Server.Server.(*http.Server)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		return vm.trap("E900", fmt.Sprintf("srv.stop: %v", err))
+		// Graceful shutdown can stall on connections the client dialed but
+		// never used (they look non-idle to Shutdown until they age out).
+		// Force-close them rather than failing the program.
+		if closeErr := srv.Close(); closeErr != nil {
+			return vm.trap("E900", fmt.Sprintf("srv.stop: %v", closeErr))
+		}
 	}
 	vm.push(ValUnit())
 	return nil
