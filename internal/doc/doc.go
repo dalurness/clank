@@ -365,14 +365,14 @@ func builtinRegistry() []BuiltinEntry {
 		{"log.json", fn(tBool, tUnit), "Enable/disable JSON output format"},
 
 		// CLI
-		{"cli.args", fn(tUnit, tAny), "Raw argument list"},
-		{"cli.parse", fn(tAny, tAny), "Parse args with option schema"},
-		{"cli.opt", fn(tStr, fn(tStr, fn(tStr, tAny))), "Create option: name short desc"},
-		{"cli.req", fn(tAny, tAny), "Mark option as required"},
-		{"cli.def", fn(tAny, fn(tStr, tAny)), "Set default value for option"},
-		{"cli.get", fn(tAny, fn(tStr, tAny)), "Get option value as Option[Str]"},
-		{"cli.flag", fn(tAny, fn(tStr, tBool)), "Check if flag is set"},
-		{"cli.pos", fn(tAny, fn(tInt, tAny)), "Get positional arg by index"},
+		{"cli.args", fn(tUnit, checker.NewTList(tStr)), "Program arguments as [Str] (script path and runner flags excluded)"},
+		{"cli.parse", fn(checker.NewTList(tAny), tAny), "cli.parse([opts]) parses program args against cli.opt descriptors; returns {cmd: Str, args: [Str] positionals, opts: record of --name values, flags: record of Bool}; traps if a required option is missing"},
+		{"cli.opt", fn(tStr, fn(tStr, fn(tStr, tAny))), "cli.opt(name, short, desc) builds an option descriptor: accepts --name VALUE, --name=VALUE, -short VALUE"},
+		{"cli.req", fn(tAny, tAny), "cli.req(opt) marks the option required — cli.parse traps when it is absent"},
+		{"cli.def", fn(tAny, fn(tStr, tAny)), "cli.def(opt, value) sets the default used when the option is absent"},
+		{"cli.get", fn(tAny, fn(tStr, tAny)), "cli.get(parsed, name) looks up an option value from cli.parse's result: Some(Str) or None"},
+		{"cli.flag", fn(tAny, fn(tStr, tBool)), "cli.flag(parsed, name) is true when --name was passed with no value"},
+		{"cli.pos", fn(tAny, fn(tInt, tAny)), "cli.pos(parsed, i) is the i-th positional argument: Some(Str) or None"},
 
 		// Iterator combinators
 		{"iter.of", fn(tAnyList, tAny), "Create iterator from list"},
@@ -399,7 +399,7 @@ func builtinRegistry() []BuiltinEntry {
 		{"iter.first", fn(tAny, tAny), "First element as Option"},
 		{"iter.last", fn(tAny, tAny), "Last element as Option"},
 		{"iter.join", fn(tAny, fn(tStr, tStr)), "Join iterator elements as string"},
-		{"iter.repeat", fn(tAny, tAny), "Infinite iterator of same value"},
+		{"iter.repeat", fn(tAny, tAny), "iter.repeat(v) yields v forever — bound it with iter.take before collecting"},
 		{"iter.once", fn(tAny, tAny), "Iterator yielding one value"},
 		{"iter.empty", fn(tUnit, tAny), "Empty iterator"},
 		{"iter.unfold", fn(tAny, fn(fn(tAny, tAny), tAny)), "Build iterator from state function"},
@@ -417,7 +417,7 @@ func builtinRegistry() []BuiltinEntry {
 		// Collections
 		{"col.rev", fn(tAnyList, tAnyList), "Reverse a list"},
 		{"col.sort", fn(tAnyList, tAnyList), "Sort list (numbers or strings)"},
-		{"col.sortby", fn(tAnyList, fn(fn(tAny, fn(tAny, tInt)), tAnyList)), "Sort with comparator (a -> a -> Int)"},
+		{"col.sortby", fn(tAnyList, fn(fn(tAny, fn(tAny, tInt)), tAnyList)), "col.sortby(xs, fn(a, b) => Int) sorts with a comparator (negative = a first, positive = b first) — not a key function; for key sorts return cmp-style Int from the pair"},
 		{"col.uniq", fn(tAnyList, tAnyList), "Remove adjacent duplicates"},
 		{"col.zip", fn(tAnyList, fn(tAnyList, tAnyList)), "Zip two lists into list of tuples"},
 		{"col.unzip", fn(tAnyList, tAny), "Unzip list of tuples into tuple of lists"},

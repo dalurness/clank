@@ -2836,7 +2836,19 @@ func (s *checkerState) inferExpr(
 		return resultType
 
 	case ast.ExprPerform:
-		return s.inferExpr(e.Expr, env, errors, registry, aff)
+		preErr := len(*errors)
+		t := s.inferExpr(e.Expr, env, errors, registry, aff)
+		// Effect operations take exactly one parameter; a multi-arg perform
+		// surfaces as a bare arity error, so add the tuple hint.
+		if app, ok := e.Expr.(ast.ExprApply); ok && len(app.Args) > 1 {
+			for i := preErr; i < len(*errors); i++ {
+				te := &(*errors)[i]
+				if te.Code == "E303" && strings.Contains(te.Message, "expected 1 arguments") {
+					te.Message += " — effect operations take exactly one parameter; pass a tuple instead: perform op((a, b))"
+				}
+			}
+		}
+		return t
 
 	case ast.ExprBorrow:
 		innerType := s.inferExpr(e.Expr, env, errors, registry, aff)
