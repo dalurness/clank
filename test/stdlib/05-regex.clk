@@ -8,7 +8,18 @@
 # hello_world
 # [a, b, c]
 # [hello]
+# [2026-07-17 10:00, 2026-07-17, 10:00]
+# []
+# ERROR at 10:00 — disk full
+# key=a val=1
+# key=b val=2
 # true
+
+parse-entry : (line: Str) -> <> Str =
+  match rx.groups(line, "^(\\w+) \\[([0-9:]+)\\] (.*)$") {
+    [_, level, ts, msg] => "${level} at ${ts} — ${msg}"
+    _ => "unparsed"
+  }
 
 main : () -> <io> () =
   # Match
@@ -32,6 +43,23 @@ main : () -> <io> () =
 
   # Split with no matches returns single-element list
   let _ = print(show(rx.split("hello", ",")))
+
+  # Capture groups: first match, [whole, g1, g2, ...]
+  let _ = print(show(rx.groups("on 2026-07-17 10:00", "([0-9-]+) ([0-9:]+)")))
+
+  # No match returns empty list
+  let _ = print(show(rx.groups("hello", "([0-9]+)")))
+
+  # Destructure groups with a list pattern
+  let _ = print(parse-entry("ERROR [10:00] disk full"))
+
+  # All matches with groups
+  let kvs = rx.groups-all("a=1 b=2", "(\\w+)=(\\w+)")
+  let _ = for kv in kvs do
+    match kv {
+      [_, k, v] => print("key=${k} val=${v}")
+      _ => print("?")
+    }
 
   # Case-insensitive via (?i) flag
   print(show(rx.ok("Hello", "(?i)^hello$")))

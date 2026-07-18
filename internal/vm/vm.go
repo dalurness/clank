@@ -1789,6 +1789,10 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinRxReplace()
 	case 223: // rx.split
 		return vm.builtinRxSplit()
+	case 372: // rx.groups
+		return vm.builtinRxGroups()
+	case 373: // rx.groups-all
+		return vm.builtinRxGroupsAll()
 
 	// Math
 	case 224: // math.abs

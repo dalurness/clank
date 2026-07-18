@@ -215,7 +215,7 @@ all lengths not handled by fixed-length arms; otherwise you get W400.
 | `env` | `env.get`, `env.set`, `env.has`, `env.all` | Environment variables |
 | `proc` | `proc.run`, `proc.sh`, `proc.exit` | Process execution |
 | `http` | `http.get`, `http.post`, `http.put`, `http.del`, `http.set-timeout` | HTTP client |
-| `rx` | `rx.ok`, `rx.find`, `rx.replace`, `rx.split` | Regex |
+| `rx` | `rx.ok`, `rx.find`, `rx.replace`, `rx.split`, `rx.groups`, `rx.groups-all` | Regex (`rx.groups(s, pat)` returns `[whole, g1, g2, ...]` of the first match, `[]` if none — pairs well with list patterns) |
 | `math` | `math.abs`, `math.min`, `math.max`, `math.floor`, `math.ceil`, `math.sqrt` | Math |
 | `col` | `col.rev`, `col.sort`, `col.sortby`, `col.uniq`, `col.zip`, `col.unzip`, `col.flat`, `col.flatmap`, `col.take`, `col.drop`, `col.nth`, `col.find`, `col.any`, `col.all`, `col.count`, `col.enum`, `col.chunk`, `col.win`, `col.intersperse`, `col.rep`, `col.sum`, `col.prod`, `col.min`, `col.max`, `col.group`, `col.scan` | Collection operations |
 | `iter` | `iter.of`, `iter.range`, `iter.collect`, `iter.map`, `iter.filter`, `iter.take`, `iter.drop`, `iter.fold`, `iter.count`, `iter.sum`, `iter.any`, `iter.all`, `iter.find`, `iter.each`, `iter.drain`, `iter.enumerate`, `iter.chain`, `iter.zip`, `iter.take-while`, `iter.drop-while`, `iter.flatmap`, `iter.first`, `iter.last`, `iter.join`, `iter.repeat`, `iter.once`, `iter.empty`, `iter.unfold`, `iter.scan`, `iter.dedup`, `iter.chunk`, `iter.window`, `iter.intersperse`, `iter.cycle`, `iter.nth`, `iter.min`, `iter.max`, `iter.generate` | Lazy iterators |

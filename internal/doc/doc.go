@@ -273,6 +273,8 @@ func builtinRegistry() []BuiltinEntry {
 		{"rx.find", fn(tStr, fn(tStr, checker.NewTList(tStr))), "Find all matches of regex pattern in string"},
 		{"rx.replace", fn(tStr, fn(tStr, fn(tStr, tStr))), "Replace all regex matches (string, pattern, replacement)"},
 		{"rx.split", fn(tStr, fn(tStr, checker.NewTList(tStr))), "Split string by regex pattern"},
+		{"rx.groups", fn(tStr, fn(tStr, checker.NewTList(tStr))), "Capture groups of first match: [whole, g1, g2, ...], [] if no match"},
+		{"rx.groups-all", fn(tStr, fn(tStr, checker.NewTList(checker.NewTList(tStr)))), "Capture groups of every match: [[whole, g1, ...], ...]"},
 
 		// Math
 		{"math.abs", fn(tInt, tInt), "Absolute value"},

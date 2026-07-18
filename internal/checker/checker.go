@@ -3394,6 +3394,8 @@ func registerBuiltins(env *typeEnv) {
 	env.set("rx.find", NewTFn(TStr, NewTFn(TStr, TList{Element: TStr})))
 	env.set("rx.replace", NewTFn(TStr, NewTFn(TStr, NewTFn(TStr, TStr))))
 	env.set("rx.split", NewTFn(TStr, NewTFn(TStr, TList{Element: TStr})))
+	env.set("rx.groups", NewTFn(TStr, NewTFn(TStr, TList{Element: TStr})))
+	env.set("rx.groups-all", NewTFn(TStr, NewTFn(TStr, TList{Element: TList{Element: TStr}})))
 
 	// Math (std.math)
 	env.set("math.abs", NewTFn(TInt, TInt))

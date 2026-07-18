@@ -46,6 +46,57 @@ func (vm *VM) builtinRxFind() error {
 	return nil
 }
 
+// rx.groups(s, pattern) — submatches of the first match: [whole, g1, g2, ...].
+// Returns [] when the pattern does not match. Unmatched optional groups are "".
+func (vm *VM) builtinRxGroups() error {
+	pattern, err := vm.popStr()
+	if err != nil {
+		return err
+	}
+	s, err := vm.popStr()
+	if err != nil {
+		return err
+	}
+	re, compErr := regexp.Compile(pattern)
+	if compErr != nil {
+		return vm.trap("E905", fmt.Sprintf("rx.groups: invalid pattern: %v", compErr))
+	}
+	m := re.FindStringSubmatch(s)
+	items := make([]Value, len(m))
+	for i, g := range m {
+		items[i] = ValStr(g)
+	}
+	vm.push(ValList(items))
+	return nil
+}
+
+// rx.groups-all(s, pattern) — like rx.groups for every match: [[whole, g1, ...], ...].
+func (vm *VM) builtinRxGroupsAll() error {
+	pattern, err := vm.popStr()
+	if err != nil {
+		return err
+	}
+	s, err := vm.popStr()
+	if err != nil {
+		return err
+	}
+	re, compErr := regexp.Compile(pattern)
+	if compErr != nil {
+		return vm.trap("E905", fmt.Sprintf("rx.groups-all: invalid pattern: %v", compErr))
+	}
+	all := re.FindAllStringSubmatch(s, -1)
+	items := make([]Value, len(all))
+	for i, m := range all {
+		groups := make([]Value, len(m))
+		for j, g := range m {
+			groups[j] = ValStr(g)
+		}
+		items[i] = ValList(groups)
+	}
+	vm.push(ValList(items))
+	return nil
+}
+
 func (vm *VM) builtinRxReplace() error {
 	replacement, err := vm.popStr()
 	if err != nil {

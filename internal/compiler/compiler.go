@@ -94,6 +94,7 @@ var vmBuiltins = map[string]int{
 	"env.get": 214, "env.set": 215, "env.has": 216, "env.all": 217,
 	// Regex
 	"rx.ok": 220, "rx.find": 221, "rx.replace": 222, "rx.split": 223,
+	"rx.groups": 372, "rx.groups-all": 373,
 	// Math
 	"math.abs": 224, "math.min": 225, "math.max": 226,
 	"math.floor": 227, "math.ceil": 228, "math.sqrt": 229,
