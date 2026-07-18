@@ -1,0 +1,20 @@
+# Test: locals and parameters shadow builtins and top-level words in call position
+# ('next' is the iterator builtin, 'map' is a builtin — both must resolve to the
+# local binding when one exists)
+
+apply-next : (next: Int -> <> Int, x: Int) -> <> Int =
+  next(x)
+
+use-map : (map: Str -> <> Str) -> <> Str =
+  map("hi")
+
+main : () -> <io> () =
+  let _ = print(show(apply-next(fn(n) => n + 1, 41)))
+  let _ = print(use-map(fn(s) => s ++ "!"))
+  let filter = fn(a) => a * 2
+  print(show(filter(21)))
+
+# Expected output:
+# 42
+# hi!
+# 42

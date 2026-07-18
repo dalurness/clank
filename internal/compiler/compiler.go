@@ -96,6 +96,7 @@ var vmBuiltins = map[string]int{
 	// Regex
 	"rx.ok": 220, "rx.find": 221, "rx.replace": 222, "rx.split": 223,
 	"rx.groups": 372, "rx.groups-all": 373,
+	"dt.unix-ms": 374,
 	// Math
 	"math.abs": 224, "math.min": 225, "math.max": 226,
 	"math.floor": 227, "math.ceil": 228, "math.sqrt": 229,
@@ -760,26 +761,31 @@ func (c *Compiler) compileApply(expr ast.ExprApply, e *codeEmitter, scope *local
 			}
 		}
 
-		// Builtin direct opcode
-		if ops, ok := builtinOps[name]; ok {
-			for _, arg := range expr.Args {
-				c.compileExpr(arg, e, scope, false)
+		// Builtins and top-level words — but locals shadow both, so a
+		// parameter named e.g. 'next' or 'map' called as a function goes
+		// through the dynamic-call path below instead.
+		if _, isLocal := scope.get(name); !isLocal {
+			// Builtin direct opcode
+			if ops, ok := builtinOps[name]; ok {
+				for _, arg := range expr.Args {
+					c.compileExpr(arg, e, scope, false)
+				}
+				e.code = append(e.code, ops...)
+				return
 			}
-			e.code = append(e.code, ops...)
-			return
-		}
 
-		// Known word
-		if wordID, ok := c.wordIDs[name]; ok {
-			for _, arg := range expr.Args {
-				c.compileExpr(arg, e, scope, false)
+			// Known word
+			if wordID, ok := c.wordIDs[name]; ok {
+				for _, arg := range expr.Args {
+					c.compileExpr(arg, e, scope, false)
+				}
+				if tail {
+					e.emitU16(OpTAIL_CALL, wordID)
+				} else {
+					e.emitU16(OpCALL, wordID)
+				}
+				return
 			}
-			if tail {
-				e.emitU16(OpTAIL_CALL, wordID)
-			} else {
-				e.emitU16(OpCALL, wordID)
-			}
-			return
 		}
 	}
 
