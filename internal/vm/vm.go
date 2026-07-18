@@ -56,6 +56,10 @@ type VM struct {
 	mu     sync.Mutex      // protects Stdout, tasks, taskGroups, ID counters
 	ctx    context.Context  // cancellation context; Background for root, derived for children
 
+	// Effect state: incremented each time doEffectPerform transfers control
+	// to a handler, so call sites can detect a transfer happened mid-builtin.
+	transferGen int
+
 	// Async state
 	nextTaskID    int
 	nextGroupID   int
@@ -1358,8 +1362,14 @@ func (vm *VM) doTailCall(wordID int) error {
 	target, ok := vm.wordMap[wordID]
 	if !ok {
 		if wordID < 450 {
+			gen := vm.transferGen
 			if err := vm.dispatchBuiltin(wordID); err != nil {
 				return err
+			}
+			if vm.transferGen != gen {
+				// The builtin raised into an effect handler; control has
+				// already moved there — skip tail-return bookkeeping.
+				return nil
 			}
 			if len(vm.callStack) == 0 {
 				vm.halted = true
@@ -1391,8 +1401,31 @@ func (vm *VM) doCallDyn(callee Value) error {
 			}
 			return vm.doCall(callee.Heap.WordID)
 		}
+		if callee.Heap.Kind == KindNative {
+			return vm.callNative(callee)
+		}
 	}
 	return vm.trap("E002", "CALL_DYN: expected quote or closure")
+}
+
+// callNative pops the native fn's args off the data stack, invokes it, and
+// pushes its result — the call completes without touching the call stack.
+func (vm *VM) callNative(callee Value) error {
+	arity := callee.Heap.NativeArity
+	args := make([]Value, arity)
+	for i := arity - 1; i >= 0; i-- {
+		a, err := vm.pop()
+		if err != nil {
+			return err
+		}
+		args[i] = a
+	}
+	result, err := callee.Heap.NativeFn(vm, args)
+	if err != nil {
+		return err
+	}
+	vm.push(result)
+	return nil
 }
 
 func (vm *VM) doTailCallDyn(callee Value) error {
@@ -1405,6 +1438,22 @@ func (vm *VM) doTailCallDyn(callee Value) error {
 				vm.push(cap)
 			}
 			return vm.doTailCall(callee.Heap.WordID)
+		}
+		if callee.Heap.Kind == KindNative {
+			gen := vm.transferGen
+			if err := vm.callNative(callee); err != nil {
+				return err
+			}
+			if vm.transferGen != gen {
+				return nil
+			}
+			// A tail call to a native completes immediately; return to caller.
+			if len(vm.callStack) == 0 {
+				vm.halted = true
+				return nil
+			}
+			vm.doReturn()
+			return nil
 		}
 	}
 	return vm.trap("E002", "TAIL_CALL_DYN: expected quote or closure")
@@ -1532,6 +1581,7 @@ func (vm *VM) doEffectPerform(effectID int, args []Value) bool {
 		vm.push(arg)
 	}
 	vm.push(continuation)
+	vm.transferGen++
 	return true
 }
 
@@ -1547,6 +1597,17 @@ func (vm *VM) doRaise(message string) bool {
 		return false
 	}
 	return vm.doEffectPerform(raiseIdx, []Value{ValStr(message)})
+}
+
+// raiseOrTrap surfaces a runtime failure through the raise effect when a
+// handler is installed, so programs can recover; otherwise it traps.
+// Use it for environment-driven failures (network, parse, I/O) rather than
+// programming errors.
+func (vm *VM) raiseOrTrap(code, message string) error {
+	if vm.doRaise(message) {
+		return nil
+	}
+	return vm.trap(code, message)
 }
 
 // ── Builtin Dispatch (word IDs 0-299) ──
@@ -1798,6 +1859,8 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinRxGroups()
 	case 373: // rx.groups-all
 		return vm.builtinRxGroupsAll()
+	case 374: // dt.unix-ms
+		return vm.builtinDtUnixMs()
 
 	// Math
 	case 224: // math.abs

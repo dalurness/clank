@@ -32,7 +32,7 @@ func (vm *VM) builtinHttpRequest(method string) error {
 	}
 	req, reqErr := http.NewRequestWithContext(vm.ctx, method, url, body)
 	if reqErr != nil {
-		return vm.trap("E904", fmt.Sprintf("http.%s: %v", strings.ToLower(method), reqErr))
+		return vm.raiseOrTrap("E904", fmt.Sprintf("http.%s: %v", strings.ToLower(method), reqErr))
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -51,13 +51,13 @@ func (vm *VM) builtinHttpRequest(method string) error {
 		if errors.Is(doErr, context.Canceled) {
 			return vm.trap("E011", "task cancelled")
 		}
-		return vm.trap("E904", fmt.Sprintf("http.%s: %v", strings.ToLower(method), doErr))
+		return vm.raiseOrTrap("E904", fmt.Sprintf("http.%s: %v", strings.ToLower(method), doErr))
 	}
 	defer resp.Body.Close()
 
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		return vm.trap("E904", fmt.Sprintf("http.%s: reading response: %v", strings.ToLower(method), readErr))
+		return vm.raiseOrTrap("E904", fmt.Sprintf("http.%s: reading response: %v", strings.ToLower(method), readErr))
 	}
 
 	// Build header list as [(Str, Str)]

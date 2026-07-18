@@ -1,0 +1,20 @@
+# Test: environment failures (bad JSON, missing file, dead connection) raise
+# instead of trapping when a handler is installed, so programs can recover.
+
+try : (thunk: () -> <> Str) -> <> Str =
+  handle thunk() {
+    return v -> v,
+    raise msg resume _ -> "caught"
+  }
+
+main : () -> <io> () =
+  let _ = print(try(fn() => json.dec("{broken")))
+  let _ = print(try(fn() => fs.read("no-such-file-xyz.txt")))
+  let _ = print(try(fn() => show(json.dec("[1, 2, 3]"))))
+  print(show(dt.unix-ms(()) > 1700000000000))
+
+# Expected output:
+# caught
+# caught
+# [1, 2, 3]
+# true

@@ -38,7 +38,7 @@ func (vm *VM) builtinProcRun() error {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			return vm.trap("E903", fmt.Sprintf("proc.run: %v", runErr))
+			return vm.raiseOrTrap("E903", fmt.Sprintf("proc.run: %v", runErr))
 		}
 	}
 	fields := map[string]Value{
@@ -67,9 +67,9 @@ func (vm *VM) builtinProcSh() error {
 			return vm.trap("E011", "task cancelled")
 		}
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			return vm.trap("E903", fmt.Sprintf("proc.sh: command failed (exit %d): %s", exitErr.ExitCode(), string(exitErr.Stderr)))
+			return vm.raiseOrTrap("E903", fmt.Sprintf("proc.sh: command failed (exit %d): %s", exitErr.ExitCode(), string(exitErr.Stderr)))
 		}
-		return vm.trap("E903", fmt.Sprintf("proc.sh: %v", runErr))
+		return vm.raiseOrTrap("E903", fmt.Sprintf("proc.sh: %v", runErr))
 	}
 	vm.push(ValStr(string(out)))
 	return nil

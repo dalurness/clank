@@ -34,7 +34,7 @@ func (vm *VM) builtinEnvSet() error {
 		return err
 	}
 	if setErr := os.Setenv(key, val); setErr != nil {
-		return vm.trap("E902", fmt.Sprintf("env.set: %v", setErr))
+		return vm.raiseOrTrap("E902", fmt.Sprintf("env.set: %v", setErr))
 	}
 	vm.push(ValUnit())
 	return nil

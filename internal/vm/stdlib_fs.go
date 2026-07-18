@@ -14,7 +14,7 @@ func (vm *VM) builtinFsRead() error {
 	}
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
-		return vm.trap("E900", fmt.Sprintf("fs.read: %v", readErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("fs.read: %v", readErr))
 	}
 	vm.push(ValStr(string(data)))
 	return nil
@@ -30,7 +30,7 @@ func (vm *VM) builtinFsWrite() error {
 		return err
 	}
 	if writeErr := os.WriteFile(path, []byte(content), 0644); writeErr != nil {
-		return vm.trap("E900", fmt.Sprintf("fs.write: %v", writeErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("fs.write: %v", writeErr))
 	}
 	vm.push(ValUnit())
 	return nil
@@ -53,7 +53,7 @@ func (vm *VM) builtinFsLs() error {
 	}
 	entries, readErr := os.ReadDir(path)
 	if readErr != nil {
-		return vm.trap("E900", fmt.Sprintf("fs.ls: %v", readErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("fs.ls: %v", readErr))
 	}
 	items := make([]Value, len(entries))
 	for i, e := range entries {
@@ -69,7 +69,7 @@ func (vm *VM) builtinFsMkdir() error {
 		return err
 	}
 	if mkErr := os.MkdirAll(path, 0755); mkErr != nil {
-		return vm.trap("E900", fmt.Sprintf("fs.mkdir: %v", mkErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("fs.mkdir: %v", mkErr))
 	}
 	vm.push(ValUnit())
 	return nil
@@ -81,7 +81,7 @@ func (vm *VM) builtinFsRm() error {
 		return err
 	}
 	if rmErr := os.RemoveAll(path); rmErr != nil {
-		return vm.trap("E900", fmt.Sprintf("fs.rm: %v", rmErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("fs.rm: %v", rmErr))
 	}
 	vm.push(ValUnit())
 	return nil

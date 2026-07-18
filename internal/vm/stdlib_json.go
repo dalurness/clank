@@ -29,7 +29,7 @@ func (vm *VM) builtinJsonDec() error {
 	}
 	var raw interface{}
 	if jsonErr := json.Unmarshal([]byte(s), &raw); jsonErr != nil {
-		return vm.trap("E901", fmt.Sprintf("json.dec: %v", jsonErr))
+		return vm.raiseOrTrap("E901", fmt.Sprintf("json.dec: %v", jsonErr))
 	}
 	vm.push(goToValue(raw))
 	return nil

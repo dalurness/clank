@@ -17,7 +17,7 @@ func (vm *VM) builtinCsvDec() error {
 	}
 	records, csvErr := csv.NewReader(strings.NewReader(s)).ReadAll()
 	if csvErr != nil {
-		return vm.trap("E900", fmt.Sprintf("csv.dec: %v", csvErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("csv.dec: %v", csvErr))
 	}
 	vm.push(csvRecordsToValue(records))
 	return nil
@@ -32,7 +32,7 @@ func (vm *VM) builtinCsvEnc() error {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	if writeErr := w.WriteAll(records); writeErr != nil {
-		return vm.trap("E900", fmt.Sprintf("csv.enc: %v", writeErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("csv.enc: %v", writeErr))
 	}
 	vm.push(ValStr(buf.String()))
 	return nil
@@ -45,11 +45,11 @@ func (vm *VM) builtinCsvDecf() error {
 	}
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
-		return vm.trap("E900", fmt.Sprintf("csv.decf: %v", readErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("csv.decf: %v", readErr))
 	}
 	records, csvErr := csv.NewReader(strings.NewReader(string(data))).ReadAll()
 	if csvErr != nil {
-		return vm.trap("E900", fmt.Sprintf("csv.decf: %v", csvErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("csv.decf: %v", csvErr))
 	}
 	vm.push(csvRecordsToValue(records))
 	return nil
@@ -68,10 +68,10 @@ func (vm *VM) builtinCsvEncf() error {
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)
 	if writeErr := w.WriteAll(records); writeErr != nil {
-		return vm.trap("E900", fmt.Sprintf("csv.encf: %v", writeErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("csv.encf: %v", writeErr))
 	}
 	if writeErr := os.WriteFile(path, buf.Bytes(), 0644); writeErr != nil {
-		return vm.trap("E900", fmt.Sprintf("csv.encf: %v", writeErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("csv.encf: %v", writeErr))
 	}
 	vm.push(ValUnit())
 	return nil
@@ -163,7 +163,7 @@ func (vm *VM) builtinCsvOpts() error {
 	r.Comma = delim
 	records, csvErr := r.ReadAll()
 	if csvErr != nil {
-		return vm.trap("E900", fmt.Sprintf("csv.opts: %v", csvErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("csv.opts: %v", csvErr))
 	}
 	vm.push(csvRecordsToValue(records))
 	return nil

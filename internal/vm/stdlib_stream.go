@@ -25,7 +25,7 @@ func (vm *VM) builtinFsStreamLines() error {
 	}
 	f, openErr := os.Open(path)
 	if openErr != nil {
-		return vm.trap("E900", fmt.Sprintf("fs.stream-lines: %v", openErr))
+		return vm.raiseOrTrap("E900", fmt.Sprintf("fs.stream-lines: %v", openErr))
 	}
 	scanner := bufio.NewScanner(f)
 	done := false
@@ -52,7 +52,7 @@ func (vm *VM) builtinHttpStreamLines() error {
 	}
 	req, reqErr := http.NewRequestWithContext(vm.ctx, "GET", url, nil)
 	if reqErr != nil {
-		return vm.trap("E904", fmt.Sprintf("http.stream-lines: %v", reqErr))
+		return vm.raiseOrTrap("E904", fmt.Sprintf("http.stream-lines: %v", reqErr))
 	}
 	timeoutMs := 30000
 	root := vm.root()
@@ -67,7 +67,7 @@ func (vm *VM) builtinHttpStreamLines() error {
 		if errors.Is(doErr, context.Canceled) {
 			return vm.trap("E011", "task cancelled")
 		}
-		return vm.trap("E904", fmt.Sprintf("http.stream-lines: %v", doErr))
+		return vm.raiseOrTrap("E904", fmt.Sprintf("http.stream-lines: %v", doErr))
 	}
 	scanner := bufio.NewScanner(resp.Body)
 	done := false
@@ -101,10 +101,10 @@ func (vm *VM) builtinProcStream() error {
 	}
 	stdout, pipeErr := cmd.StdoutPipe()
 	if pipeErr != nil {
-		return vm.trap("E903", fmt.Sprintf("proc.stream: %v", pipeErr))
+		return vm.raiseOrTrap("E903", fmt.Sprintf("proc.stream: %v", pipeErr))
 	}
 	if startErr := cmd.Start(); startErr != nil {
-		return vm.trap("E903", fmt.Sprintf("proc.stream: %v", startErr))
+		return vm.raiseOrTrap("E903", fmt.Sprintf("proc.stream: %v", startErr))
 	}
 	scanner := bufio.NewScanner(stdout)
 	done := false
