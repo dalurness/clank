@@ -3386,6 +3386,18 @@ func registerBuiltins(env *typeEnv) {
 	env.set("json.set", NewTFn(TAny, NewTFn(TStr, NewTFn(TAny, TAny))))
 	env.set("json.keys", NewTFn(TAny, TList{Element: TStr}))
 	env.set("json.merge", NewTFn(TAny, NewTFn(TAny, TAny)))
+	registerPolyBuiltin(env, "json.as", 1, func(v []Type) Type { return NewTFn(TAny, NewTFn(v[0], v[0])) })
+	registerPolyBuiltin(env, "json.or", 1, func(v []Type) Type { return NewTFn(TAny, NewTFn(v[0], v[0])) })
+
+	// Built-in Option constructors: Some/None are constructible without
+	// declaring an Option type (they're what try-recv, str.int, json.get
+	// etc. return). A user-declared Option shadows these.
+	registerPolyBuiltin(env, "Some", 1, func(v []Type) Type {
+		return NewTFn(v[0], TGeneric{Name: "Option", Args: []Type{v[0]}})
+	})
+	registerPolyBuiltin(env, "None", 1, func(v []Type) Type {
+		return TGeneric{Name: "Option", Args: []Type{v[0]}}
+	})
 
 	// Environment (std.env)
 	env.set("env.get", NewTFn(TStr, TAny))

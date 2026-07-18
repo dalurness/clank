@@ -249,6 +249,8 @@ func builtinRegistry() []BuiltinEntry {
 		{"json.set", fn(tAny, fn(tStr, fn(tAny, tAny))), "Set field on record (record, key, value)"},
 		{"json.keys", fn(tAny, checker.NewTList(tStr)), "Get list of keys from a record"},
 		{"json.merge", fn(tAny, fn(tAny, tAny)), "Merge two records (right wins on conflict)"},
+		{"json.as", fn(tAny, fn(tAny, tAny)), "Typed decode: json.as(raw, {name: \"\", age: 0}) validates against the template and returns its type; Some(x) fields optional; raises with a path on mismatch"},
+		{"json.or", fn(tAny, fn(tAny, tAny)), "Lenient typed decode: missing/mismatched fields take the template's defaults; never fails"},
 
 		// Environment
 		{"env.get", fn(tStr, tAny), "Get environment variable, returns Option[Str]"},

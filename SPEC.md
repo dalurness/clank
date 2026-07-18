@@ -215,7 +215,7 @@ all lengths not handled by fixed-length arms; otherwise you get W400.
 | Module | Functions | Purpose |
 |--------|-----------|---------|
 | `fs` | `fs.read`, `fs.write`, `fs.exists`, `fs.ls`, `fs.mkdir`, `fs.rm` | File I/O |
-| `json` | `json.enc`, `json.dec`, `json.get`, `json.set`, `json.keys`, `json.merge` | JSON encode/decode |
+| `json` | `json.enc`, `json.dec`, `json.get`, `json.set`, `json.keys`, `json.merge`, `json.as`, `json.or` | JSON encode/decode; `json.as(raw, template)` is the typed decode: the template value doubles as the schema (`json.as(json.dec(body), {name: "", age: 0, nick: Some("")})` returns `{name: Str, age: Int, nick: Option[Str]}`; mismatches raise with a path like `user.roles[1]: expected Str, got Int`). `json.or` is the lenient variant: missing/mismatched fields take the template's defaults |
 | `env` | `env.get`, `env.set`, `env.has`, `env.all` | Environment variables |
 | `proc` | `proc.run`, `proc.sh`, `proc.exit` | Process execution |
 | `http` | `http.get`, `http.post`, `http.put`, `http.del`, `http.set-timeout` | HTTP client |
@@ -359,11 +359,8 @@ main : () -> <io> () =
   for a in areas do print("area: ${a}")
 
   let data = fs.read("config.json")
-  let config = json.dec(data)
-  match json.get(config, "name") {
-    Some(name) => print("Hello, ${name}")
-    None => print("no name found")
-  }
+  let config = json.as(json.dec(data), {name: "", port: 8080, debug: Some(false)})
+  print("Hello, ${config.name} on port ${config.port}")
 ```
 
 ## 8. Contributing

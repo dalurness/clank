@@ -1989,6 +1989,10 @@ func (vm *VM) dispatchBuiltin(wordID int) error {
 		return vm.builtinDtUnixMs()
 	case 375: // recv-opt
 		return vm.builtinRecvOpt()
+	case 376: // json.as
+		return vm.builtinJsonAs()
+	case 377: // json.or
+		return vm.builtinJsonOr()
 
 	// Math
 	case 224: // math.abs

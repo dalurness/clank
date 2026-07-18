@@ -91,6 +91,7 @@ var vmBuiltins = map[string]int{
 	// JSON
 	"json.enc": 207, "json.dec": 208, "json.get": 209,
 	"json.set": 210, "json.keys": 211, "json.merge": 212,
+	"json.as": 376, "json.or": 377,
 	// Environment
 	"env.get": 214, "env.set": 215, "env.has": 216, "env.all": 217,
 	// Regex
@@ -332,16 +333,20 @@ func (c *Compiler) Compile(program *ast.Program) *BytecodeModule {
 	// Pre-register built-in effect operations
 	c.effectOps["raise"] = 1
 
-	// Register built-in Ordering variants
-	for _, name := range []string{"None", "Some", "Lt", "Eq_", "Gt"} {
-		if _, exists := c.variantInfos[name]; !exists {
+	// Register built-in Option and Ordering variants. Some carries one
+	// payload so Some(x) is constructible without a user Option decl.
+	for _, v := range []struct {
+		name  string
+		arity int
+	}{{"None", 0}, {"Some", 1}, {"Lt", 0}, {"Eq_", 0}, {"Gt", 0}} {
+		if _, exists := c.variantInfos[v.name]; !exists {
 			tag := c.nextVarTag
 			c.nextVarTag++
-			c.variantInfos[name] = variantInfo{tag: tag, arity: 0}
+			c.variantInfos[v.name] = variantInfo{tag: tag, arity: v.arity}
 			for len(c.variantNames) <= tag {
 				c.variantNames = append(c.variantNames, "")
 			}
-			c.variantNames[tag] = name
+			c.variantNames[tag] = v.name
 		}
 	}
 

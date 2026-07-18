@@ -1,0 +1,49 @@
+# Test: json.as / json.or — typed JSON decoding via template values.
+# The template doubles as the schema; the checker gives the result the
+# template's record type. Some(exemplar) fields are optional.
+
+main : () -> <io> () =
+  let body = "{\"name\": \"widget\", \"age\": 42, \"score\": 9.5, \"tags\": [\"a\", \"b\"], \"nick\": null, \"extra\": true}"
+  let user = json.as(json.dec(body), {name: "", age: 0, score: 0.0, tags: [""], nick: Some("")})
+  let _ = print(user.name ++ " " ++ show(user.age) ++ " " ++ show(user.score))
+  let _ = print(show(user.tags))
+  let _ = print(show(user.nick))
+
+  # optional field present
+  let u2 = json.as(json.dec("{\"name\": \"x\", \"nick\": \"nx\"}"), {name: "", nick: Some("")})
+  let _ = print(show(u2.nick))
+
+  # mismatch raises catchably with a path
+  let bad = handle json.as(json.dec("{\"name\": 5}"), {name: ""}) {
+    return v -> "ok",
+    raise msg resume _ -> msg
+  }
+  let _ = print(bad)
+
+  # missing required field
+  let bad2 = handle json.as(json.dec("{}"), {name: ""}) {
+    return v -> "ok",
+    raise msg resume _ -> msg
+  }
+  let _ = print(bad2)
+
+  # nested path in the error
+  let bad3 = handle json.as(json.dec("{\"user\": {\"roles\": [\"a\", 3]}}"), {user: {roles: [""]}}) {
+    return v -> "ok",
+    raise msg resume _ -> msg
+  }
+  let _ = print(bad3)
+
+  # json.or: lenient, missing/mismatched fields take the defaults
+  let cfg = json.or(json.dec("{\"port\": \"oops\"}"), {port: 8080, host: "localhost"})
+  print(show(cfg.port) ++ " " ++ cfg.host)
+
+# Expected output:
+# widget 42 9.5
+# [a, b]
+# None
+# Some(nx)
+# json.as: name: expected Str, got Int
+# json.as: name: missing
+# json.as: user.roles[1]: expected Str, got Int
+# 8080 localhost
