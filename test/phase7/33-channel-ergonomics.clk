@@ -44,6 +44,17 @@ main : () -> <io, async> () =
   let _ = await(p3)
   let _ = print("iter sum: " ++ show(summed))
 
+  # iter.collect directly on a receiver
+  let (tx3b, rx3b) = channel(8)
+  let p3b = spawn(fn() => {
+    let _ = send(tx3b, 7)
+    let _ = send(tx3b, 8)
+    close-sender(tx3b)
+  })
+  let collected = rx3b |> iter.collect
+  let _ = await(p3b)
+  let _ = print("collect: " ++ show(collected))
+
   # channel(0) is a rendezvous: three sends must wait for three delayed
   # recvs, so the producer's wall clock reflects the consumer's pace
   let (tx4, rx4) = channel(0)
@@ -100,6 +111,7 @@ main : () -> <io, async> () =
 # drain: [1, 2, 3]
 # for-in: [20, 40]
 # iter sum: 6
+# collect: [7, 8]
 # rendezvous blocked: true
 # select ready: rx6 99
 # select timeout: timeout

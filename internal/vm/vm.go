@@ -2967,6 +2967,9 @@ func (vm *VM) builtinIterRange() error {
 
 func (vm *VM) builtinIterCollect() error {
 	iterVal, _ := vm.pop()
+	if iterVal.Tag == TagHEAP && iterVal.Heap.Kind == KindReceiver {
+		iterVal = vm.receiverToIter(iterVal)
+	}
 	if iterVal.Tag != TagHEAP || iterVal.Heap.Kind != KindIterator {
 		return vm.trap("E002", "iter.collect: expected Iterator")
 	}
@@ -2990,6 +2993,9 @@ func (vm *VM) builtinIterCollect() error {
 
 func (vm *VM) builtinIterDrain() error {
 	iterVal, _ := vm.pop()
+	if iterVal.Tag == TagHEAP && iterVal.Heap.Kind == KindReceiver {
+		iterVal = vm.receiverToIter(iterVal)
+	}
 	if iterVal.Tag != TagHEAP || iterVal.Heap.Kind != KindIterator {
 		return vm.trap("E002", "iter.drain: expected Iterator")
 	}
