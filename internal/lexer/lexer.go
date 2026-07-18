@@ -2,7 +2,9 @@
 package lexer
 
 import (
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dalurness/clank/internal/token"
 )
@@ -284,12 +286,52 @@ func (l *lexer) scanString(start *token.Loc) ([]token.Token, *token.LexError) {
 				buf.WriteByte('\n')
 			case 't':
 				buf.WriteByte('\t')
+			case 'r':
+				buf.WriteByte('\r')
+			case 'e':
+				buf.WriteByte(0x1b)
 			case '\\':
 				buf.WriteByte('\\')
 			case '"':
 				buf.WriteByte('"')
 			case '$':
 				buf.WriteByte('$')
+			case 'x':
+				// \xNN — exactly two hex digits, one byte
+				if l.pos+2 > len(l.source) {
+					return nil, l.lexError("\\x escape needs two hex digits", start)
+				}
+				hex := l.source[l.pos : l.pos+2]
+				n, convErr := strconv.ParseUint(hex, 16, 8)
+				if convErr != nil {
+					return nil, l.lexError("invalid \\x escape \\x"+hex+" (need two hex digits)", start)
+				}
+				l.advance()
+				l.advance()
+				buf.WriteByte(byte(n))
+			case 'u':
+				// \u{NNNNNN} — 1-6 hex digits, a Unicode code point
+				if l.pos >= len(l.source) || l.source[l.pos] != '{' {
+					return nil, l.lexError("\\u escape needs braces: \\u{1F600}", start)
+				}
+				l.advance() // {
+				hexStart := l.pos
+				for l.pos < len(l.source) && l.source[l.pos] != '}' {
+					l.advance()
+				}
+				if l.pos >= len(l.source) {
+					return nil, l.lexError("unterminated \\u{...} escape", start)
+				}
+				hex := l.source[hexStart:l.pos]
+				l.advance() // }
+				if len(hex) == 0 || len(hex) > 6 {
+					return nil, l.lexError("\\u{...} escape needs 1-6 hex digits", start)
+				}
+				n, convErr := strconv.ParseUint(hex, 16, 32)
+				if convErr != nil || !utf8.ValidRune(rune(n)) {
+					return nil, l.lexError("invalid Unicode code point \\u{"+hex+"}", start)
+				}
+				buf.WriteRune(rune(n))
 			default:
 				return nil, l.lexError("invalid escape \\"+string(esc), start)
 			}

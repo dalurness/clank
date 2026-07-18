@@ -1,0 +1,15 @@
+# Test: \x, \u{...}, \e, \r string escapes
+
+main : () -> <io> () =
+  let _ = print("hex: " ++ show(str.ord("\x41")))
+  let _ = print("uni: \u{48}\u{69}")
+  let _ = print("emoji-len: " ++ show(str.len("\u{1F600}")))
+  let _ = print("esc-is-27: " ++ show(str.ord("\e") == 27))
+  print("cr-is-13: " ++ show(str.ord("\r") == 13))
+
+# Expected output:
+# hex: 65
+# uni: Hi
+# emoji-len: 1
+# esc-is-27: true
+# cr-is-13: true

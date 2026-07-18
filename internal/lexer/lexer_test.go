@@ -213,6 +213,37 @@ func TestLexEscapeSequences(t *testing.T) {
 	}
 }
 
+func TestLexHexUnicodeEscapes(t *testing.T) {
+	cases := []struct {
+		src  string
+		want string
+	}{
+		{`"\x1b[31m"`, "\x1b[31m"},
+		{`"\e[0m"`, "\x1b[0m"},
+		{`"\r\n"`, "\r\n"},
+		{`"\u{48}\u{69}"`, "Hi"},
+		{`"\u{1F600}"`, "\U0001F600"},
+		{`"\u{e9}"`, "é"},
+	}
+	for _, c := range cases {
+		tokens, err := lexer.Lex(c.src)
+		if err != nil {
+			t.Fatalf("%s: unexpected lex error: %s", c.src, err.Message)
+		}
+		if tokens[0].Value != c.want {
+			t.Errorf("%s: expected %q, got %q", c.src, c.want, tokens[0].Value)
+		}
+	}
+}
+
+func TestLexBadHexUnicodeEscapes(t *testing.T) {
+	for _, src := range []string{`"\x1"`, `"\xzz"`, "\"\\u1234\"", `"\u{}"`, `"\u{1234567}"`, `"\u{d800}"`, `"\u{"`} {
+		if _, err := lexer.Lex(src); err == nil {
+			t.Errorf("%s: expected lex error", src)
+		}
+	}
+}
+
 func TestLexInvalidEscape(t *testing.T) {
 	_, err := lexer.Lex(`"\q"`)
 	if err == nil {

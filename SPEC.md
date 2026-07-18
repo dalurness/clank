@@ -19,6 +19,8 @@ Compounds: `[T]` (list), `(T, U)` (tuple), `{k: T}` (record), `T | U` (tagged un
 
 String interpolation: `"hello ${expr}"` desugars to `"hello " ++ show(expr)`. Escape with `\$`.
 
+String escapes: `\n` `\t` `\r` `\\` `\"` `\$` `\e` (ESC, 0x1B), `\xNN` (byte, two hex digits), `\u{N...}` (Unicode code point, 1-6 hex digits, e.g. `"\u{1F600}"`).
+
 ## 2. Grammar (Core)
 
 ```ebnf
