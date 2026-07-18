@@ -1198,6 +1198,7 @@ func (c *Compiler) compilePatternTest(pat ast.Pattern, subjectSlot int, e *codeE
 		patches = append(patches, e.emitJumpPlaceholder(OpJMP_UNLESS))
 
 	case ast.PatVariant:
+		c.emitKindTest(e, subjectSlot, 2, 0xFF, &patches)
 		e.emitU8(OpLOCAL_GET, subjectSlot)
 		e.emit(OpVARIANT_TAG)
 		vi := c.variantInfos[p.Name]
@@ -1215,6 +1216,7 @@ func (c *Compiler) compilePatternTest(pat ast.Pattern, subjectSlot int, e *codeE
 		}
 
 	case ast.PatTuple:
+		c.emitKindTest(e, subjectSlot, 1, byte(len(p.Elements)), &patches)
 		for i, elPat := range p.Elements {
 			sub := c.testProjected(elPat, e, scope,
 				func() {
@@ -1226,6 +1228,12 @@ func (c *Compiler) compilePatternTest(pat ast.Pattern, subjectSlot int, e *codeE
 		}
 
 	case ast.PatRecord:
+		c.emitKindTest(e, subjectSlot, 3, 0xFF, &patches)
+		for _, pf := range p.Fields {
+			e.emitU8(OpLOCAL_GET, subjectSlot)
+			e.emitU16(OpRECORD_HAS, c.internString(pf.Name))
+			patches = append(patches, e.emitJumpPlaceholder(OpJMP_UNLESS))
+		}
 		for _, pf := range p.Fields {
 			pf := pf
 			if pf.Pattern != nil {
@@ -1248,6 +1256,7 @@ func (c *Compiler) compilePatternTest(pat ast.Pattern, subjectSlot int, e *codeE
 		c.compileRecordRest(p, subjectSlot, e, scope)
 
 	case ast.PatList:
+		c.emitKindTest(e, subjectSlot, 0, 0xFF, &patches)
 		e.emitU8(OpLOCAL_GET, subjectSlot)
 		e.emit(OpLIST_LEN)
 		e.emitU8(OpPUSH_INT, len(p.Elements))
@@ -1280,6 +1289,17 @@ func (c *Compiler) testProjected(pat ast.Pattern, e *codeEmitter, scope *localSc
 		e.emitU8(OpLOCAL_SET, tempSlot)
 		return c.compilePatternTest(pat, tempSlot, e, scope)
 	}
+}
+
+// emitKindTest guards a shape-dependent pattern test: the subject must have
+// the given runtime kind (and tuple arity) or the arm fails instead of
+// trapping. This matters when matching Any-typed values whose shape varies
+// between arms (e.g. Some([..]) vs Some((a, b))).
+func (c *Compiler) emitKindTest(e *codeEmitter, subjectSlot int, kind, arity byte, patches *[]int) {
+	e.emitU8(OpLOCAL_GET, subjectSlot)
+	e.emitU8(OpKIND_TEST, int(kind))
+	e.code = append(e.code, arity)
+	*patches = append(*patches, e.emitJumpPlaceholder(OpJMP_UNLESS))
 }
 
 // compileRecordRest binds a record pattern's `| rest` capture, if any.

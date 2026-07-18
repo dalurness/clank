@@ -103,6 +103,10 @@ func OpcodeRegistry() []OpcodeEntry {
 		{"TO_STR", OpTO_STR, "string"},
 		{"CONCAT", OpCONCAT, "string"},
 
+		// Shape tests (0x69-0x6A)
+		{"KIND_TEST", OpKIND_TEST, "collection"},
+		{"RECORD_HAS", OpRECORD_HAS, "collection"},
+
 		// Effect handling (0x70-0x74)
 		{"HANDLE_PUSH", OpHANDLE_PUSH, "effect"},
 		{"HANDLE_POP", OpHANDLE_POP, "effect"},

@@ -68,7 +68,7 @@ atom        = literal | ident | lambda | '(' expr ')' | tuple | list | record
 lambda      = 'fn' '(' params ')' '=>' expr ;
 let-expr    = 'let' pattern '=' expr ['in' expr] ;  (* 'in' is optional in match arms and lambdas — the next expression becomes the body *)
 if-expr     = 'if' expr 'then' expr 'else' expr ;
-match-expr  = 'match' expr '{' { pattern '=>' expr } '}' ;
+match-expr  = 'match' expr '{' { pattern '=>' expr [','] } '}' ;  (* comma between arms optional, like handle arms *)
 block       = '{' expr { expr } '}' ;
 handle-expr = 'handle' expr '{' handler-arms '}' ;
 handler-arms = handler-arm { ',' handler-arm } ;
@@ -181,7 +181,12 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 
 Notes: `len` is list length — use `str.len` for strings. `range(a, b)` and
 `iter.range(a, b)` are both inclusive of `b`. Match patterns cover
-literals, variables, tuples, records, variants, lists, and `_`.
+literals, variables, tuples, records, variants, lists, and `_`; all of
+them nest, so `Some(true)`, `Ok("done")`, and `Some([1, x])` are valid
+arms. Arms are separated by newlines or optional commas. When the
+subject is `Any`, an arm whose pattern needs a different runtime shape
+(list vs tuple vs record vs variant) simply doesn't match — it never
+traps.
 
 List patterns match on structure and length:
 

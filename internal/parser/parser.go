@@ -1042,6 +1042,10 @@ func (p *parser) parseMatch() ast.Expr {
 		p.expect(token.Op, "=>")
 		body := p.parseMatchArmBody()
 		arms = append(arms, ast.MatchArm{Pattern: pattern, Body: body})
+		// Arms may be separated by an optional comma, same as handle arms.
+		if p.at(token.Delim, ",") {
+			p.advance()
+		}
 	}
 	p.expect(token.Delim, "}")
 	return ast.ExprMatch{Subject: subject, Arms: arms, Loc: loc}

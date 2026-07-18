@@ -15,8 +15,8 @@ func TestOpcodeRegistryCoversAllConstants(t *testing.T) {
 	// Verify that the registry has the expected number of entries.
 	// Update this count when adding new opcodes.
 	registry := OpcodeRegistry()
-	if len(registry) != 109 {
-		t.Errorf("opcode registry has %d entries, expected 109 — did you add a new opcode to opcode.go without registering it?", len(registry))
+	if len(registry) != 111 {
+		t.Errorf("opcode registry has %d entries, expected 111 — did you add a new opcode to opcode.go without registering it?", len(registry))
 	}
 }
 

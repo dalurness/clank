@@ -754,6 +754,41 @@ func (vm *VM) dispatch(opcode byte, code []byte) error {
 		}
 		vm.push(fv)
 
+	case compiler.OpKIND_TEST:
+		kind := vm.readU8(code)
+		arity := vm.readU8(code)
+		val, err := vm.pop()
+		if err != nil {
+			return err
+		}
+		ok := false
+		if val.Tag == TagHEAP {
+			switch kind {
+			case 0:
+				ok = val.Heap.Kind == KindList
+			case 1:
+				ok = val.Heap.Kind == KindTuple &&
+					(arity == 0xFF || len(val.Heap.Items) == int(arity))
+			case 2:
+				ok = val.Heap.Kind == KindUnion
+			case 3:
+				ok = val.Heap.Kind == KindRecord
+			}
+		}
+		vm.push(ValBool(ok))
+
+	case compiler.OpRECORD_HAS:
+		fieldID := vm.readU16(code)
+		val, err := vm.pop()
+		if err != nil {
+			return err
+		}
+		ok := false
+		if val.Tag == TagHEAP && val.Heap.Kind == KindRecord {
+			_, ok = val.Heap.Fields[vm.strings[fieldID]]
+		}
+		vm.push(ValBool(ok))
+
 	case compiler.OpRECORD_SET:
 		fieldID := vm.readU16(code)
 		rec, err := vm.pop()

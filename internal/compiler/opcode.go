@@ -93,6 +93,14 @@ const (
 	OpTO_STR    byte = 0x67
 	OpCONCAT    byte = 0x68 // polymorphic: string or list concat
 
+	// Runtime shape tests (pattern matching against Any-typed values).
+	// KIND_TEST pops a value and pushes whether it has the operand kind
+	// (0=list, 1=tuple, 2=union, 3=record); the second operand is a
+	// required arity for tuples (0xFF = any). RECORD_HAS pops a value and
+	// pushes whether it is a record containing the u16-interned field.
+	OpKIND_TEST  byte = 0x69
+	OpRECORD_HAS byte = 0x6A
+
 	// Effect handling
 	OpHANDLE_PUSH    byte = 0x70
 	OpHANDLE_POP     byte = 0x71

@@ -1,0 +1,54 @@
+# Test: match arms may be separated by commas (like handle arms), literal
+# patterns nest inside variant patterns, and shape-dependent patterns
+# (list/tuple/record) tested against differently-shaped Any values fail the
+# arm instead of trapping.
+
+type Result = Ok(Str) | Err(Int)
+
+describe : (o: Any) -> <> Str =
+  match o { Some(true) => "yes", Some(false) => "no", None => "none" }
+
+check : (r: Result) -> <> Str =
+  match r {
+    Ok("done") => "finished"
+    Ok(msg) => "progress: ${msg}"
+    Err(0) => "benign"
+    Err(n) => "code ${show(n)}"
+  }
+
+shape : (o: Any) -> <> Str =
+  match o {
+    Some([1, x]) => "one-then ${show(x)}"
+    Some((true, n)) => "pair ${show(n)}"
+    Some({tag}) => "record ${tag}"
+    Some(_) => "other"
+    None => "none"
+  }
+
+main : () -> <io> () =
+  let _ = print(describe(Some(true)))
+  let _ = print(describe(Some(false)))
+  let _ = print(describe(None))
+  let _ = print(check(Ok("done")))
+  let _ = print(check(Ok("halfway")))
+  let _ = print(check(Err(0)))
+  let _ = print(check(Err(7)))
+  let _ = print(shape(Some([1, 5])))
+  let _ = print(shape(Some((true, 9))))
+  let _ = print(shape(Some({tag: "T", n: 3})))
+  let _ = print(shape(Some("x")))
+  print(shape(None))
+
+# Expected output:
+# yes
+# no
+# none
+# finished
+# progress: halfway
+# benign
+# code 7
+# one-then 5
+# pair 9
+# record T
+# other
+# none
