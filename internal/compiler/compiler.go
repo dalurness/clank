@@ -1047,6 +1047,13 @@ func collectPatternVarNames(pat ast.Pattern, bound map[string]bool) {
 		if p.Rest != "" && p.Rest != "_" {
 			bound[p.Rest] = true
 		}
+	case ast.PatList:
+		for _, el := range p.Elements {
+			collectPatternVarNames(el, bound)
+		}
+		if p.HasRest && p.Rest != "" && p.Rest != "_" {
+			bound[p.Rest] = true
+		}
 	}
 }
 
@@ -1099,11 +1106,9 @@ func (c *Compiler) compileMatch(expr ast.ExprMatch, e *codeEmitter, scope *local
 		isLast := i == len(expr.Arms)-1
 		armScope := scope.child()
 
-		var nextArmPatch int
-		hasNextPatch := false
+		var nextArmPatches []int
 		if !isLast {
-			nextArmPatch = c.compilePatternTest(arm.Pattern, subjectSlot, e, armScope)
-			hasNextPatch = true
+			nextArmPatches = c.compilePatternTest(arm.Pattern, subjectSlot, e, armScope)
 		} else {
 			c.compilePatternBind(arm.Pattern, subjectSlot, e, armScope)
 		}
@@ -1113,8 +1118,8 @@ func (c *Compiler) compileMatch(expr ast.ExprMatch, e *codeEmitter, scope *local
 		if !isLast {
 			endPatches = append(endPatches, e.emitJumpPlaceholder(OpJMP))
 		}
-		if hasNextPatch {
-			e.patchJump(nextArmPatch)
+		for _, patch := range nextArmPatches {
+			e.patchJump(patch)
 		}
 	}
 
@@ -1123,87 +1128,63 @@ func (c *Compiler) compileMatch(expr ast.ExprMatch, e *codeEmitter, scope *local
 	}
 }
 
-func (c *Compiler) compilePatternTest(pat ast.Pattern, subjectSlot int, e *codeEmitter, scope *localScope) int {
+// compilePatternTest emits code that tests pat against subjectSlot and binds
+// its variables. It returns the jump placeholders (to be patched to the next
+// arm) taken when the pattern does not match; an empty slice means the
+// pattern matches unconditionally. Tests are emitted for nested refutable
+// patterns too, so a later sub-test only runs once the earlier ones passed.
+func (c *Compiler) compilePatternTest(pat ast.Pattern, subjectSlot int, e *codeEmitter, scope *localScope) []int {
+	var patches []int
 	switch p := pat.(type) {
 	case ast.PatWildcard, ast.PatVar:
 		c.compilePatternBind(pat, subjectSlot, e, scope)
-		e.emit(OpPUSH_TRUE)
-		return e.emitJumpPlaceholder(OpJMP_UNLESS)
 
 	case ast.PatLiteral:
 		e.emitU8(OpLOCAL_GET, subjectSlot)
 		c.compileLiteral(p.Value, e)
 		e.emit(OpEQ)
-		return e.emitJumpPlaceholder(OpJMP_UNLESS)
+		patches = append(patches, e.emitJumpPlaceholder(OpJMP_UNLESS))
 
 	case ast.PatVariant:
 		e.emitU8(OpLOCAL_GET, subjectSlot)
 		e.emit(OpVARIANT_TAG)
-		vi, _ := c.variantInfos[p.Name]
+		vi := c.variantInfos[p.Name]
 		e.emitU8(OpPUSH_INT, vi.tag)
 		e.emit(OpEQ)
-		failPatch := e.emitJumpPlaceholder(OpJMP_UNLESS)
-
+		patches = append(patches, e.emitJumpPlaceholder(OpJMP_UNLESS))
 		for i, argPat := range p.Args {
-			switch ap := argPat.(type) {
-			case ast.PatVar:
-				e.emitU8(OpLOCAL_GET, subjectSlot)
-				e.emitU8(OpVARIANT_FIELD, i)
-				slot := scope.allocate(ap.Name)
-				e.emitU8(OpLOCAL_SET, slot)
-			case ast.PatWildcard:
-				// skip
-			default:
-				e.emitU8(OpLOCAL_GET, subjectSlot)
-				e.emitU8(OpVARIANT_FIELD, i)
-				tempSlot := scope.allocate(fmt.Sprintf("__variant_arg_%d_%d", subjectSlot, i))
-				e.emitU8(OpLOCAL_SET, tempSlot)
-				c.compilePatternBind(argPat, tempSlot, e, scope)
-			}
+			sub := c.testProjected(argPat, e, scope,
+				func() {
+					e.emitU8(OpLOCAL_GET, subjectSlot)
+					e.emitU8(OpVARIANT_FIELD, i)
+				},
+				fmt.Sprintf("__variant_arg_%d_%d", subjectSlot, i))
+			patches = append(patches, sub...)
 		}
-		return failPatch
 
 	case ast.PatTuple:
 		for i, elPat := range p.Elements {
-			switch ep := elPat.(type) {
-			case ast.PatVar:
-				e.emitU8(OpLOCAL_GET, subjectSlot)
-				e.emitU8(OpTUPLE_GET, i)
-				slot := scope.allocate(ep.Name)
-				e.emitU8(OpLOCAL_SET, slot)
-			case ast.PatWildcard:
-				// skip
-			default:
-				e.emitU8(OpLOCAL_GET, subjectSlot)
-				e.emitU8(OpTUPLE_GET, i)
-				tempSlot := scope.allocate(fmt.Sprintf("__tuple_el_%d_%d", subjectSlot, i))
-				e.emitU8(OpLOCAL_SET, tempSlot)
-				c.compilePatternBind(elPat, tempSlot, e, scope)
-			}
+			sub := c.testProjected(elPat, e, scope,
+				func() {
+					e.emitU8(OpLOCAL_GET, subjectSlot)
+					e.emitU8(OpTUPLE_GET, i)
+				},
+				fmt.Sprintf("__tuple_el_%d_%d", subjectSlot, i))
+			patches = append(patches, sub...)
 		}
-		e.emit(OpPUSH_TRUE)
-		return e.emitJumpPlaceholder(OpJMP_UNLESS)
 
 	case ast.PatRecord:
 		for _, pf := range p.Fields {
+			pf := pf
 			if pf.Pattern != nil {
-				switch fp := pf.Pattern.(type) {
-				case ast.PatVar:
-					e.emitU8(OpLOCAL_GET, subjectSlot)
-					fieldID := c.internString(pf.Name)
-					e.emitU16(OpRECORD_GET, fieldID)
-					slot := scope.allocate(fp.Name)
-					e.emitU8(OpLOCAL_SET, slot)
-				case ast.PatWildcard:
-					// skip
-				default:
-					e.emitU8(OpLOCAL_GET, subjectSlot)
-					fieldID := c.internString(pf.Name)
-					e.emitU16(OpRECORD_GET, fieldID)
-					tempSlot := scope.allocate(fmt.Sprintf("__rec_field_%d_%s", subjectSlot, pf.Name))
-					e.emitU8(OpLOCAL_SET, tempSlot)
-					c.compilePatternBind(pf.Pattern, tempSlot, e, scope)
-				}
+				sub := c.testProjected(pf.Pattern, e, scope,
+					func() {
+						e.emitU8(OpLOCAL_GET, subjectSlot)
+						fieldID := c.internString(pf.Name)
+						e.emitU16(OpRECORD_GET, fieldID)
+					},
+					fmt.Sprintf("__rec_field_%d_%s", subjectSlot, pf.Name))
+				patches = append(patches, sub...)
 			} else {
 				e.emitU8(OpLOCAL_GET, subjectSlot)
 				fieldID := c.internString(pf.Name)
@@ -1212,21 +1193,127 @@ func (c *Compiler) compilePatternTest(pat ast.Pattern, subjectSlot int, e *codeE
 				e.emitU8(OpLOCAL_SET, slot)
 			}
 		}
-		if p.Rest != "" && p.Rest != "_" {
-			e.emitU8(OpLOCAL_GET, subjectSlot)
-			e.emitU8(OpRECORD_REST, len(p.Fields))
-			for _, pf := range p.Fields {
-				nameIdx := c.internString(pf.Name)
-				e.code = append(e.code, byte((nameIdx>>8)&0xFF), byte(nameIdx&0xFF))
-			}
-			slot := scope.allocate(p.Rest)
-			e.emitU8(OpLOCAL_SET, slot)
+		c.compileRecordRest(p, subjectSlot, e, scope)
+
+	case ast.PatList:
+		e.emitU8(OpLOCAL_GET, subjectSlot)
+		e.emit(OpLIST_LEN)
+		e.emitU8(OpPUSH_INT, len(p.Elements))
+		if p.HasRest {
+			e.emit(OpGTE)
+		} else {
+			e.emit(OpEQ)
 		}
-		e.emit(OpPUSH_TRUE)
-		return e.emitJumpPlaceholder(OpJMP_UNLESS)
+		patches = append(patches, e.emitJumpPlaceholder(OpJMP_UNLESS))
+		patches = append(patches, c.compileListParts(p, subjectSlot, e, scope, true)...)
 	}
-	e.emit(OpPUSH_TRUE)
-	return e.emitJumpPlaceholder(OpJMP_UNLESS)
+	return patches
+}
+
+// testProjected loads a projected sub-value (variant field, tuple element,
+// record field, list element) via emitLoad, then binds or tests pat against
+// it, returning any fail-jump placeholders.
+func (c *Compiler) testProjected(pat ast.Pattern, e *codeEmitter, scope *localScope, emitLoad func(), tempName string) []int {
+	switch sp := pat.(type) {
+	case ast.PatWildcard:
+		return nil
+	case ast.PatVar:
+		emitLoad()
+		slot := scope.allocate(sp.Name)
+		e.emitU8(OpLOCAL_SET, slot)
+		return nil
+	default:
+		emitLoad()
+		tempSlot := scope.allocate(tempName)
+		e.emitU8(OpLOCAL_SET, tempSlot)
+		return c.compilePatternTest(pat, tempSlot, e, scope)
+	}
+}
+
+// compileRecordRest binds a record pattern's `| rest` capture, if any.
+func (c *Compiler) compileRecordRest(p ast.PatRecord, subjectSlot int, e *codeEmitter, scope *localScope) {
+	if p.Rest == "" || p.Rest == "_" {
+		return
+	}
+	e.emitU8(OpLOCAL_GET, subjectSlot)
+	e.emitU8(OpRECORD_REST, len(p.Fields))
+	for _, pf := range p.Fields {
+		nameIdx := c.internString(pf.Name)
+		e.code = append(e.code, byte((nameIdx>>8)&0xFF), byte(nameIdx&0xFF))
+	}
+	slot := scope.allocate(p.Rest)
+	e.emitU8(OpLOCAL_SET, slot)
+}
+
+// compileListParts binds (and, when withTests, tests) a list pattern's fixed
+// elements and rest capture. Elements before the rest index from the front;
+// elements after the rest index from the back. The length precondition has
+// already been established by the caller (or is guaranteed by exhaustiveness
+// for the final arm).
+func (c *Compiler) compileListParts(p ast.PatList, subjectSlot int, e *codeEmitter, scope *localScope, withTests bool) []int {
+	var patches []int
+	prefix := p.Elements
+	var suffix []ast.Pattern
+	if p.HasRest {
+		prefix = p.Elements[:p.RestIndex]
+		suffix = p.Elements[p.RestIndex:]
+	}
+
+	handle := func(elPat ast.Pattern, emitLoad func(), tempName string) {
+		if withTests {
+			patches = append(patches, c.testProjected(elPat, e, scope, emitLoad, tempName)...)
+			return
+		}
+		switch sp := elPat.(type) {
+		case ast.PatWildcard:
+		case ast.PatVar:
+			emitLoad()
+			slot := scope.allocate(sp.Name)
+			e.emitU8(OpLOCAL_SET, slot)
+		default:
+			emitLoad()
+			tempSlot := scope.allocate(tempName)
+			e.emitU8(OpLOCAL_SET, tempSlot)
+			c.compilePatternBind(elPat, tempSlot, e, scope)
+		}
+	}
+
+	for i, elPat := range prefix {
+		i := i
+		handle(elPat, func() {
+			e.emitU8(OpLOCAL_GET, subjectSlot)
+			e.emitU8(OpPUSH_INT, i)
+			e.emit(OpLIST_IDX)
+		}, fmt.Sprintf("__list_el_%d_%d", subjectSlot, i))
+	}
+	for m, elPat := range suffix {
+		fromEnd := len(suffix) - m
+		handle(elPat, func() {
+			e.emitU8(OpLOCAL_GET, subjectSlot)
+			e.emitU8(OpLOCAL_GET, subjectSlot)
+			e.emit(OpLIST_LEN)
+			e.emitU8(OpPUSH_INT, fromEnd)
+			e.emit(OpSUB)
+			e.emit(OpLIST_IDX)
+		}, fmt.Sprintf("__list_sfx_%d_%d", subjectSlot, m))
+	}
+
+	if p.HasRest && p.Rest != "" && p.Rest != "_" {
+		// rest = col.take(col.drop(xs, prefixLen), len(xs) - prefixLen - suffixLen)
+		e.emitU8(OpLOCAL_GET, subjectSlot)
+		e.emitU8(OpPUSH_INT, len(prefix))
+		e.emitU16(OpCALL, vmBuiltins["col.drop"])
+		if len(suffix) > 0 {
+			e.emitU8(OpLOCAL_GET, subjectSlot)
+			e.emit(OpLIST_LEN)
+			e.emitU8(OpPUSH_INT, len(prefix)+len(suffix))
+			e.emit(OpSUB)
+			e.emitU16(OpCALL, vmBuiltins["col.take"])
+		}
+		slot := scope.allocate(p.Rest)
+		e.emitU8(OpLOCAL_SET, slot)
+	}
+	return patches
 }
 
 func (c *Compiler) compilePatternBind(pat ast.Pattern, subjectSlot int, e *codeEmitter, scope *localScope) {
@@ -1301,16 +1388,9 @@ func (c *Compiler) compilePatternBind(pat ast.Pattern, subjectSlot int, e *codeE
 				e.emitU8(OpLOCAL_SET, slot)
 			}
 		}
-		if p.Rest != "" && p.Rest != "_" {
-			e.emitU8(OpLOCAL_GET, subjectSlot)
-			e.emitU8(OpRECORD_REST, len(p.Fields))
-			for _, pf := range p.Fields {
-				nameIdx := c.internString(pf.Name)
-				e.code = append(e.code, byte((nameIdx>>8)&0xFF), byte(nameIdx&0xFF))
-			}
-			slot := scope.allocate(p.Rest)
-			e.emitU8(OpLOCAL_SET, slot)
-		}
+		c.compileRecordRest(p, subjectSlot, e, scope)
+	case ast.PatList:
+		c.compileListParts(p, subjectSlot, e, scope, false)
 	case ast.PatLiteral:
 		// nop (bind phase, no value to extract)
 	}

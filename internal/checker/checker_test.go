@@ -915,3 +915,87 @@ func TestExtractTypeBindingsCompositeWithTAny(t *testing.T) {
 		t.Error("expected T binding to be non-empty")
 	}
 }
+
+// ── List match exhaustiveness ──
+
+func TestListMatchExhaustiveness(t *testing.T) {
+	loc := token.Loc{Line: 1, Col: 1}
+	unit := ast.ExprLiteral{Value: ast.LitUnit{}, Loc: loc}
+	varPat := func(n string) ast.Pattern { return ast.PatVar{Name: n, Loc: loc} }
+	arm := func(p ast.Pattern) ast.MatchArm { return ast.MatchArm{Pattern: p, Body: unit} }
+	mk := func(arms ...ast.MatchArm) ast.ExprMatch {
+		return ast.ExprMatch{Subject: ast.ExprVar{Name: "xs", Loc: loc}, Arms: arms, Loc: loc}
+	}
+
+	cases := []struct {
+		name       string
+		expr       ast.ExprMatch
+		exhaustive bool
+	}{
+		{
+			"empty plus head-rest is exhaustive",
+			mk(
+				arm(ast.PatList{Loc: loc}),
+				arm(ast.PatList{Elements: []ast.Pattern{varPat("x")}, HasRest: true, RestIndex: 1, Rest: "rest", Loc: loc}),
+			),
+			true,
+		},
+		{
+			"rest arm alone is exhaustive",
+			mk(arm(ast.PatList{HasRest: true, Rest: "rest", Loc: loc})),
+			true,
+		},
+		{
+			"wildcard arm is exhaustive",
+			mk(
+				arm(ast.PatList{Loc: loc}),
+				arm(ast.PatWildcard{Loc: loc}),
+			),
+			true,
+		},
+		{
+			"missing empty case",
+			mk(arm(ast.PatList{Elements: []ast.Pattern{varPat("x")}, HasRest: true, RestIndex: 1, Rest: "rest", Loc: loc})),
+			false,
+		},
+		{
+			"fixed lengths only",
+			mk(
+				arm(ast.PatList{Loc: loc}),
+				arm(ast.PatList{Elements: []ast.Pattern{varPat("x")}, Loc: loc}),
+			),
+			false,
+		},
+		{
+			"refutable head does not count as coverage",
+			mk(
+				arm(ast.PatList{Loc: loc}),
+				arm(ast.PatList{
+					Elements:  []ast.Pattern{ast.PatLiteral{Value: ast.LitStr{Value: " "}, Loc: loc}},
+					HasRest:   true,
+					RestIndex: 1,
+					Rest:      "rest",
+					Loc:       loc,
+				}),
+			),
+			false,
+		},
+	}
+
+	for _, tc := range cases {
+		var errs []TypeError
+		checkListMatchExhaustiveness(tc.expr, &errs)
+		gotWarning := false
+		for _, e := range errs {
+			if e.Code == "W400" {
+				gotWarning = true
+			}
+		}
+		if tc.exhaustive && gotWarning {
+			t.Errorf("%s: unexpected W400: %v", tc.name, errs)
+		}
+		if !tc.exhaustive && !gotWarning {
+			t.Errorf("%s: expected W400, got none", tc.name)
+		}
+	}
+}

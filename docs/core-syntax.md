@@ -176,7 +176,9 @@ pattern     = ident                        (* variable binding *)
             | literal                      (* literal match *)
             | ident '(' pattern { ',' pattern } ')' (* variant destructure *)
             | '(' pattern { ',' pattern } ')'       (* tuple destructure *)
+            | '[' [ list-item { ',' list-item } ] ']' (* list destructure *)
             | '_' ;                        (* wildcard *)
+list-item   = pattern | '..' [ ident ] ;   (* at most one '..' per list *)
 
 (* ── Lambda ── *)
 lambda      = 'fn' '(' params ')' '=>' expr ;

@@ -1,0 +1,88 @@
+# Test: list patterns in match — [], exact length, [x, ..rest], suffix
+# anchoring [.., last], a rest in the middle, and nested patterns
+# (literals, tuples, variants) inside list elements.
+
+type Option<a> = Some(a) | None
+
+sum : (xs: [Int]) -> <> Int =
+  match xs {
+    [] => 0
+    [x, ..rest] => x + sum(rest)
+  }
+
+drop-blank : (cs: [Str]) -> <> [Str] =
+  match cs {
+    [" ", ..rest] => drop-blank(rest)
+    _ => cs
+  }
+
+describe : (xs: [Int]) -> <> Str =
+  match xs {
+    [] => "empty"
+    [x] => "one ${show(x)}"
+    [x, y] => "two ${show(x)} ${show(y)}"
+    [x, ..rest] => "many, head ${show(x)}, rest ${show(rest)}"
+  }
+
+ends : (xs: [Int]) -> <> Str =
+  match xs {
+    [first, ..mid, last] => "${show(first)}/${show(last)} mid=${show(mid)}"
+    _ => "small"
+  }
+
+last-or : (xs: [Int], default: Int) -> <> Int =
+  match xs {
+    [.., last] => last
+    [] => default
+  }
+
+first-some : (xs: [Option<Int>]) -> <> Int =
+  match xs {
+    [Some(x), .._] => x
+    [None, ..rest] => first-some(rest)
+    [] => -1
+  }
+
+is-sorted : (xs: [Int]) -> <> Bool =
+  match xs {
+    [a, b, ..rest] => a <= b && is-sorted(cons(b, rest))
+    _ => true
+  }
+
+pairs : (xs: [(Int, Str)]) -> <> Str =
+  match xs {
+    [(n, s), .._] => "${show(n)}=${s}"
+    [] => "none"
+  }
+
+main : () -> <io> () =
+  let _ = print(show(sum([1, 2, 3, 4])))
+  let _ = print(show(drop-blank([" ", " ", "a", "b"])))
+  let _ = print(describe([]))
+  let _ = print(describe([7]))
+  let _ = print(describe([7, 8]))
+  let _ = print(describe([7, 8, 9, 10]))
+  let _ = print(ends([1, 2, 3, 4, 5]))
+  let _ = print(ends([1]))
+  let _ = print(show(last-or([5, 6, 7], -1)))
+  let _ = print(show(last-or([], -1)))
+  let _ = print(show(first-some([None, None, Some(42), Some(1)])))
+  let _ = print(pairs([(3, "c"), (4, "d")]))
+  let _ = print(show(is-sorted([1, 2, 2, 9])))
+  print(show(is-sorted([3, 1])))
+
+# Expected output:
+# 10
+# [a, b]
+# empty
+# one 7
+# two 7 8
+# many, head 7, rest [8, 9, 10]
+# 1/5 mid=[2, 3, 4]
+# small
+# 7
+# -1
+# 42
+# 3=c
+# true
+# false

@@ -2241,6 +2241,16 @@ func checkMatchExhaustiveness(
 	registry map[string][]string,
 	errors *[]TypeError,
 ) {
+	if _, ok := subjectType.(TList); ok {
+		checkListMatchExhaustiveness(expr, errors)
+		return
+	}
+	for _, arm := range expr.Arms {
+		if _, ok := arm.Pattern.(ast.PatList); ok {
+			checkListMatchExhaustiveness(expr, errors)
+			return
+		}
+	}
 	g, ok := subjectType.(TGeneric)
 	if !ok || g.Name == "?" {
 		return
@@ -2275,6 +2285,80 @@ func checkMatchExhaustiveness(
 		*errors = append(*errors, TypeError{
 			Code:     "W400",
 			Message:  fmt.Sprintf("non-exhaustive match: missing variant%s %s", s, strings.Join(missing, ", ")),
+			Location: expr.Loc,
+		})
+	}
+}
+
+// irrefutablePattern reports whether pat matches any value of its type.
+func irrefutablePattern(pat ast.Pattern) bool {
+	switch p := pat.(type) {
+	case ast.PatWildcard, ast.PatVar:
+		return true
+	case ast.PatTuple:
+		for _, el := range p.Elements {
+			if !irrefutablePattern(el) {
+				return false
+			}
+		}
+		return true
+	case ast.PatRecord:
+		for _, f := range p.Fields {
+			if f.Pattern != nil && !irrefutablePattern(f.Pattern) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// checkListMatchExhaustiveness checks matches over list subjects. An arm
+// covers a set of lengths: a fixed pattern of n irrefutable elements covers
+// {n}; a rest pattern with k irrefutable fixed elements covers {k, k+1, ...}.
+// The match is exhaustive when every length from 0 up is covered.
+func checkListMatchExhaustiveness(expr ast.ExprMatch, errors *[]TypeError) {
+	minRest := -1
+	fixedCovered := make(map[int]bool)
+	for _, arm := range expr.Arms {
+		switch p := arm.Pattern.(type) {
+		case ast.PatWildcard, ast.PatVar:
+			return
+		case ast.PatList:
+			allIrrefutable := true
+			for _, el := range p.Elements {
+				if !irrefutablePattern(el) {
+					allIrrefutable = false
+					break
+				}
+			}
+			if !allIrrefutable {
+				continue
+			}
+			if p.HasRest {
+				if minRest == -1 || len(p.Elements) < minRest {
+					minRest = len(p.Elements)
+				}
+			} else {
+				fixedCovered[len(p.Elements)] = true
+			}
+		}
+	}
+	missing := ""
+	if minRest == -1 {
+		missing = "a rest arm like '[..rest]' or a wildcard '_'"
+	} else {
+		for n := 0; n < minRest; n++ {
+			if !fixedCovered[n] {
+				missing = fmt.Sprintf("lists of length %d (add an arm or a wildcard '_')", n)
+				break
+			}
+		}
+	}
+	if missing != "" {
+		*errors = append(*errors, TypeError{
+			Code:     "W400",
+			Message:  "non-exhaustive match on list: missing " + missing,
 			Location: expr.Loc,
 		})
 	}
@@ -3043,6 +3127,34 @@ func (s *checkerState) bindPatternVars(pat ast.Pattern, env *typeEnv, aff *affin
 				elemType = tup.Elements[i]
 			}
 			s.bindPatternVars(elem, env, aff, elemType)
+		}
+	case ast.PatList:
+		var elemType Type
+		var subj Type
+		if subjectType != nil {
+			subj = s.applyTypeSubst(subjectType)
+		}
+		switch st := subj.(type) {
+		case TList:
+			elemType = st.Element
+		case TVar:
+			// Constrain an unknown subject to be a list of a fresh element type.
+			fresh := TVar{ID: FreshVar()}
+			s.unifyTypes(subj, TList{Element: fresh})
+			elemType = s.applyTypeSubst(fresh)
+		}
+		for _, elem := range p.Elements {
+			s.bindPatternVars(elem, env, aff, elemType)
+		}
+		if p.HasRest && p.Rest != "" && p.Rest != "_" {
+			var restType Type = TAny
+			if elemType != nil {
+				restType = TList{Element: elemType}
+			}
+			env.set(p.Rest, restType)
+			if aff != nil && isAffineType(restType, aff.affineTypes) {
+				aff.registerAffine(p.Rest, p.Loc)
+			}
 		}
 	case ast.PatVariant:
 		// Instantiate generic constructors fresh per pattern — the

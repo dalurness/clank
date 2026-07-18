@@ -70,12 +70,26 @@ type PatWildcard struct {
 	Loc token.Loc
 }
 
+// PatList matches lists: [], [x, y], [x, ..rest], [..init, last].
+// Elements holds the fixed element patterns in order, excluding the rest
+// marker. When HasRest is true, RestIndex is the number of fixed elements
+// before the rest (so elements at RestIndex.. match from the end of the
+// list), and Rest is the rest binder ("" or "_" for anonymous `..`).
+type PatList struct {
+	Elements  []Pattern
+	HasRest   bool
+	RestIndex int
+	Rest      string
+	Loc       token.Loc
+}
+
 func (p PatVar) patternNode()      {}
 func (p PatLiteral) patternNode()  {}
 func (p PatVariant) patternNode()  {}
 func (p PatTuple) patternNode()    {}
 func (p PatRecord) patternNode()   {}
 func (p PatWildcard) patternNode() {}
+func (p PatList) patternNode()     {}
 
 func (p PatVar) PatLoc() token.Loc      { return p.Loc }
 func (p PatLiteral) PatLoc() token.Loc  { return p.Loc }
@@ -83,6 +97,7 @@ func (p PatVariant) PatLoc() token.Loc  { return p.Loc }
 func (p PatTuple) PatLoc() token.Loc    { return p.Loc }
 func (p PatRecord) PatLoc() token.Loc   { return p.Loc }
 func (p PatWildcard) PatLoc() token.Loc { return p.Loc }
+func (p PatList) PatLoc() token.Loc     { return p.Loc }
 
 // ── Effect references ──
 

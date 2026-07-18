@@ -177,8 +177,30 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 
 Notes: `len` is list length — use `str.len` for strings. `range(a, b)` and
 `iter.range(a, b)` are both inclusive of `b`. Match patterns cover
-literals, variables, tuples, records, variants, and `_` — there are no
-list patterns; destructure lists with `head`/`tail`/`col.nth` or iterators.
+literals, variables, tuples, records, variants, lists, and `_`.
+
+List patterns match on structure and length:
+
+```clank
+sum : (xs: [Int]) -> <> Int =
+  match xs {
+    [] => 0                      # empty list
+    [x, ..rest] => x + sum(rest) # head + remainder (rest is a [Int])
+  }
+
+match xs {
+  [x] => ...                # exactly one element
+  [a, b, ..rest] => ...     # at least two; rest may be []
+  [.., last] => ...         # last element, any non-empty list
+  [first, ..mid, last] => . # both ends; mid binds the middle
+  [" ", ..rest] => ...      # nested patterns work: literals, tuples, variants
+}
+```
+
+At most one `..` per pattern; `..` alone discards the remainder, `..name`
+binds it as a list. Elements after the `..` match from the end of the list.
+A match on lists is exhaustive when a `[..rest]`-style arm (or `_`) covers
+all lengths not handled by fixed-length arms; otherwise you get W400.
 | Tuples | `fst`, `snd`, `tuple.get` |
 | Concat | `concat` (`++` operator — works on strings and lists) |
 | Effects | `raise` |

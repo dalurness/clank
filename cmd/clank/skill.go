@@ -76,7 +76,8 @@ Gotchas:
 - ` + "`len`" + ` is for lists; string length is ` + "`str.len`" + `. ` + "`str.rep`" + ` is replace,
   not repeat (repeat: ` + "`join(col.rep(s, n), \"\")`" + `)
 - ` + "`range(a, b)`" + ` and ` + "`iter.range(a, b)`" + ` include ` + "`b`" + `
-- No list patterns in ` + "`match`" + ` — destructure with ` + "`head`" + `/` + "`tail`" + `/` + "`col.nth`" + `
+- List patterns: ` + "`match xs { [] => ... [x, ..rest] => ... }`" + `; also
+  ` + "`[a, b]`" + ` (exact), ` + "`[.., last]`" + `, ` + "`[first, ..mid, last]`" + `; one ` + "`..`" + ` max
 - Effect operations take exactly one parameter (use a tuple for more)
 - Sort with a comparator: ` + "`col.sortby(xs, fn(a, b) => ...)`" + ` returning Int
 

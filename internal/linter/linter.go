@@ -253,6 +253,10 @@ func collectPatternRefs(pat ast.Pattern, refs map[string]bool) {
 		for _, el := range p.Elements {
 			collectPatternRefs(el, refs)
 		}
+	case ast.PatList:
+		for _, el := range p.Elements {
+			collectPatternRefs(el, refs)
+		}
 	}
 }
 
@@ -398,6 +402,10 @@ func checkUnusedVarsInPattern(pat ast.Pattern, body ast.Expr, diags *[]LintDiagn
 				walkPat(a)
 			}
 		case ast.PatTuple:
+			for _, el := range pp.Elements {
+				walkPat(el)
+			}
+		case ast.PatList:
 			for _, el := range pp.Elements {
 				walkPat(el)
 			}
@@ -614,6 +622,13 @@ func addPatternBindings(pat ast.Pattern, scope map[string]bool) {
 	case ast.PatTuple:
 		for _, el := range p.Elements {
 			addPatternBindings(el, scope)
+		}
+	case ast.PatList:
+		for _, el := range p.Elements {
+			addPatternBindings(el, scope)
+		}
+		if p.HasRest && p.Rest != "" && p.Rest != "_" {
+			scope[p.Rest] = true
 		}
 	}
 }

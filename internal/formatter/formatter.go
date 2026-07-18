@@ -890,6 +890,8 @@ func formatPatternInline(pat ast.Pattern) string {
 			parts = append(parts, formatPatternInline(el))
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
+	case ast.PatList:
+		return formatPatList(p, formatPatternInline)
 	case ast.PatVariant:
 		if len(p.Args) == 0 {
 			return p.Name
@@ -940,6 +942,8 @@ func formatPattern(pat ast.Pattern) string {
 			parts = append(parts, formatPattern(el))
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
+	case ast.PatList:
+		return formatPatList(p, formatPattern)
 	case ast.PatRecord:
 		var fields []string
 		for _, f := range p.Fields {
@@ -956,6 +960,20 @@ func formatPattern(pat ast.Pattern) string {
 		return "{" + strings.Join(fields, ", ") + rest + "}"
 	}
 	return ""
+}
+
+func formatPatList(p ast.PatList, fmtPat func(ast.Pattern) string) string {
+	var parts []string
+	for i, el := range p.Elements {
+		if p.HasRest && i == p.RestIndex {
+			parts = append(parts, ".."+p.Rest)
+		}
+		parts = append(parts, fmtPat(el))
+	}
+	if p.HasRest && p.RestIndex == len(p.Elements) {
+		parts = append(parts, ".."+p.Rest)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func formatPatLiteral(lit ast.Literal) string {

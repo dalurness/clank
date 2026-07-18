@@ -1252,6 +1252,40 @@ func (p *parser) parsePattern() ast.Pattern {
 		return first
 	}
 
+	// List pattern: [], [x, y], [x, ..rest], [..init, last]
+	if t.Tag == token.Delim && t.Value == "[" {
+		p.advance()
+		var elements []ast.Pattern
+		hasRest := false
+		restIndex := 0
+		rest := ""
+		if !p.at(token.Delim, "]") {
+			for {
+				if p.at(token.Op, "..") {
+					if hasRest {
+						p.fail("only one '..' is allowed in a list pattern")
+					}
+					p.advance()
+					hasRest = true
+					restIndex = len(elements)
+					next := p.peek()
+					if next.Tag == token.Ident {
+						p.advance()
+						rest = next.Value
+					}
+				} else {
+					elements = append(elements, p.parsePattern())
+				}
+				if !p.at(token.Delim, ",") {
+					break
+				}
+				p.advance()
+			}
+		}
+		p.expect(token.Delim, "]")
+		return ast.PatList{Elements: elements, HasRest: hasRest, RestIndex: restIndex, Rest: rest, Loc: t.Loc}
+	}
+
 	// Record pattern
 	if t.Tag == token.Delim && t.Value == "{" {
 		p.advance()

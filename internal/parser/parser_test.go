@@ -751,3 +751,67 @@ main : () -> <io> () =
 		t.Fatalf("expected call body, got %T", def.Body)
 	}
 }
+
+// ── List patterns ──
+
+func TestParseListPatterns(t *testing.T) {
+	prog := mustParse(t, `
+f : (xs: [Int]) -> <> Int =
+  match xs {
+    [] => 0
+    [a] => a
+    [a, b, ..rest] => a
+    [..init, last] => last
+    [x, .., y] => x
+  }
+`)
+	def := prog.TopLevels[0].(ast.TopDefinition)
+	m, ok := def.Body.(ast.ExprMatch)
+	if !ok {
+		t.Fatalf("expected match body, got %T", def.Body)
+	}
+	if len(m.Arms) != 5 {
+		t.Fatalf("expected 5 arms, got %d", len(m.Arms))
+	}
+
+	empty := m.Arms[0].Pattern.(ast.PatList)
+	if len(empty.Elements) != 0 || empty.HasRest {
+		t.Fatalf("arm 0: expected empty list pattern, got %+v", empty)
+	}
+
+	one := m.Arms[1].Pattern.(ast.PatList)
+	if len(one.Elements) != 1 || one.HasRest {
+		t.Fatalf("arm 1: expected exact one-element pattern, got %+v", one)
+	}
+
+	headRest := m.Arms[2].Pattern.(ast.PatList)
+	if len(headRest.Elements) != 2 || !headRest.HasRest || headRest.RestIndex != 2 || headRest.Rest != "rest" {
+		t.Fatalf("arm 2: expected [a, b, ..rest], got %+v", headRest)
+	}
+
+	initLast := m.Arms[3].Pattern.(ast.PatList)
+	if len(initLast.Elements) != 1 || !initLast.HasRest || initLast.RestIndex != 0 || initLast.Rest != "init" {
+		t.Fatalf("arm 3: expected [..init, last], got %+v", initLast)
+	}
+
+	midAnon := m.Arms[4].Pattern.(ast.PatList)
+	if len(midAnon.Elements) != 2 || !midAnon.HasRest || midAnon.RestIndex != 1 || midAnon.Rest != "" {
+		t.Fatalf("arm 4: expected [x, .., y] with anonymous rest, got %+v", midAnon)
+	}
+}
+
+func TestParseListPatternDoubleRestFails(t *testing.T) {
+	tokens, lexErr := lexer.Lex(`
+f : (xs: [Int]) -> <> Int =
+  match xs {
+    [..a, ..b] => 0
+  }
+`)
+	if lexErr != nil {
+		t.Fatalf("lex error: %s", lexErr.Message)
+	}
+	_, parseErr := parser.Parse(tokens)
+	if parseErr == nil {
+		t.Fatal("expected parse error for two rests in one list pattern")
+	}
+}
