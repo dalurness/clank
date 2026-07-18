@@ -1,6 +1,7 @@
 package parser_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dalurness/clank/internal/ast"
@@ -813,5 +814,64 @@ f : (xs: [Int]) -> <> Int =
 	_, parseErr := parser.Parse(tokens)
 	if parseErr == nil {
 		t.Fatal("expected parse error for two rests in one list pattern")
+	}
+}
+
+// ── Signature error messages & inline match arms ──
+
+func parseErrOf(t *testing.T, source string) string {
+	t.Helper()
+	tokens, lexErr := lexer.Lex(source)
+	if lexErr != nil {
+		t.Fatalf("lex error: %s", lexErr.Message)
+	}
+	_, parseErr := parser.Parse(tokens)
+	if parseErr == nil {
+		t.Fatal("expected a parse error")
+	}
+	return parseErr.Message
+}
+
+func TestSigErrorBareTypeNoParens(t *testing.T) {
+	msg := parseErrOf(t, "drain : Any -> <io> [Int] =\n  []\n")
+	if !strings.Contains(msg, "named parameter list") {
+		t.Fatalf("expected named-parameter-list hint, got: %s", msg)
+	}
+}
+
+func TestSigErrorBareTypeInParens(t *testing.T) {
+	msg := parseErrOf(t, "drain : (Any) -> <io> [Int] =\n  []\n")
+	if !strings.Contains(msg, "'(x: Any)'") {
+		t.Fatalf("expected '(x: Any)' hint, got: %s", msg)
+	}
+}
+
+func TestSigErrorUnnamedParam(t *testing.T) {
+	msg := parseErrOf(t, "drain : (rx) -> <io> [Int] =\n  []\n")
+	if !strings.Contains(msg, "'(rx: T)'") {
+		t.Fatalf("expected '(rx: T)' hint, got: %s", msg)
+	}
+}
+
+func TestSigErrorMissingEffectAnn(t *testing.T) {
+	msg := parseErrOf(t, "f : (x: Int) -> Int =\n  x\n")
+	if !strings.Contains(msg, "'-> <> T'") {
+		t.Fatalf("expected pure-effect hint, got: %s", msg)
+	}
+}
+
+func TestMatchInlineCommaArms(t *testing.T) {
+	prog := mustParse(t, "f : (o: Any) -> <> Str =\n  match o { Some(true) => \"y\", Some(false) => \"n\", None => \"-\" }\n")
+	def := prog.TopLevels[0].(ast.TopDefinition)
+	m := def.Body.(ast.ExprMatch)
+	if len(m.Arms) != 3 {
+		t.Fatalf("expected 3 arms, got %d", len(m.Arms))
+	}
+	somePat := m.Arms[0].Pattern.(ast.PatVariant)
+	if somePat.Name != "Some" || len(somePat.Args) != 1 {
+		t.Fatalf("arm 0: expected Some(_) variant, got %+v", somePat)
+	}
+	if _, ok := somePat.Args[0].(ast.PatLiteral); !ok {
+		t.Fatalf("arm 0: expected literal sub-pattern, got %T", somePat.Args[0])
 	}
 }

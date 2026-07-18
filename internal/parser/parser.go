@@ -443,12 +443,23 @@ func (p *parser) parseEffectDecl(pub bool) ast.TopLevel {
 // ── Type signature ──
 
 func (p *parser) parseTypeSig() ast.TypeSig {
-	p.expect(token.Delim, "(")
+	if !p.at(token.Delim, "(") {
+		p.fail("top-level signatures take a named parameter list: 'name : (x: T) -> <effects> R' (use '()' for no parameters)")
+	}
+	p.advance()
 	var params []ast.TypeSigParam
 	if !p.at(token.Delim, ")") {
 		for {
 			name := p.expect(token.Ident).Value
-			p.expect(token.Delim, ":")
+			if !p.at(token.Delim, ":") {
+				hint := fmt.Sprintf("'(%s: T)'", name)
+				if name[0] >= 'A' && name[0] <= 'Z' {
+					// They wrote a bare type; suggest naming the parameter.
+					hint = fmt.Sprintf("'(x: %s)'", name)
+				}
+				p.fail("signature parameters must be named: " + hint)
+			}
+			p.advance()
 			ty := p.parseTypeExpr()
 			params = append(params, ast.TypeSigParam{Name: name, Type: ty})
 			if !p.at(token.Delim, ",") {
@@ -459,6 +470,9 @@ func (p *parser) parseTypeSig() ast.TypeSig {
 	}
 	p.expect(token.Delim, ")")
 	p.expect(token.Op, "->")
+	if !p.at(token.Op, "<") {
+		p.fail("missing effect annotation after '->': write '-> <> T' for a pure function, '-> <io> T' for effects")
+	}
 	ann := p.parseEffectAnn()
 	returnType := p.parseTypeExpr()
 	return ast.TypeSig{Params: params, Effects: ann.effects, Subtracted: ann.subtracted, ReturnType: returnType}
