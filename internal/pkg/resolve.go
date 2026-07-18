@@ -110,6 +110,7 @@ type ResolvedDep struct {
 	Manifest *Manifest
 	Path     string   // absolute path to the dependency root
 	Files    []string // absolute paths to every .clk file under src/
+	Origin   string   // how it was resolved: "path:../x" or "github.com/owner/repo"
 }
 
 // PackageResolution is the result of resolving all packages for a manifest.
@@ -222,6 +223,7 @@ func resolveLocalDep(dep Dependency, baseDir string, resolved *[]ResolvedDep, vi
 		Manifest: depManifest,
 		Path:     depPath,
 		Files:    DiscoverPackageFiles(depPath),
+		Origin:   "path:" + filepath.ToSlash(dep.Path),
 	})
 
 	// Recursively resolve transitive local deps
@@ -291,11 +293,18 @@ func resolveCachedDep(dep Dependency, resolved *[]ResolvedDep, resolvedNames map
 	if err != nil {
 		return err
 	}
+	origin := "cache"
+	if dep.GitHub != "" {
+		origin = "github.com/" + dep.GitHub
+	} else if depManifest.Repository != "" {
+		origin = depManifest.Repository
+	}
 	*resolved = append(*resolved, ResolvedDep{
 		Name:     depManifest.Name,
 		Manifest: depManifest,
 		Path:     depPath,
 		Files:    DiscoverPackageFiles(depPath),
+		Origin:   origin,
 	})
 	resolvedNames[depManifest.Name] = true
 	return nil

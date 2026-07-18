@@ -1908,16 +1908,14 @@ func cmdPkgList(jsonOut bool, rawArgs []string) int {
 	var rows []row
 	for _, p := range resolution.Packages {
 		resolvedNames[p.Name] = true
-		src := "path"
+		src := p.Origin
+		if src == "" {
+			src = "path"
+		}
 		constraint := ""
 		d, isDirect := direct[p.Name]
 		if isDirect {
 			constraint = d.Constraint
-			if d.GitHub != "" {
-				src = "github.com/" + d.GitHub
-			}
-		} else if p.Manifest.Repository != "" {
-			src = p.Manifest.Repository
 		}
 		rows = append(rows, row{
 			Name:       p.Name,
