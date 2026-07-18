@@ -43,7 +43,9 @@ one pass.
 4. ` + "`clank test`" + ` — type-checks, then runs inline ` + "`test \"name\" = expr`" + ` blocks
 5. ` + "`clank fmt file.clk`" + ` — canonical formatting (in place)
 
-Quick sanity checks: ` + "`clank eval '1 + 2'`" + `.
+Quick sanity checks: ` + "`clank eval '1 + 2'`" + `. If the code has quotes
+in it, pipe it instead — shell quoting (especially PowerShell) mangles
+inline strings: ` + "`echo 'str.up(\"hi\")' | clank eval --stdin`" + `.
 
 ## Syntax essentials
 

@@ -532,9 +532,17 @@ Conflict resolution: if two packages require incompatible versions of the same d
 ```bash
 clank eval "2 + 3"
 clank eval "map([1,2,3], fn(x) => x * 2)"
+echo 'str.up("hi")' | clank eval --stdin         # code on stdin — immune to shell quoting
+clank eval -f snippet.clk                        # eval a file, print the result
 clank eval --type "map"                          # print type of symbol
 clank eval --file src/app/main.clk "mean([1,2,3])"  # eval with file's definitions in scope
 ```
+
+`clank eval` is the single inline-execution command: a bare expression is
+wrapped in `main` automatically, and a full program (top-level
+definitions) runs as-is. `run` and `check` take files only. Prefer
+`--stdin` for any snippet containing quotes — PowerShell in particular
+rewrites inner double quotes before the process sees them.
 
 Output:
 

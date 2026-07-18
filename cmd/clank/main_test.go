@@ -19,6 +19,11 @@ func TestWrapExprSource(t *testing.T) {
 		{"blank lines then expr", "\n\n  1 + 2  \n", true},
 		{"empty string", "", true},
 		{"only comments", "# just a comment", true},
+		{"colon inside string literal", `print("a: b")`, true},
+		{"record literal", `{name: "x", n: 3}`, true},
+		{"nested call with string colon", `print(str.up("quotes: \"y\""))`, true},
+		{"full program", "main : () -> <io> () = print(\"hi\")", false},
+		{"kebab definition", "my-fn : (x: Int) -> <> Int = x", false},
 	}
 
 	for _, tt := range tests {

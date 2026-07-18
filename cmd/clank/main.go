@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -102,10 +103,19 @@ Flags:
 `,
 
 	"eval": `clank eval <expression>
+clank eval --stdin
 clank eval -f <file>
 
-Evaluate a single Clank expression and print its result. Useful for
-quick sanity checks and agent-facing math/string ops.
+Run inline Clank code and print the result. A bare expression is
+wrapped in main automatically; a full program (top-level definitions)
+runs as-is. This is the one inline-execution command — run and check
+take files only.
+
+--stdin reads the code from stdin, which sidesteps shell quoting
+entirely (recommended for anything with quotes, e.g. under
+PowerShell):
+
+  echo 'str.up("hi")' | clank eval --stdin
 `,
 
 	"fmt": `clank fmt <file>
@@ -292,13 +302,13 @@ func resolveHelpTopic(positional []string) string {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [--pretty] [command] [flags] <file.clk>\n")
-	fmt.Fprintf(os.Stderr, "       clank run -c '<code>'          Run inline code\n")
-	fmt.Fprintf(os.Stderr, "       clank eval '<expr>'            Evaluate an expression\n")
+	fmt.Fprintf(os.Stderr, "       clank eval '<expr>'            Evaluate inline code\n")
+	fmt.Fprintf(os.Stderr, "       clank eval --stdin             Evaluate code piped on stdin\n")
 	fmt.Fprintf(os.Stderr, "       clank eval -f <file.clk>       Evaluate a file\n\n")
 	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  run         Run a program (default). Use -c for inline code\n")
-	fmt.Fprintf(os.Stderr, "  check       Type-check a program. Use -c for inline code\n")
-	fmt.Fprintf(os.Stderr, "  eval        Evaluate an expression and print the result\n")
+	fmt.Fprintf(os.Stderr, "  run         Run a program file (default)\n")
+	fmt.Fprintf(os.Stderr, "  check       Type-check a program file\n")
+	fmt.Fprintf(os.Stderr, "  eval        Run inline code (expression or full program), print the result\n")
 	fmt.Fprintf(os.Stderr, "  fmt         Format source code\n")
 	fmt.Fprintf(os.Stderr, "  lint        Lint source code\n")
 	fmt.Fprintf(os.Stderr, "  doc, docs   List/search/show docs for a target (project, /path, github URL, dep)\n")
@@ -361,15 +371,6 @@ func run() int {
 			checkMode = true
 		case "--stdin":
 			stdinMode = true
-		case "-c":
-			if i+1 < len(rawArgs) {
-				inlineCode = rawArgs[i+1]
-				i++
-			} else {
-				fmt.Fprintf(os.Stderr, "error: -c requires a code argument\n")
-				return 1
-			}
-			continue
 		case "-f":
 			if i+1 < len(rawArgs) {
 				evalFile = rawArgs[i+1]
@@ -396,6 +397,10 @@ func run() int {
 			// topic from the collected positional args below.
 			helpRequested = true
 		default:
+			if rawArgs[i] == "-c" {
+				fmt.Fprintf(os.Stderr, "unknown flag: -c — inline code runs via 'clank eval '<code>'' (or 'clank eval --stdin')\n")
+				return 1
+			}
 			if strings.HasPrefix(rawArgs[i], "-") {
 				fmt.Fprintf(os.Stderr, "unknown flag: %s\n", rawArgs[i])
 				return 1
@@ -413,7 +418,7 @@ func run() int {
 		return 0
 	}
 
-	if len(positional) == 0 && inlineCode == "" && evalFile == "" {
+	if len(positional) == 0 && evalFile == "" {
 		usage()
 		return 1
 	}
@@ -440,10 +445,11 @@ func run() int {
 
 		case "eval":
 			command = "eval"
-			// eval: remaining positional args are the expression (unless -f is used)
-			if evalFile == "" && inlineCode == "" {
+			// eval: remaining positional args are the expression, unless
+			// -f <file> or --stdin provides the source instead.
+			if evalFile == "" && !stdinMode {
 				if len(positional) < 2 {
-					fmt.Fprintf(os.Stderr, "error: eval requires an expression or -f <file>\n")
+					fmt.Fprintf(os.Stderr, "error: eval requires an expression, -f <file>, or --stdin\n")
 					return 1
 				}
 				inlineCode = strings.Join(positional[1:], " ")
@@ -451,16 +457,13 @@ func run() int {
 
 		case "run", "check":
 			command = positional[0]
-			if inlineCode != "" {
-				// -c flag provides the source
-			} else if len(positional) < 2 {
-				fmt.Fprintf(os.Stderr, "error: %s requires a file argument or -c '<code>'\n", command)
+			if len(positional) < 2 {
+				fmt.Fprintf(os.Stderr, "error: %s requires a file argument (use 'clank eval' for inline code)\n", command)
 				return 1
-			} else {
-				file = positional[1]
-				// Positionals after the file are the program's args.
-				programArgs = append(positional[2:], programArgs...)
 			}
+			file = positional[1]
+			// Positionals after the file are the program's args.
+			programArgs = append(positional[2:], programArgs...)
 
 		case "fmt", "lint", "pretty", "terse":
 			command = positional[0]
@@ -478,9 +481,6 @@ func run() int {
 			file = positional[0]
 			programArgs = append(positional[1:], programArgs...)
 		}
-	} else if inlineCode != "" {
-		// clank -e '<code>' — defaults to run
-		command = "run"
 	} else if evalFile != "" {
 		// clank -f <file> — defaults to eval
 		command = "eval"
@@ -502,6 +502,10 @@ func run() int {
 		file = evalFile
 	} else if stdinMode && file == "" {
 		source, err = io.ReadAll(os.Stdin)
+		// PowerShell prepends a UTF-8 BOM when piping; strip it here since
+		// eval may embed the source mid-line where the lexer's file-start
+		// BOM handling can't help.
+		source = bytes.TrimPrefix(source, []byte{0xEF, 0xBB, 0xBF})
 	} else {
 		source, err = os.ReadFile(file)
 	}
@@ -795,6 +799,31 @@ var topLevelKeywords = map[string]bool{
 	"affine": true, "opaque": true, "alias": true,
 }
 
+// defLike reports whether a line looks like a top-level definition: a bare
+// identifier immediately followed by ':' ("main : () -> <io> ()"). Checking
+// only this shape keeps expressions containing colons — string literals
+// ("a: b"), record literals ({a: 1}) — out of the definition path.
+func defLike(line string) bool {
+	i := 0
+	for i < len(line) {
+		c := line[i]
+		if c == '_' || c == '-' || c == '.' ||
+			(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') {
+			i++
+			continue
+		}
+		break
+	}
+	if i == 0 {
+		return false
+	}
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		i++
+	}
+	return i < len(line) && line[i] == ':'
+}
+
 func wrapExprSource(source string) string {
 	trimmed := strings.TrimSpace(source)
 	for _, line := range strings.Split(trimmed, "\n") {
@@ -811,10 +840,7 @@ func wrapExprSource(source string) string {
 		if topLevelKeywords[firstWord] {
 			return source
 		}
-		// Check if first non-comment line looks like a definition (has ':' before '=')
-		colonIdx := strings.Index(line, ":")
-		eqIdx := strings.Index(line, "=")
-		if colonIdx > 0 && (eqIdx < 0 || colonIdx < eqIdx) {
+		if defLike(line) {
 			return source
 		}
 		break
