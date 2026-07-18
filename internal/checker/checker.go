@@ -1376,6 +1376,14 @@ func resolveTypeWithVars(te ast.TypeExpr, varMapping map[string]Type, s *checker
 // ── Display types ──
 
 func showType(t Type) string {
+	return showTypeWith(t, nil)
+}
+
+// showTypeWith renders a type; when varNames is non-nil, unresolved
+// typevars are renamed to a, b, c, ... in order of first appearance
+// (shared across all types shown with the same map) instead of the
+// internal t<id> form.
+func showTypeWith(t Type, varNames map[int]string) string {
 	switch t := t.(type) {
 	case TPrimitive:
 		if t.Name == "unit" {
@@ -1398,13 +1406,13 @@ func showType(t Type) string {
 			}
 			effs = " {" + strings.Join(names, ", ") + "}"
 		}
-		return fmt.Sprintf("(%s ->%s %s)", showType(t.Param), effs, showType(t.Result))
+		return fmt.Sprintf("(%s ->%s %s)", showTypeWith(t.Param, varNames), effs, showTypeWith(t.Result, varNames))
 	case TList:
-		return fmt.Sprintf("[%s]", showType(t.Element))
+		return fmt.Sprintf("[%s]", showTypeWith(t.Element, varNames))
 	case TTuple:
 		parts := make([]string, len(t.Elements))
 		for i, e := range t.Elements {
-			parts[i] = showType(e)
+			parts[i] = showTypeWith(e, varNames)
 		}
 		return fmt.Sprintf("(%s)", strings.Join(parts, ", "))
 	case TRecord:
@@ -1414,7 +1422,7 @@ func showType(t Type) string {
 			for _, tag := range f.Tags {
 				tagPrefix += "@" + tag + " "
 			}
-			parts[i] = fmt.Sprintf("%s%s: %s", tagPrefix, f.Name, showType(f.Type))
+			parts[i] = fmt.Sprintf("%s%s: %s", tagPrefix, f.Name, showTypeWith(f.Type, varNames))
 		}
 		fieldStr := strings.Join(parts, ", ")
 		if t.RowVar >= 0 {
@@ -1425,7 +1433,7 @@ func showType(t Type) string {
 		}
 		return fmt.Sprintf("{%s}", fieldStr)
 	case TBorrow:
-		return "&" + showType(t.Inner)
+		return "&" + showTypeWith(t.Inner, varNames)
 	case TVariant:
 		names := make([]string, len(t.Variants))
 		for i, v := range t.Variants {
@@ -1433,18 +1441,35 @@ func showType(t Type) string {
 		}
 		return strings.Join(names, " | ")
 	case TVar:
-		return fmt.Sprintf("t%d", t.ID)
+		if varNames == nil {
+			return fmt.Sprintf("t%d", t.ID)
+		}
+		name, ok := varNames[t.ID]
+		if !ok {
+			name = string(rune('a' + len(varNames)%26))
+			varNames[t.ID] = name
+		}
+		return name
 	case TGeneric:
 		if len(t.Args) > 0 {
 			argStrs := make([]string, len(t.Args))
 			for i, a := range t.Args {
-				argStrs[i] = showType(a)
+				argStrs[i] = showTypeWith(a, varNames)
 			}
 			return fmt.Sprintf("%s<%s>", t.Name, strings.Join(argStrs, ", "))
 		}
 		return t.Name
 	}
 	return "?"
+}
+
+// showT2 renders a pair of types for a mismatch message: the current
+// substitution is applied first (so a var already unified with Int prints
+// as Int), and any typevars still unresolved are renamed to a, b, c, ...
+// consistently across the pair.
+func (s *checkerState) showT2(want, got Type) (string, string) {
+	names := map[int]string{}
+	return showTypeWith(s.applyTypeSubst(want), names), showTypeWith(s.applyTypeSubst(got), names)
 }
 
 // ── Type equality / compatibility ──
@@ -2484,7 +2509,10 @@ func (s *checkerState) inferExpr(
 		if !typeEqual(thenType, elseType) && !numCompatible(thenType, elseType) {
 			*errors = append(*errors, TypeError{
 				Code:     "E302",
-				Message:  fmt.Sprintf("if branches have different types: %s vs %s", showType(thenType), showType(elseType)),
+				Message: func() string {
+					a, b := s.showT2(thenType, elseType)
+					return fmt.Sprintf("if branches have different types: %s vs %s", a, b)
+				}(),
 				Location: e.Loc,
 			})
 		}
@@ -2579,9 +2607,10 @@ func (s *checkerState) inferExpr(
 					}
 				}
 				if !s.unifyTypes(argType, paramTypes[i]) && !numCompatible(argType, paramTypes[i]) {
+					want, got := s.showT2(paramTypes[i], argType)
 					*errors = append(*errors, TypeError{
 						Code:     "E304",
-						Message:  fmt.Sprintf("argument %d: expected %s, got %s", i+1, showType(paramTypes[i]), showType(argType)),
+						Message:  fmt.Sprintf("argument %d: expected %s, got %s", i+1, want, got),
 						Location: e.Args[i].ExprLoc(),
 					})
 				}
@@ -2756,7 +2785,10 @@ func (s *checkerState) inferExpr(
 			} else if !typeEqual(resultType, armType) && !numCompatible(resultType, armType) {
 				*errors = append(*errors, TypeError{
 					Code:     "E305",
-					Message:  fmt.Sprintf("match arms have inconsistent types: %s vs %s", showType(resultType), showType(armType)),
+					Message: func() string {
+						a, b := s.showT2(resultType, armType)
+						return fmt.Sprintf("match arms have inconsistent types: %s vs %s", a, b)
+					}(),
 					Location: e.Loc,
 				})
 			}
@@ -2782,7 +2814,10 @@ func (s *checkerState) inferExpr(
 			if !typeEqual(elemType, et) && !numCompatible(elemType, et) {
 				*errors = append(*errors, TypeError{
 					Code:     "E306",
-					Message:  fmt.Sprintf("list element %d has type %s, expected %s", i+1, showType(et), showType(elemType)),
+					Message: func() string {
+						got, want := s.showT2(et, elemType)
+						return fmt.Sprintf("list element %d has type %s, expected %s", i+1, got, want)
+					}(),
 					Location: e.Elements[i].ExprLoc(),
 				})
 			}
@@ -3003,9 +3038,10 @@ func (s *checkerState) inferExpr(
 				}
 			}
 			if !typeEqual(leftType, fn.Param) && !numCompatible(leftType, fn.Param) {
+				want, got := s.showT2(fn.Param, leftType)
 				*errors = append(*errors, TypeError{
 					Code:     "E304",
-					Message:  fmt.Sprintf("pipeline argument: expected %s, got %s", showType(fn.Param), showType(leftType)),
+					Message:  fmt.Sprintf("pipeline argument: expected %s, got %s", want, got),
 					Location: e.Loc,
 				})
 			}
@@ -3067,7 +3103,10 @@ func (s *checkerState) inferExpr(
 			if !typeEqual(bodyType, initType) && !numCompatible(bodyType, initType) {
 				*errors = append(*errors, TypeError{
 					Code:     "E302",
-					Message:  fmt.Sprintf("for-fold body type %s doesn't match accumulator type %s", showType(bodyType), showType(initType)),
+					Message: func() string {
+						a, b := s.showT2(bodyType, initType)
+						return fmt.Sprintf("for-fold body type %s doesn't match accumulator type %s", a, b)
+					}(),
 					Location: e.Loc,
 				})
 			}
@@ -4416,7 +4455,10 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 			if !typeEqual(bodyType, expectedRet) && !numCompatible(bodyType, expectedRet) {
 				errors = append(errors, TypeError{
 					Code:     "E307",
-					Message:  fmt.Sprintf("function '%s' returns %s, expected %s", def.Name, showType(bodyType), showType(expectedRet)),
+					Message: func() string {
+						got, want := s.showT2(bodyType, expectedRet)
+						return fmt.Sprintf("function '%s' returns %s, expected %s", def.Name, got, want)
+					}(),
 					Location: def.Loc,
 				})
 			}

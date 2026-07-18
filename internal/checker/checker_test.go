@@ -999,3 +999,38 @@ func TestListMatchExhaustiveness(t *testing.T) {
 		}
 	}
 }
+
+// ── Error-message typevar rendering (showT2) ──
+
+func TestShowT2AppliesSubstitution(t *testing.T) {
+	// A var already unified with Int must print as Int, not t<id>.
+	s := &checkerState{
+		typeSubst: make(map[int]Type),
+		rowSubst:  make(map[int]*rowSubstEntry),
+	}
+	tv := TVar{ID: 1066}
+	if !s.unifyTypes(tv, TInt) {
+		t.Fatal("unify failed")
+	}
+	want, got := s.showT2(tv, TStr)
+	if want != "Int" || got != "Str" {
+		t.Errorf("expected (Int, Str), got (%s, %s)", want, got)
+	}
+}
+
+func TestShowT2RenamesUnresolvedVars(t *testing.T) {
+	// Unresolved vars are renamed a, b, ... consistently across the pair.
+	s := &checkerState{
+		typeSubst: make(map[int]Type),
+		rowSubst:  make(map[int]*rowSubstEntry),
+	}
+	fn := TFn{Param: TVar{ID: 501}, Result: TVar{ID: 502}}
+	lst := TList{Element: TVar{ID: 501}}
+	want, got := s.showT2(fn, lst)
+	if want != "(a -> b)" {
+		t.Errorf("expected (a -> b), got %s", want)
+	}
+	if got != "[a]" {
+		t.Errorf("expected [a] (sharing 'a' with the fn param), got %s", got)
+	}
+}
