@@ -105,6 +105,9 @@ func PkgInstall(opts PkgInstallOptions) PkgInstallResult {
 		if err != nil {
 			return PkgInstallResult{Ok: false, Error: fmt.Sprintf("Reading manifest of %s: %s", dep.Name, err)}
 		}
+		if msg := fetchedPathDepError(dep.Name, depManifest); msg != "" {
+			return PkgInstallResult{Ok: false, Error: msg}
+		}
 		installed = append(installed, InstalledPkg{
 			Name:    dep.Name,
 			Version: depManifest.Version,
@@ -119,6 +122,25 @@ func PkgInstall(opts PkgInstallOptions) PkgInstallResult {
 	}
 
 	return PkgInstallResult{Ok: true, Installed: installed}
+}
+
+// fetchedPathDepError returns a non-empty error message when a fetched
+// package's manifest declares a path dependency. Paths only resolve on
+// the author's machine, so such a package can never work for consumers —
+// fail at install/add time instead of surfacing a confusing "package not
+// found" error later at link time. Dev-deps are exempt: they are not
+// installed transitively.
+func fetchedPathDepError(pkgName string, m *Manifest) string {
+	for _, sub := range sortedDeps(m.Deps) {
+		if sub.Path != "" {
+			return fmt.Sprintf(
+				"%s@%s declares a path dependency %s = { path = %q }, which only resolves on its author's machine.\n"+
+					"The package cannot be used from a fetch; its author should publish '%s' and depend on it with\n"+
+					"  %s = { github = \"<user>/<repo>\", version = \"...\" }",
+				pkgName, m.Version, sub.Name, sub.Path, sub.Name, sub.Name)
+		}
+	}
+	return ""
 }
 
 // ensureCached makes sure a github dependency is present in the global

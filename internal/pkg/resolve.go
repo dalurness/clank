@@ -579,6 +579,9 @@ func PkgAddFromTarget(target string, dev bool, dir string) PkgAddResult {
 	if err != nil {
 		return PkgAddResult{Ok: false, Error: fmt.Sprintf("parsing fetched clank.pkg: %s", err)}
 	}
+	if msg := fetchedPathDepError(fetchedManifest.Name, fetchedManifest); msg != "" {
+		return PkgAddResult{Ok: false, Error: msg}
+	}
 
 	// Cache the fetched package under the authoritative name + version.
 	// Pinned refs are normalized (v1.2.3 → 1.2.3) so cache keys and

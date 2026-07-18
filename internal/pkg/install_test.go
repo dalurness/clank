@@ -307,3 +307,86 @@ func TestExtractTarGzPathTraversal(t *testing.T) {
 		t.Error("path traversal was not blocked")
 	}
 }
+
+func TestPkgInstallFailsOnFetchedPathDep(t *testing.T) {
+	cacheDir := t.TempDir()
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// A cached package whose manifest declares a path dep — it only
+	// resolved on its author's machine, so install must fail fast.
+	cachePath := filepath.Join(cacheDir, "broken-lib@1.0.0")
+	os.MkdirAll(cachePath, 0755)
+	os.WriteFile(filepath.Join(cachePath, "clank.pkg"),
+		[]byte("name = \"broken-lib\"\nversion = \"1.0.0\"\n\n[deps]\nhelper = { path = \"../helper-lib\" }\n"), 0644)
+
+	projDir := t.TempDir()
+	os.WriteFile(filepath.Join(projDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nbroken-lib = { github = \"owner/broken\", version = \"1.0.0\" }\n"), 0644)
+
+	result := PkgInstall(PkgInstallOptions{Dir: projDir})
+	if result.Ok {
+		t.Fatal("expected install to fail on fetched package with a path dep")
+	}
+	for _, want := range []string{"broken-lib@1.0.0", "helper", "../helper-lib", "github"} {
+		if !strings.Contains(result.Error, want) {
+			t.Errorf("error should mention %q, got: %s", want, result.Error)
+		}
+	}
+}
+
+func TestPkgInstallRootPathDepsStillAllowed(t *testing.T) {
+	// Path deps in the ROOT manifest are fine — they resolve relative to
+	// the project. Only fetched packages must not declare them.
+	libDir := t.TempDir()
+	os.WriteFile(filepath.Join(libDir, "clank.pkg"),
+		[]byte("name = \"local-lib\"\nversion = \"0.1.0\"\n"), 0644)
+
+	projDir := t.TempDir()
+	os.WriteFile(filepath.Join(projDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n\n[deps]\nlocal-lib = { path = \""+strings.ReplaceAll(libDir, "\\", "/")+"\" }\n"), 0644)
+
+	result := PkgInstall(PkgInstallOptions{Dir: projDir})
+	if !result.Ok {
+		t.Fatalf("expected ok, got error: %s", result.Error)
+	}
+}
+
+func TestPkgAddFailsOnFetchedPathDep(t *testing.T) {
+	cacheDir := t.TempDir()
+	globalCacheDirOverride = cacheDir
+	defer func() { globalCacheDirOverride = "" }()
+
+	// Serve a fetched package whose manifest carries a path dep. The
+	// fetcher's returned dir is deleted by PkgAddFromTarget, so build a
+	// fresh copy per call.
+	origFetch := fetchGitHubFunc
+	fetchGitHubFunc = func(slug, version string) (string, error) {
+		dir, err := os.MkdirTemp("", "clank-fake-fetch-*")
+		if err != nil {
+			return "", err
+		}
+		os.WriteFile(filepath.Join(dir, "clank.pkg"),
+			[]byte("name = \"broken-lib\"\nversion = \"1.0.0\"\n\n[deps]\nhelper = { path = \"../helper-lib\" }\n"), 0644)
+		return dir, nil
+	}
+	defer func() { fetchGitHubFunc = origFetch }()
+
+	projDir := t.TempDir()
+	os.WriteFile(filepath.Join(projDir, "clank.pkg"),
+		[]byte("name = \"app\"\nversion = \"1.0.0\"\n"), 0644)
+
+	result := PkgAddFromTarget("github.com/owner/broken@1.0.0", false, projDir)
+	if result.Ok {
+		t.Fatal("expected pkg add to fail on fetched package with a path dep")
+	}
+	if !strings.Contains(result.Error, "helper") || !strings.Contains(result.Error, "path") {
+		t.Errorf("error should name the path dep, got: %s", result.Error)
+	}
+
+	// The dep must not have been written to the consumer manifest.
+	data, _ := os.ReadFile(filepath.Join(projDir, "clank.pkg"))
+	if strings.Contains(string(data), "broken-lib") {
+		t.Errorf("failed add still wrote dep to manifest: %s", string(data))
+	}
+}
