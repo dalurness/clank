@@ -32,6 +32,21 @@ func Lex(source string) ([]token.Token, *token.LexError) {
 	return l.lex()
 }
 
+// LexNamed lexes source and stamps every token location (and any lex
+// error) with file, so downstream errors can report which file they came
+// from even after several files are linked into one program.
+func LexNamed(source, file string) ([]token.Token, *token.LexError) {
+	tokens, lexErr := Lex(source)
+	if lexErr != nil {
+		lexErr.Location.File = file
+		return tokens, lexErr
+	}
+	for i := range tokens {
+		tokens[i].Loc.File = file
+	}
+	return tokens, nil
+}
+
 type lexer struct {
 	source      string
 	pos         int

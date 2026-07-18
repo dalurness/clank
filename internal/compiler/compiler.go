@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dalurness/clank/internal/ast"
+	"github.com/dalurness/clank/internal/token"
 )
 
 // builtinOps maps builtin function names to direct opcode sequences.
@@ -124,7 +125,28 @@ var vmBuiltins = map[string]int{
 // ── Code Emitter ──
 
 type codeEmitter struct {
-	code []byte
+	code  []byte
+	lines []LineEntry
+}
+
+// markLoc records that the code emitted from here on came from loc. Runs
+// on the same line collapse into one entry; an entry at the current pc is
+// replaced (the first sub-expression to emit code owns the offset).
+func (e *codeEmitter) markLoc(loc token.Loc) {
+	if loc.Line == 0 {
+		return
+	}
+	if n := len(e.lines); n > 0 {
+		last := e.lines[n-1]
+		if last.Loc.Line == loc.Line && last.Loc.File == loc.File {
+			return
+		}
+		if last.PC == len(e.code) {
+			e.lines[n-1] = LineEntry{PC: last.PC, Loc: loc}
+			return
+		}
+	}
+	e.lines = append(e.lines, LineEntry{PC: len(e.code), Loc: loc})
 }
 
 func (e *codeEmitter) pos() int { return len(e.code) }
@@ -463,6 +485,7 @@ func (c *Compiler) compileTopLevel(tl ast.TopLevel) {
 		c.words = append(c.words, BytecodeWord{
 			Name: t.Name, WordID: wordID, Code: e.code,
 			LocalCount: scope.count(), IsPublic: t.Pub,
+			Lines: e.lines,
 		})
 
 	case ast.TopTypeDecl:
@@ -515,12 +538,16 @@ func (c *Compiler) compileTopLevel(tl ast.TopLevel) {
 			c.words = append(c.words, BytecodeWord{
 				Name: implWordName, WordID: wordID, Code: e.code,
 				LocalCount: scope.count(), IsPublic: false,
+				Lines: e.lines,
 			})
 		}
 	}
 }
 
 func (c *Compiler) compileExpr(expr ast.Expr, e *codeEmitter, scope *localScope, tail bool) {
+	if expr != nil {
+		e.markLoc(expr.ExprLoc())
+	}
 	switch x := expr.(type) {
 	case ast.ExprLiteral:
 		c.compileLiteral(x.Value, e)
@@ -1091,6 +1118,7 @@ func (c *Compiler) flushLambdaBodies() {
 			c.words = append(c.words, BytecodeWord{
 				Name: lam.name, WordID: wordID, Code: e.code,
 				LocalCount: bodyScope.count(), IsPublic: false,
+				Lines: e.lines,
 			})
 		}
 	}

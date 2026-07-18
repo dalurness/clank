@@ -33,6 +33,7 @@ type structuredError struct {
 	Stage   string `json:"stage"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
+	File    string `json:"file,omitempty"`
 	Line    int    `json:"line,omitempty"`
 	Col     int    `json:"col,omitempty"`
 }
@@ -537,12 +538,13 @@ func run() int {
 	}
 
 	// Lex
-	tokens, lexErr := lexer.Lex(string(source))
+	tokens, lexErr := lexer.LexNamed(string(source), filepath.ToSlash(file))
 	if lexErr != nil {
 		return reportError(jsonOut, structuredError{
 			Stage:   "lex",
 			Code:    lexErr.Code,
 			Message: withFloorHint(lexErr.Message, file),
+			File:    lexErr.Location.File,
 			Line:    lexErr.Location.Line,
 			Col:     lexErr.Location.Col,
 		})
@@ -555,6 +557,7 @@ func run() int {
 			Stage:   "parse",
 			Code:    parseErr.Code,
 			Message: withFloorHint(parseErr.Message, file),
+			File:    parseErr.Location.File,
 			Line:    parseErr.Location.Line,
 			Col:     parseErr.Location.Col,
 		})
@@ -610,6 +613,7 @@ func run() int {
 							Stage:   "type",
 							Code:    te.Code,
 							Message: te.Message,
+							File:    te.Location.File,
 							Line:    te.Location.Line,
 							Col:     te.Location.Col,
 						})
@@ -764,6 +768,7 @@ func cmdCheck(program *ast.Program, baseDir string, jsonOut bool) int {
 				Stage:   "type",
 				Code:    te.Code,
 				Message: te.Message,
+				File:    te.Location.File,
 				Line:    te.Location.Line,
 				Col:     te.Location.Col,
 			}
@@ -902,7 +907,9 @@ func reportError(jsonOut bool, se structuredError) int {
 		enc.Encode(se)
 	} else {
 		var parts []string
-		if se.Line > 0 {
+		if se.Line > 0 && se.File != "" {
+			parts = append(parts, fmt.Sprintf("%s:%d:%d", se.File, se.Line, se.Col))
+		} else if se.Line > 0 {
 			parts = append(parts, fmt.Sprintf("%d:%d", se.Line, se.Col))
 		}
 		parts = append(parts, se.Stage)
@@ -918,10 +925,17 @@ func reportError(jsonOut bool, se structuredError) int {
 // reportVMError converts a VM error to structured output.
 func reportVMError(jsonOut bool, err error) int {
 	if trap, ok := err.(*vm.VMTrap); ok {
+		msg := trap.Message
+		if trap.Word != "" && trap.Word != "unknown" {
+			msg = fmt.Sprintf("%s (in %s)", trap.Message, trap.Word)
+		}
 		return reportError(jsonOut, structuredError{
 			Stage:   "vm",
 			Code:    trap.Code,
-			Message: trap.Message,
+			Message: msg,
+			File:    trap.Loc.File,
+			Line:    trap.Loc.Line,
+			Col:     trap.Loc.Col,
 		})
 	}
 	return reportError(jsonOut, structuredError{
@@ -997,7 +1011,7 @@ func cmdLint(program *ast.Program, file string, jsonOut bool, ruleFlags []string
 		enc.Encode(env)
 	} else {
 		for _, d := range diags {
-			fmt.Fprintf(os.Stderr, "%d:%d %s [%s] %s\n", d.Location.Line, d.Location.Col, "lint", d.Code, d.Message)
+			fmt.Fprintf(os.Stderr, "%s %s [%s] %s\n", d.Location, "lint", d.Code, d.Message)
 		}
 	}
 
@@ -1048,7 +1062,7 @@ func parseFile(file string) (*ast.Program, error) {
 		return nil, err
 	}
 
-	tokens, lexErr := lexer.Lex(string(source))
+	tokens, lexErr := lexer.LexNamed(string(source), filepath.ToSlash(file))
 	if lexErr != nil {
 		return nil, fmt.Errorf("lex error: %s", lexErr.Message)
 	}

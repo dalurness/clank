@@ -57,7 +57,7 @@ func LintPackage(files []string) []LintDiagnostic {
 		if err != nil {
 			continue
 		}
-		tokens, lexErr := lexer.Lex(string(source))
+		tokens, lexErr := lexer.LexNamed(string(source), file)
 		if lexErr != nil {
 			continue
 		}

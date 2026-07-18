@@ -1,6 +1,8 @@
 // Package token defines token types for the Clank lexer.
 package token
 
+import "fmt"
+
 // Tag classifies a token.
 type Tag int
 
@@ -39,12 +41,24 @@ func (t Tag) String() string {
 	return "unknown"
 }
 
-// Loc is a source location span.
+// Loc is a source location span. File is the source file the span came
+// from; it is stamped after lexing (see lexer.LexNamed) so that locations
+// stay meaningful after multiple files are linked into one program.
 type Loc struct {
-	Line    int `json:"line"`
-	Col     int `json:"col"`
-	EndLine int `json:"end_line,omitempty"`
-	EndCol  int `json:"end_col,omitempty"`
+	Line    int    `json:"line"`
+	Col     int    `json:"col"`
+	EndLine int    `json:"end_line,omitempty"`
+	EndCol  int    `json:"end_col,omitempty"`
+	File    string `json:"file,omitempty"`
+}
+
+// String renders the location as "file:line:col" (or "line:col" when the
+// file is unknown).
+func (l Loc) String() string {
+	if l.File != "" {
+		return fmt.Sprintf("%s:%d:%d", l.File, l.Line, l.Col)
+	}
+	return fmt.Sprintf("%d:%d", l.Line, l.Col)
 }
 
 // Token is a single lexical token.

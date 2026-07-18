@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/dalurness/clank/internal/compiler"
+	"github.com/dalurness/clank/internal/token"
 )
 
 const (
@@ -22,9 +23,13 @@ type VMTrap struct {
 	Message string
 	Word    string
 	Offset  int
+	Loc     token.Loc // source location of the trapping code, zero if unknown
 }
 
 func (e *VMTrap) Error() string {
+	if e.Loc.Line > 0 {
+		return fmt.Sprintf("%s: %s (at %s, in %s)", e.Code, e.Message, e.Loc, e.Word)
+	}
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
@@ -2259,10 +2264,12 @@ func (vm *VM) findVariantTag(name string) (int, error) {
 
 func (vm *VM) trap(code, message string) *VMTrap {
 	word := "unknown"
+	var loc token.Loc
 	if vm.currentWord != nil {
 		word = vm.currentWord.Name
+		loc = vm.currentWord.LocAt(vm.ip)
 	}
-	return &VMTrap{Code: code, Message: message, Word: word, Offset: vm.ip}
+	return &VMTrap{Code: code, Message: message, Word: word, Offset: vm.ip, Loc: loc}
 }
 
 func copyLocals(src []Value) []Value {

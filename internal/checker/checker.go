@@ -17,7 +17,7 @@ type TypeError struct {
 }
 
 func (e TypeError) Error() string {
-	return fmt.Sprintf("[%s] %s (at %d:%d)", e.Code, e.Message, e.Location.Line, e.Location.Col)
+	return fmt.Sprintf("[%s] %s (at %s)", e.Code, e.Message, e.Location)
 }
 
 // ── Checker state ──

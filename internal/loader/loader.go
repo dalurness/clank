@@ -249,7 +249,7 @@ func (l *linker) loadModule(modPath []string, currentDir string) error {
 		return fmt.Errorf("cannot read module '%s': %v", absPath, err)
 	}
 
-	tokens, lexErr := lexer.Lex(string(source))
+	tokens, lexErr := lexer.LexNamed(string(source), displayPath(absPath, l.baseDir))
 	if lexErr != nil {
 		return fmt.Errorf("lex error in module '%s': %s", absPath, lexErr.Message)
 	}
@@ -367,6 +367,29 @@ func (l *linker) loadModule(modPath []string, currentDir string) error {
 	return nil
 }
 
+// displayPath renders a source path relative to the project root when it
+// lies inside it, for compact file names in error locations.
+func displayPath(absPath, baseDir string) string {
+	if baseDir != "" {
+		if rel, err := filepath.Rel(baseDir, absPath); err == nil && !strings.HasPrefix(rel, "..") {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return filepath.ToSlash(absPath)
+}
+
+// packageDisplayPath renders a package source file as "pkg:src/file.clk" —
+// the absolute cache path would be noise in error locations.
+func packageDisplayPath(pkgName, srcRoot, absPath string) string {
+	if srcRoot != "" {
+		pkgRoot := filepath.Dir(srcRoot)
+		if rel, err := filepath.Rel(pkgRoot, absPath); err == nil && !strings.HasPrefix(rel, "..") {
+			return pkgName + ":" + filepath.ToSlash(rel)
+		}
+	}
+	return pkgName + ":" + filepath.Base(absPath)
+}
+
 // loadExternalPackage loads every .clk file in a package's src/ tree and
 // merges their pub symbols into a single flat namespace keyed by package
 // name. Collisions across files are reported as errors at link time with
@@ -416,7 +439,7 @@ func (l *linker) loadExternalPackage(pkgName string) error {
 		if err != nil {
 			return fmt.Errorf("cannot read package file '%s': %v", absPath, err)
 		}
-		tokens, lexErr := lexer.Lex(string(source))
+		tokens, lexErr := lexer.LexNamed(string(source), packageDisplayPath(pkgName, srcRoot, absPath))
 		if lexErr != nil {
 			return fmt.Errorf("lex error in package file '%s': %s", absPath, lexErr.Message)
 		}
