@@ -1,0 +1,10 @@
+# Test: qualified package import (use &pkg) — call as textlib.fn(...).
+# Expected output:
+# HEY!
+# ababab
+
+use &textlib
+
+main : () -> <io> () =
+  let _ = print(textlib.shout("hey"))
+  print(textlib.quad("ab") |> str.slc(0, 6))

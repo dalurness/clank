@@ -449,37 +449,84 @@ func TestIntegration(t *testing.T) {
 		})
 	}
 
-	// Test cross-package imports via clank.pkg
-	t.Run("pkg-import", func(t *testing.T) {
-		pkgDir := filepath.Join(root, "phase5", "pkg-import")
-		mainFile := filepath.Join(pkgDir, "main.clk")
-		source, err := os.ReadFile(mainFile)
-		if err != nil {
-			t.Skipf("pkg-import test not found: %v", err)
-		}
-		src := string(source)
-		expected, hasExpected := parseExpected(src)
-		if !hasExpected {
-			t.Skip("no expected output")
-		}
-		output, runErr := runProgram(src, pkgDir)
-		if runErr != nil {
-			t.Fatalf("runtime error: %v", runErr)
-		}
-		actualLines := strings.Split(strings.TrimRight(output, "\n"), "\n")
-		if output == "" {
-			actualLines = nil
-		}
-		if len(actualLines) != len(expected) {
-			t.Fatalf("output line count mismatch:\nexpected %d lines: %v\ngot %d lines: %v",
-				len(expected), expected, len(actualLines), actualLines)
-		}
-		for i := range expected {
-			if actualLines[i] != expected[i] {
-				t.Errorf("line %d: expected %q, got %q", i+1, expected[i], actualLines[i])
+	// Test cross-package imports via clank.pkg. Each program dir has a
+	// manifest; every .clk file with expected output runs against it.
+	pkgProgramDirs := []string{
+		filepath.Join(root, "phase5", "pkg-import"), // single path dep, selective import
+		filepath.Join(root, "pkg", "app"),           // transitive path dep; selective/qualified/aliased
+	}
+	for _, pkgDir := range pkgProgramDirs {
+		t.Run("pkg:"+filepath.Base(filepath.Dir(pkgDir))+"/"+filepath.Base(pkgDir), func(t *testing.T) {
+			files := collectTestFiles(t, pkgDir)
+			if len(files) == 0 {
+				t.Skipf("no .clk files in %s", pkgDir)
 			}
+			for _, file := range files {
+				t.Run(filepath.Base(file), func(t *testing.T) {
+					source, err := os.ReadFile(file)
+					if err != nil {
+						t.Fatalf("read error: %v", err)
+					}
+					src := string(source)
+					expected, hasExpected := parseExpected(src)
+					if !hasExpected {
+						t.Skip("no expected output")
+					}
+					output, runErr := runProgram(src, pkgDir)
+					if runErr != nil {
+						t.Fatalf("runtime error: %v", runErr)
+					}
+					actualLines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+					if output == "" {
+						actualLines = nil
+					}
+					if len(actualLines) != len(expected) {
+						t.Fatalf("output line count mismatch:\nexpected %d lines: %v\ngot %d lines: %v",
+							len(expected), expected, len(actualLines), actualLines)
+					}
+					for i := range expected {
+						if actualLines[i] != expected[i] {
+							t.Errorf("line %d: expected %q, got %q", i+1, expected[i], actualLines[i])
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestPackageResolutionMetadata verifies that resolving the test/pkg/app
+// manifest surfaces both the direct dep (textlib) and its transitive path
+// dep (corelib), each with a path: origin — the data `clank pkg list`
+// displays.
+func TestPackageResolutionMetadata(t *testing.T) {
+	manifest := pkg.FindManifest(filepath.Join("test", "pkg", "app"))
+	if manifest == "" {
+		t.Fatal("no clank.pkg found for test/pkg/app")
+	}
+	resolution, err := pkg.ResolvePackages(manifest, false)
+	if err != nil {
+		t.Fatalf("resolve error: %v", err)
+	}
+
+	byName := map[string]pkg.ResolvedDep{}
+	for _, p := range resolution.Packages {
+		byName[p.Name] = p
+	}
+
+	for _, name := range []string{"textlib", "corelib"} {
+		dep, ok := byName[name]
+		if !ok {
+			t.Errorf("dependency %q not resolved (got %v)", name, resolution.Packages)
+			continue
 		}
-	})
+		if !strings.HasPrefix(dep.Origin, "path:") {
+			t.Errorf("%s: expected path: origin, got %q", name, dep.Origin)
+		}
+		if len(resolution.PackageFiles[name]) == 0 {
+			t.Errorf("%s: no source files resolved", name)
+		}
+	}
 }
 
 // TestParallelSpawnTiming verifies that spawned tasks run in real goroutines

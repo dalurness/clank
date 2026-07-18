@@ -1,0 +1,12 @@
+mod textlib.fmt
+
+use &corelib (double)
+
+repeat : (s: Str, n: Int) -> <> Str =
+  if n <= 0 then "" else s ++ repeat(s, n - 1)
+
+pub shout : (s: Str) -> <> Str =
+  str.up(s) ++ "!"
+
+pub quad : (s: Str) -> <> Str =
+  repeat(s, double(2))

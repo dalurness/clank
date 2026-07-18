@@ -1,0 +1,11 @@
+# Test: selective package import (use &pkg (names)) through a transitive
+# path dep: app -> textlib -> corelib.
+# Expected output:
+# HI!
+# HI!HI!HI!HI!
+
+use &textlib (shout, quad)
+
+main : () -> <io> () =
+  let _ = print(shout("hi"))
+  print(quad(shout("hi")))

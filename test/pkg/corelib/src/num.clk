@@ -1,0 +1,7 @@
+mod corelib.num
+
+pub double : (x: Int) -> <> Int =
+  x * 2
+
+pub triple : (x: Int) -> <> Int =
+  x * 3

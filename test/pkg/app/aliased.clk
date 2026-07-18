@@ -1,0 +1,8 @@
+# Test: aliased package import (use &pkg as t) — call as t.fn(...).
+# Expected output:
+# YO!
+
+use &textlib as t
+
+main : () -> <io> () =
+  print(t.shout("yo"))
