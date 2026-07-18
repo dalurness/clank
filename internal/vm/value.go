@@ -165,14 +165,19 @@ type IteratorState struct {
 	Source       []Value // nil if not list-backed
 	NativeNext   func() *Value
 	NativeCleanup func()
+	cleanupMu    sync.Mutex
 }
 
 // ReleaseResources runs the iterator's native cleanup (close file handles,
 // response bodies, processes). Idempotent; safe on iterators without one.
+// The mutex makes it safe to race against the GC finalizer that backstops
+// abandoned iterators.
 func (it *IteratorState) ReleaseResources() {
-	if it.NativeCleanup != nil {
-		cleanup := it.NativeCleanup
-		it.NativeCleanup = nil
+	it.cleanupMu.Lock()
+	cleanup := it.NativeCleanup
+	it.NativeCleanup = nil
+	it.cleanupMu.Unlock()
+	if cleanup != nil {
 		cleanup()
 	}
 }

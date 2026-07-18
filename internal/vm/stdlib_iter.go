@@ -1,5 +1,7 @@
 package vm
 
+import "runtime"
+
 // Iterator combinators — lazy sequence operations
 
 // ── Iterator combinators ──
@@ -27,7 +29,9 @@ func (vm *VM) newIter(next func() *Value) Value {
 
 // newIterWithCleanup creates a lazy iterator that owns an external resource
 // (file handle, response body, process). The cleanup fn runs when the
-// iterator is exhausted or short-circuited (e.g. by iter.take).
+// iterator is exhausted or short-circuited (e.g. by iter.take); a GC
+// finalizer backstops iterators that are simply dropped so the resource
+// doesn't leak until process exit.
 func (vm *VM) newIterWithCleanup(next func() *Value, cleanup func()) Value {
 	root := vm.root()
 	root.mu.Lock()
@@ -40,6 +44,9 @@ func (vm *VM) newIterWithCleanup(next func() *Value, cleanup func()) Value {
 	}
 	root.nextIterID++
 	root.mu.Unlock()
+	if cleanup != nil {
+		runtime.SetFinalizer(iter, (*IteratorState).ReleaseResources)
+	}
 	return ValIter(iter)
 }
 
