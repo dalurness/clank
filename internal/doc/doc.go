@@ -363,7 +363,7 @@ func builtinRegistry() []BuiltinEntry {
 		{"log.error", fn(tStr, tUnit), "Log at error level"},
 		{"log.level", fn(tStr, tUnit), "Set minimum log level (trace/debug/info/warn/error)"},
 		{"log.ctx", fn(tStr, fn(tStr, tUnit)), "Add persistent context key-value"},
-		{"log.json", fn(tBool, tUnit), "Enable/disable JSON output format"},
+		{"log.json", fn(tBool, tUnit), "Enable/disable JSON output format (default: enabled; pass false for plain text)"},
 
 		// CLI
 		{"cli.args", fn(tUnit, checker.NewTList(tStr)), "Program arguments as [Str] (script path and runner flags excluded)"},
