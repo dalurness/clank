@@ -53,6 +53,11 @@ func (vm *VM) builtinDtUnix() error {
 	return nil
 }
 
+func (vm *VM) builtinDtUnixMs() error {
+	vm.push(ValInt(int(time.Now().UnixMilli())))
+	return nil
+}
+
 func (vm *VM) builtinDtFrom() error {
 	ts, _ := vm.pop()
 	t := time.Unix(int64(numVal(ts)), 0).UTC()

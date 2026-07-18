@@ -330,6 +330,7 @@ func builtinRegistry() []BuiltinEntry {
 		// DateTime
 		{"dt.now", fn(tUnit, tAny), "Current datetime UTC as record"},
 		{"dt.unix", fn(tUnit, tInt), "Current unix timestamp (seconds)"},
+		{"dt.unix-ms", fn(tUnit, tInt), "Current unix timestamp (milliseconds) — use for measuring elapsed time"},
 		{"dt.from", fn(tInt, tAny), "Datetime record from unix timestamp"},
 		{"dt.to", fn(tAny, tInt), "Datetime record to unix timestamp"},
 		{"dt.parse", fn(tStr, fn(tStr, tAny)), "Parse datetime string with format"},

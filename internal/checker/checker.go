@@ -3463,6 +3463,7 @@ func registerBuiltins(env *typeEnv) {
 	// DateTime (std.dt)
 	env.set("dt.now", NewTFn(TUnit, TAny))
 	env.set("dt.unix", NewTFn(TUnit, TInt))
+	env.set("dt.unix-ms", NewTFn(TUnit, TInt))
 	env.set("dt.from", NewTFn(TInt, TAny))
 	env.set("dt.to", NewTFn(TAny, TInt))
 	env.set("dt.parse", NewTFn(TStr, NewTFn(TStr, TAny)))
