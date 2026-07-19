@@ -3901,21 +3901,21 @@ type interfaceEntry struct {
 
 // TypeCheck validates a program and returns any type errors.
 func TypeCheck(program *ast.Program) []TypeError {
-	return typeCheckImpl(program, nil, nil)
+	return typeCheckImpl(program, nil, nil, nil)
 }
 
 // TypeCheckWithModules validates a program with cross-package module resolution.
 func TypeCheckWithModules(program *ast.Program, resolver ModuleTypeResolver) []TypeError {
-	return typeCheckImpl(program, resolver, nil)
+	return typeCheckImpl(program, resolver, nil, nil)
 }
 
 
 // TypeCheckWithResolvers validates a program with cross-package type and effect alias resolution.
 func TypeCheckWithResolvers(program *ast.Program, typeResolver ModuleTypeResolver, aliasResolver ModuleEffectAliasResolver) []TypeError {
-	return typeCheckImpl(program, typeResolver, aliasResolver)
+	return typeCheckImpl(program, typeResolver, aliasResolver, nil)
 }
 
-func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResolver ModuleEffectAliasResolver) []TypeError {
+func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResolver ModuleEffectAliasResolver, capture *inferCapture) []TypeError {
 	var errors []TypeError
 
 	s := &checkerState{
@@ -4419,6 +4419,13 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 		bodyType := s.inferExpr(def.Body, bodyEnv, &errors, registry, aff)
 		aff.checkUnconsumed(affineParams, def.Loc, &errors)
 
+		captureThisDef := capture != nil && def.Name == capture.defName
+		if captureThisDef {
+			capture.found = true
+			capture.bodyType = bodyType
+			capture.effects = collectEffects(def.Body, opMap, make(map[string]bool))
+		}
+
 		expectedRet := bodyResolve(def.Sig.ReturnType)
 
 		if containsBorrow(expectedRet) {
@@ -4443,7 +4450,10 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 		if p, ok := expectedRet.(TPrimitive); ok && p.Name == "unit" {
 			unitReturn = true
 		}
-		if !unitReturn {
+		// The captured definition skips the declared-return check: eval's
+		// wrapper declares the placeholder return `auto`, which no real
+		// body type unifies with.
+		if !unitReturn && !captureThisDef {
 			resolvedBody := s.applyTypeSubst(s.applyRowSubst(bodyType))
 			resolvedExpected := s.applyTypeSubst(s.applyRowSubst(expectedRet))
 			if rb, ok := resolvedBody.(TRecord); ok {
@@ -4485,7 +4495,11 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 			}
 		}
 
-		if !hasEffectRowVar {
+		// The captured definition also skips the W401 undeclared-effect
+		// warning — its declared row is the wrapper's `<>`, not something
+		// the user wrote. The performed effects are reported in the
+		// capture instead.
+		if !hasEffectRowVar && !captureThisDef {
 			bodyEffects := collectEffects(def.Body, opMap, make(map[string]bool))
 			declaredEffects := make(map[string]bool, len(resolvedEffects))
 			for _, r := range resolvedEffects {
@@ -4501,6 +4515,13 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 				}
 			}
 		}
+	}
+
+	// Render the captured type only after every body has been checked so
+	// all substitutions are final.
+	if capture != nil && capture.found {
+		resolved := s.applyTypeSubst(s.applyRowSubst(capture.bodyType))
+		capture.typeStr = showTypeWith(resolved, make(map[int]string))
 	}
 
 	return errors

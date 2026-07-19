@@ -405,6 +405,57 @@ func valueToGo(v Value) interface{} {
 	return nil
 }
 
+// ValueToJSON renders a runtime value as a JSON document using the same
+// mapping as json.enc (Some unwraps, None is null, other variants render
+// as display strings). ok is false when the value has no clean JSON form
+// (closures, channels, iterators, ...) — callers should fall back to
+// ValueToString.
+func ValueToJSON(v Value) (string, bool) {
+	if !jsonRenderable(v) {
+		return "", false
+	}
+	data, err := json.Marshal(valueToGo(v))
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
+// jsonRenderable reports whether a value (recursively) consists only of
+// data that valueToGo maps to real JSON, rather than the nil it returns
+// for opaque runtime values.
+func jsonRenderable(v Value) bool {
+	switch v.Tag {
+	case TagINT, TagRAT, TagBOOL, TagSTR, TagUNIT:
+		return true
+	case TagHEAP:
+		switch v.Heap.Kind {
+		case KindList, KindTuple:
+			for _, el := range v.Heap.Items {
+				if !jsonRenderable(el) {
+					return false
+				}
+			}
+			return true
+		case KindRecord:
+			for _, f := range v.Heap.Fields {
+				if !jsonRenderable(f) {
+					return false
+				}
+			}
+			return true
+		case KindUnion:
+			for _, f := range v.Heap.UFields {
+				if !jsonRenderable(f) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return false
+}
+
 func goToValue(v interface{}) Value {
 	if v == nil {
 		return ValUnit()
