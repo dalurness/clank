@@ -46,6 +46,10 @@ one pass.
 Quick sanity checks: ` + "`clank eval '1 + 2'`" + `. If the code has quotes
 in it, pipe it instead — shell quoting (especially PowerShell) mangles
 inline strings: ` + "`echo 'str.up(\"hi\")' | clank eval --stdin`" + `.
+Unsure of a signature? ` + "`clank eval --type 'str.rep'`" + ` prints the
+inferred type without running anything. Poke at a project's functions
+with ` + "`clank eval --file src/x.clk 'helper(1)'`" + ` — the expression
+runs with that file's definitions in scope.
 
 ## Syntax essentials
 

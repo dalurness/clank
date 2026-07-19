@@ -90,7 +90,8 @@ Arguments after the file — or anything after '--' — are passed to
 the program and are visible via cli.args() / cli.parse().
 
 Flags:
-  --json    Emit VM errors as structured JSON
+  --json    Emit one JSON envelope: {"ok", "stdout": [lines],
+            "diagnostics": [errors]}
 `,
 
 	"check": `clank check <file>
@@ -99,12 +100,14 @@ Type-check a Clank program without running it. Reports type errors
 with location info. Exits 0 on success, 1 on any hard error.
 
 Flags:
-  --json    Emit diagnostics as a JSON array
+  --json    Emit {"ok", "diagnostics": [...]} (same shape for lex,
+            parse, link, and type errors)
 `,
 
 	"eval": `clank eval <expression>
 clank eval --stdin
-clank eval -f <file>
+clank eval --file <file> [<expression>]
+clank eval --type <expression>
 
 Run inline Clank code and print the result. A bare expression is
 wrapped in main automatically; a full program (top-level definitions)
@@ -116,6 +119,25 @@ entirely (recommended for anything with quotes, e.g. under
 PowerShell):
 
   echo 'str.up("hi")' | clank eval --stdin
+
+--file (-f) brings a file's definitions into scope. With an
+expression, the expression is evaluated as if written inside that
+file (the file's own main is replaced); without one, the file itself
+is evaluated:
+
+  clank eval --file src/stats.clk 'mean([1,2,3])'
+  clank eval --file snippet.clk
+
+--type prints the checker's inferred type without running anything
+(effects, when performed, prefix the type as '<eff> T'):
+
+  clank eval --type 'fn(x: Int) => x + 1'    # (Int -> Int)
+  clank eval --type --file src/stats.clk 'mean'
+
+Flags:
+  --json    Emit {"ok", "data": {"value", "display", "type",
+            "effects"}, "stdout", "diagnostics", "timing"}; with
+            --type just {"ok", "data": {"type", "effects"}}
 `,
 
 	"fmt": `clank fmt <file>
@@ -123,6 +145,9 @@ PowerShell):
 Canonical source formatting. Modifies the file in place. Use
 --stdin to read from stdin instead. --check exits non-zero if the
 file would be changed (useful in CI).
+
+Flags:
+  --json    Emit {"ok", "changed", ...} instead of text
 `,
 
 	"lint": `clank lint <file>
@@ -302,9 +327,10 @@ func resolveHelpTopic(positional []string) string {
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: clank [--json] [--pretty] [command] [flags] <file.clk>\n")
-	fmt.Fprintf(os.Stderr, "       clank eval '<expr>'            Evaluate inline code\n")
-	fmt.Fprintf(os.Stderr, "       clank eval --stdin             Evaluate code piped on stdin\n")
-	fmt.Fprintf(os.Stderr, "       clank eval -f <file.clk>       Evaluate a file\n\n")
+	fmt.Fprintf(os.Stderr, "       clank eval '<expr>'                  Evaluate inline code\n")
+	fmt.Fprintf(os.Stderr, "       clank eval --stdin                   Evaluate code piped on stdin\n")
+	fmt.Fprintf(os.Stderr, "       clank eval --file <f.clk> ['<expr>'] Evaluate a file, or an expr in its scope\n")
+	fmt.Fprintf(os.Stderr, "       clank eval --type '<expr>'           Print the inferred type, don't run\n\n")
 	fmt.Fprintf(os.Stderr, "Commands:\n")
 	fmt.Fprintf(os.Stderr, "  run         Run a program file (default)\n")
 	fmt.Fprintf(os.Stderr, "  check       Type-check a program file\n")
@@ -348,10 +374,10 @@ func run() int {
 	checkMode := false
 	stdinMode := false
 	prettyMode := false
+	typeMode := false
 	helpRequested := false
 	command := "run"
 	var file string
-	var inlineCode string
 	var evalFile string
 	var ruleFlags []string
 
@@ -371,12 +397,14 @@ func run() int {
 			checkMode = true
 		case "--stdin":
 			stdinMode = true
-		case "-f":
+		case "--type":
+			typeMode = true
+		case "-f", "--file":
 			if i+1 < len(rawArgs) {
 				evalFile = rawArgs[i+1]
 				i++
 			} else {
-				fmt.Fprintf(os.Stderr, "error: -f requires a file argument\n")
+				fmt.Fprintf(os.Stderr, "error: %s requires a file argument\n", rawArgs[i])
 				return 1
 			}
 			continue
@@ -438,22 +466,33 @@ func run() int {
 		case "skill":
 			return cmdSkill(positional[1:], jsonOut, rawArgs)
 		case "version":
-			fmt.Println(Version)
+			if jsonOut {
+				emitJSON(map[string]interface{}{"ok": true, "version": Version})
+			} else {
+				fmt.Println(Version)
+			}
 			return 0
 		case "update", "upgrade":
 			return cmdUpdate()
 
 		case "eval":
-			command = "eval"
-			// eval: remaining positional args are the expression, unless
-			// -f <file> or --stdin provides the source instead.
-			if evalFile == "" && !stdinMode {
-				if len(positional) < 2 {
-					fmt.Fprintf(os.Stderr, "error: eval requires an expression, -f <file>, or --stdin\n")
-					return 1
-				}
-				inlineCode = strings.Join(positional[1:], " ")
+			// eval: remaining positional args are the expression; --stdin
+			// reads it from stdin instead; --file brings a file's
+			// definitions into scope (or, with no expression, is the code
+			// to evaluate).
+			expr := strings.Join(positional[1:], " ")
+			if expr == "" && evalFile == "" && !stdinMode {
+				fmt.Fprintf(os.Stderr, "error: eval requires an expression, --file <file>, or --stdin\n")
+				return 1
 			}
+			return cmdEval(evalRequest{
+				expr:     expr,
+				file:     evalFile,
+				stdin:    stdinMode,
+				typeMode: typeMode,
+				jsonOut:  jsonOut,
+				pretty:   prettyMode,
+			})
 
 		case "run", "check":
 			command = positional[0]
@@ -482,30 +521,32 @@ func run() int {
 			programArgs = append(positional[1:], programArgs...)
 		}
 	} else if evalFile != "" {
-		// clank -f <file> — defaults to eval
-		command = "eval"
+		// clank --file <file> with no command — defaults to eval
+		return cmdEval(evalRequest{
+			file:     evalFile,
+			stdin:    stdinMode,
+			typeMode: typeMode,
+			jsonOut:  jsonOut,
+			pretty:   prettyMode,
+		})
 	}
 
-	// -f is only valid with eval
-	if evalFile != "" && command != "eval" {
-		fmt.Fprintf(os.Stderr, "error: -f can only be used with eval\n")
+	// --file/-f and --type only make sense with eval, which dispatched above
+	if evalFile != "" {
+		fmt.Fprintf(os.Stderr, "error: --file can only be used with eval\n")
+		return 1
+	}
+	if typeMode {
+		fmt.Fprintf(os.Stderr, "error: --type can only be used with eval\n")
 		return 1
 	}
 
-	// Read source: inline code, eval file (-f), stdin (--stdin), or file
+	// Read source: stdin (--stdin) or file
 	var source []byte
 	var err error
-	if inlineCode != "" {
-		source = []byte(inlineCode)
-	} else if evalFile != "" {
-		source, err = os.ReadFile(evalFile)
-		file = evalFile
-	} else if stdinMode && file == "" {
+	if stdinMode && file == "" {
 		source, err = io.ReadAll(os.Stdin)
-		// PowerShell prepends a UTF-8 BOM when piping; strip it here since
-		// eval may embed the source mid-line where the lexer's file-start
-		// BOM handling can't help.
-		source = bytes.TrimPrefix(source, []byte{0xEF, 0xBB, 0xBF})
+		source = stripBOM(source)
 	} else {
 		source, err = os.ReadFile(file)
 	}
@@ -514,11 +555,6 @@ func run() int {
 			Stage:   "io",
 			Message: err.Error(),
 		})
-	}
-
-	// eval: wrap bare expressions in a main function
-	if command == "eval" {
-		source = []byte(wrapExprSource(string(source)))
 	}
 
 	// Pretty/terse operate on raw source — dispatch before lex/parse
@@ -587,8 +623,6 @@ func run() int {
 			})
 		}
 		return cmdCheck(checkLinked.Program, baseDir, jsonOut)
-	case "eval":
-		return cmdEval(desugared, baseDir, jsonOut)
 	case "run":
 		// Link imports first (resolves modules, expands type imports)
 		linked := loader.LinkWithPackages(desugared, baseDir, resolvePackageFiles(baseDir))
@@ -609,34 +643,15 @@ func run() int {
 		}
 		if hasErrors {
 			hint := floorHintForFile(baseDir)
+			errs := typeErrorsToStructured(typeErrors, false)
+			if hint != "" {
+				errs = append(errs, structuredError{Stage: "note", Message: hint})
+			}
 			if jsonOut {
-				errs := make([]structuredError, 0, len(typeErrors))
-				for _, te := range typeErrors {
-					if !strings.HasPrefix(te.Code, "W") {
-						errs = append(errs, structuredError{
-							Stage:   "type",
-							Code:    te.Code,
-							Message: te.Message,
-							File:    te.Location.File,
-							Line:    te.Location.Line,
-							Col:     te.Location.Col,
-						})
-					}
-				}
-				if hint != "" {
-					errs = append(errs, structuredError{Stage: "note", Message: hint})
-				}
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				enc.Encode(errs)
+				emitJSON(diagEnvelope{OK: false, Diagnostics: errs})
 			} else {
-				for _, te := range typeErrors {
-					if !strings.HasPrefix(te.Code, "W") {
-						fmt.Fprintf(os.Stderr, "%s\n", te.Error())
-					}
-				}
-				if hint != "" {
-					fmt.Fprintf(os.Stderr, "%s\n", hint)
+				for _, se := range errs {
+					printStructuredError(se)
 				}
 			}
 			return 1
@@ -738,20 +753,42 @@ func desugarProgram(program *ast.Program) *ast.Program {
 	return out
 }
 
+// runEnvelope is run's --json output: program stdout wrapped in the
+// uniform envelope so the command emits exactly one JSON document.
+type runEnvelope struct {
+	OK          bool              `json:"ok"`
+	Stdout      []string          `json:"stdout"`
+	Diagnostics []structuredError `json:"diagnostics,omitempty"`
+}
+
 // cmdRun compiles and executes via the bytecode VM.
 func cmdRun(program *ast.Program, programArgs []string, jsonOut bool) int {
 	mod := compiler.CompileProgram(program)
 	if mod.EntryWordID == nil {
+		if jsonOut {
+			emitJSON(runEnvelope{OK: true, Stdout: []string{}})
+		}
 		return 0 // no main function
 	}
 	result, stdout, err := vm.ExecuteArgs(mod, programArgs)
+	_ = result
+	if stdout == nil {
+		stdout = []string{}
+	}
+	if jsonOut {
+		if err != nil {
+			emitJSON(runEnvelope{OK: false, Stdout: stdout, Diagnostics: []structuredError{vmErrorToStructured(err)}})
+			return 1
+		}
+		emitJSON(runEnvelope{OK: true, Stdout: stdout})
+		return 0
+	}
 	for _, line := range stdout {
 		fmt.Println(line)
 	}
 	if err != nil {
 		return reportVMError(jsonOut, err)
 	}
-	_ = result
 	return 0
 }
 
@@ -759,33 +796,29 @@ func cmdRun(program *ast.Program, programArgs []string, jsonOut bool) int {
 func cmdCheck(program *ast.Program, baseDir string, jsonOut bool) int {
 	typeErrors := checker.TypeCheckWithResolvers(program, nil, makeEffectAliasResolver(baseDir))
 	if len(typeErrors) == 0 {
-		if !jsonOut {
+		if jsonOut {
+			emitJSON(diagEnvelope{OK: true, Diagnostics: []structuredError{}})
+		} else {
 			fmt.Println("ok")
 		}
 		return 0
 	}
 
 	if jsonOut {
-		errs := make([]structuredError, len(typeErrors))
-		for i, te := range typeErrors {
-			errs[i] = structuredError{
-				Stage:   "type",
-				Code:    te.Code,
-				Message: te.Message,
-				File:    te.Location.File,
-				Line:    te.Location.Line,
-				Col:     te.Location.Col,
-			}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		enc.Encode(errs)
+		emitJSON(diagEnvelope{OK: false, Diagnostics: typeErrorsToStructured(typeErrors, true)})
 	} else {
 		for _, te := range typeErrors {
 			fmt.Fprintf(os.Stderr, "%s\n", te.Error())
 		}
 	}
 	return 1
+}
+
+// stripBOM removes a leading UTF-8 BOM. PowerShell prepends one when
+// piping; eval may embed the source mid-line where the lexer's
+// file-start BOM handling can't help.
+func stripBOM(b []byte) []byte {
+	return bytes.TrimPrefix(b, []byte{0xEF, 0xBB, 0xBF})
 }
 
 // wrapExprSource wraps a bare expression in a main function for eval.
@@ -849,33 +882,6 @@ func wrapExprSource(source string) string {
 	return fmt.Sprintf("main : () -> <> auto = %s", trimmed)
 }
 
-// cmdEval compiles, links, and runs the program, printing the final result value.
-func cmdEval(program *ast.Program, baseDir string, jsonOut bool) int {
-	linked := loader.LinkWithPackages(program, baseDir, resolvePackageFiles(baseDir))
-	if linked.Error != nil {
-		return reportError(jsonOut, structuredError{
-			Stage:   "link",
-			Message: linked.Error.Error(),
-		})
-	}
-	mod := compiler.CompileProgram(linked.Program)
-	if mod.EntryWordID == nil {
-		fmt.Println("()")
-		return 0
-	}
-	result, stdout, err := vm.Execute(mod)
-	for _, line := range stdout {
-		fmt.Println(line)
-	}
-	if err != nil {
-		return reportVMError(jsonOut, err)
-	}
-	if result != nil {
-		fmt.Println(vm.ValueToString(*result))
-	}
-	return 0
-}
-
 // withFloorHint appends a floor-mismatch note to a message if one applies
 // for the given source file. Used at error-report sites so callers can
 // keep their existing structuredError construction inline.
@@ -925,76 +931,145 @@ func floorHintForFile(sourceFile string) string {
 	)
 }
 
+// diagEnvelope is the uniform --json error/diagnostic shape: every
+// command that fails emits {"ok": false, "diagnostics": [...]} so agents
+// parse one shape everywhere.
+type diagEnvelope struct {
+	OK          bool              `json:"ok"`
+	Diagnostics []structuredError `json:"diagnostics"`
+}
+
+// emitJSON writes one indented JSON document to stdout — the single
+// output of any command run with --json. HTML escaping is off so type
+// strings like "(Int -> Int)" stay readable.
+func emitJSON(v interface{}) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	enc.Encode(v)
+}
+
+// printStructuredError renders a diagnostic as the human-readable
+// one-line form on stderr.
+func printStructuredError(se structuredError) {
+	var parts []string
+	if se.Line > 0 && se.File != "" {
+		parts = append(parts, fmt.Sprintf("%s:%d:%d", se.File, se.Line, se.Col))
+	} else if se.Line > 0 {
+		parts = append(parts, fmt.Sprintf("%d:%d", se.Line, se.Col))
+	}
+	parts = append(parts, se.Stage)
+	if se.Code != "" {
+		parts = append(parts, fmt.Sprintf("[%s]", se.Code))
+	}
+	parts = append(parts, se.Message)
+	fmt.Fprintf(os.Stderr, "%s\n", strings.Join(parts, " "))
+}
+
+// typeErrorsToStructured converts checker diagnostics; warnings (W-codes)
+// are dropped unless includeWarnings is set.
+func typeErrorsToStructured(typeErrors []checker.TypeError, includeWarnings bool) []structuredError {
+	var out []structuredError
+	for _, te := range typeErrors {
+		if !includeWarnings && strings.HasPrefix(te.Code, "W") {
+			continue
+		}
+		out = append(out, structuredError{
+			Stage:   "type",
+			Code:    te.Code,
+			Message: te.Message,
+			File:    te.Location.File,
+			Line:    te.Location.Line,
+			Col:     te.Location.Col,
+		})
+	}
+	return out
+}
+
 // reportError outputs a single structured error and returns exit code 1.
 func reportError(jsonOut bool, se structuredError) int {
 	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		enc.Encode(se)
+		emitJSON(diagEnvelope{OK: false, Diagnostics: []structuredError{se}})
 	} else {
-		var parts []string
-		if se.Line > 0 && se.File != "" {
-			parts = append(parts, fmt.Sprintf("%s:%d:%d", se.File, se.Line, se.Col))
-		} else if se.Line > 0 {
-			parts = append(parts, fmt.Sprintf("%d:%d", se.Line, se.Col))
-		}
-		parts = append(parts, se.Stage)
-		if se.Code != "" {
-			parts = append(parts, fmt.Sprintf("[%s]", se.Code))
-		}
-		parts = append(parts, se.Message)
-		fmt.Fprintf(os.Stderr, "%s\n", strings.Join(parts, " "))
+		printStructuredError(se)
 	}
 	return 1
 }
 
-// reportVMError converts a VM error to structured output.
-func reportVMError(jsonOut bool, err error) int {
+// vmErrorToStructured converts a VM error to the diagnostic shape.
+func vmErrorToStructured(err error) structuredError {
 	if trap, ok := err.(*vm.VMTrap); ok {
 		msg := trap.Message
 		if trap.Word != "" && trap.Word != "unknown" {
 			msg = fmt.Sprintf("%s (in %s)", trap.Message, trap.Word)
 		}
-		return reportError(jsonOut, structuredError{
+		return structuredError{
 			Stage:   "vm",
 			Code:    trap.Code,
 			Message: msg,
 			File:    trap.Loc.File,
 			Line:    trap.Loc.Line,
 			Col:     trap.Loc.Col,
-		})
+		}
 	}
-	return reportError(jsonOut, structuredError{
-		Stage:   "vm",
-		Message: err.Error(),
-	})
+	return structuredError{Stage: "vm", Message: err.Error()}
+}
+
+// reportVMError converts a VM error to structured output.
+func reportVMError(jsonOut bool, err error) int {
+	return reportError(jsonOut, vmErrorToStructured(err))
+}
+
+// fmtEnvelope is fmt's --json output. In --check mode ok mirrors the
+// exit code (false when the file would change); otherwise ok is false
+// only on a write error.
+type fmtEnvelope struct {
+	OK      bool   `json:"ok"`
+	Changed bool   `json:"changed"`
+	File    string `json:"file,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // cmdFmt formats source code.
 func cmdFmt(program *ast.Program, source string, file string, jsonOut bool, checkMode bool, stdinMode bool) int {
 	formatted := formatter.Format(program, source)
+	changed := formatted != source
 
 	if checkMode {
-		if formatted != source {
-			if file != "" {
-				fmt.Fprintf(os.Stderr, "%s: not formatted\n", file)
-			}
+		if jsonOut {
+			emitJSON(fmtEnvelope{OK: !changed, Changed: changed, File: file})
+		} else if changed && file != "" {
+			fmt.Fprintf(os.Stderr, "%s: not formatted\n", file)
+		}
+		if changed {
 			return 1
 		}
 		return 0
 	}
 
 	if stdinMode || file == "" {
+		if jsonOut {
+			emitJSON(fmtEnvelope{OK: true, Changed: changed, Source: formatted})
+			return 0
+		}
 		fmt.Print(formatted)
 		return 0
 	}
 
 	// Write back to file
-	if formatted != source {
+	if changed {
 		if err := os.WriteFile(file, []byte(formatted), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", file, err)
+			if jsonOut {
+				emitJSON(fmtEnvelope{OK: false, Changed: changed, File: file, Error: fmt.Sprintf("writing %s: %v", file, err)})
+			} else {
+				fmt.Fprintf(os.Stderr, "error writing %s: %v\n", file, err)
+			}
 			return 1
 		}
+	}
+	if jsonOut {
+		emitJSON(fmtEnvelope{OK: true, Changed: changed, File: file})
 	}
 	return 0
 }
@@ -1057,13 +1132,13 @@ func cmdPrettyTerse(source string, command string, file string, jsonOut bool, st
 
 	if jsonOut {
 		type envelope struct {
+			OK              bool   `json:"ok"`
 			Source          string `json:"source"`
 			Transformations int    `json:"transformations"`
 			Direction       string `json:"direction"`
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		enc.Encode(envelope{
+		emitJSON(envelope{
+			OK:              true,
 			Source:          result.Source,
 			Transformations: result.Transformations,
 			Direction:       result.Direction.String(),
@@ -2000,4 +2075,3 @@ func pkgInstallError(jsonOut bool, msg string) int {
 	}
 	return 1
 }
-

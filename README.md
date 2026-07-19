@@ -190,6 +190,8 @@ pub mean : (xs: [Rat]) -> <> Rat = ...
 clank run <file> [args...]             # Run a .clk file (args reach cli.args)
 clank check <file>                     # Type-check without running
 clank eval <expr>                      # Evaluate and print result
+clank eval --type <expr>               # Print the inferred type, don't run
+clank eval --file <f> [<expr>]         # Eval a file, or an expr in its scope
 clank fmt <file>                       # Canonical formatting
 clank lint <file>                      # Lint source code
 clank test [files...]                  # Run tests

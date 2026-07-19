@@ -132,6 +132,17 @@ Every command wraps its output in a standard envelope:
 
 When `ok` is `false`, `data` is `null` and `diagnostics` contains at least one error. Warnings may appear even when `ok` is `true`. The `timing` field is always present — agents use it to detect performance regressions.
 
+> **Implemented today:** every command run with `--json` emits exactly one
+> JSON object with a top-level `"ok"`. Diagnostics use the flat shape
+> `{ "stage", "code", "message", "file", "line", "col" }` where `stage` is
+> `io | lex | parse | link | type | vm | note`; the richer
+> severity/related/fix schema above is aspirational. Command shapes:
+> `check` → `{ "ok", "diagnostics" }`; `run` → `{ "ok", "stdout": [lines],
+> "diagnostics" }` (program output is wrapped so the command still emits one
+> JSON document); `eval` → the full data envelope (§7.1); errors from any
+> command → `{ "ok": false, "diagnostics": [...] }`. Exceptions: `spec` and
+> `skill` print documents as-is, and `update` is interactive.
+
 ---
 
 ## 4. Queryable Documentation System
@@ -533,9 +544,9 @@ Conflict resolution: if two packages require incompatible versions of the same d
 clank eval "2 + 3"
 clank eval "map([1,2,3], fn(x) => x * 2)"
 echo 'str.up("hi")' | clank eval --stdin         # code on stdin — immune to shell quoting
-clank eval -f snippet.clk                        # eval a file, print the result
-clank eval --type "map"                          # print type of symbol
-clank eval --file src/app/main.clk "mean([1,2,3])"  # eval with file's definitions in scope
+clank eval --file snippet.clk                    # eval a file, print the result
+clank eval --file src/app/main.clk "mean([1,2,3])"  # eval expr with file's definitions in scope
+clank eval --type "map"                          # print type of symbol (see 7.3)
 ```
 
 `clank eval` is the single inline-execution command: a bare expression is
@@ -544,22 +555,39 @@ definitions) runs as-is. `run` and `check` take files only. Prefer
 `--stdin` for any snippet containing quotes — PowerShell in particular
 rewrites inner double quotes before the process sees them.
 
-Output:
+`--file` (short form `-f`) brings a file's definitions into scope: with an
+expression argument, the expression is evaluated as if written inside that
+file (the file's own `main` is replaced, non-`pub` definitions are
+visible, and the file's imports/manifest resolve from its directory); with
+no expression, the file itself is the code to evaluate.
+
+Output with `--json` (text mode prints the program's output followed by
+the result value):
 
 ```json
 {
   "ok": true,
   "data": {
     "value": 5,
+    "display": "5",
     "type": "Int",
     "effects": []
   },
+  "stdout": [],
   "diagnostics": [],
   "timing": { "total_ms": 3 }
 }
 ```
 
-### 7.2 Session Mode
+`value` is the result as native JSON when it has a clean JSON form and
+`null` otherwise (closures, channels, ...); `display` is always the clank
+rendering. `type`/`effects` come from the checker; eval stays permissive,
+so hard type errors appear in `diagnostics` (with `type` null) but the
+program still runs. On a runtime error the envelope carries
+`"ok": false` and an `"error"` diagnostic alongside whatever `stdout` was
+produced.
+
+### 7.2 Session Mode (planned — not yet implemented)
 
 For multi-step exploration, `clank eval --session` maintains state across invocations via a session file:
 
@@ -578,22 +606,32 @@ Session state is stored at `.clank/sessions/<name>.json`. This lets an agent bui
 
 ### 7.3 `clank eval --type`
 
-Print the type of an expression or symbol without evaluating:
+Print the checker's inferred type of an expression or symbol without
+evaluating anything:
 
 ```bash
-clank eval --type "fn(x: Int) => x + 1"
+clank eval --type "fn(x: Int) => x + 1"      # (Int -> Int)
+clank eval --type "map"                      # ([a] -> ((a -> b) -> [b]))
+clank eval --type --file src/stats.clk "mean"  # type of a file's definition
 ```
+
+Text mode prints the type on one line; effects, when performed, prefix it
+as `<eff> T`. With `--json`:
 
 ```json
 {
   "ok": true,
   "data": {
-    "type": "(Int) -> <> Int",
-    "effects": [],
-    "constraints": []
-  }
+    "type": "(Int -> Int)",
+    "effects": []
+  },
+  "diagnostics": []
 }
 ```
+
+`effects` lists user-declared effects the expression performs. Builtin
+effects (`io` from `print`, etc.) are not tracked by the checker and do
+not appear.
 
 ---
 

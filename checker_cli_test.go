@@ -689,14 +689,20 @@ func TestJSON_CheckTypeErrorProducesStructuredJSON(t *testing.T) {
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	var errs []map[string]interface{}
-	if err := json.Unmarshal([]byte(stdout), &errs); err != nil {
+	var env struct {
+		OK          bool                     `json:"ok"`
+		Diagnostics []map[string]interface{} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 		t.Fatalf("invalid JSON: %v\nstdout: %s", err, stdout)
 	}
-	if len(errs) < 1 {
+	if env.OK {
+		t.Error("expected ok: false")
+	}
+	if len(env.Diagnostics) < 1 {
 		t.Fatal("expected at least one diagnostic")
 	}
-	d := errs[0]
+	d := env.Diagnostics[0]
 	if d["stage"] != "type" {
 		t.Errorf("expected stage 'type', got %v", d["stage"])
 	}
@@ -720,12 +726,15 @@ main : () -> <io> () = print("ok")
 	if exitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", exitCode)
 	}
-	var errs []map[string]interface{}
-	if err := json.Unmarshal([]byte(stdout), &errs); err != nil {
+	var env struct {
+		OK          bool                     `json:"ok"`
+		Diagnostics []map[string]interface{} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
 		t.Fatalf("invalid JSON: %v\nstdout: %s", err, stdout)
 	}
-	if len(errs) < 2 {
-		t.Errorf("expected at least 2 diagnostics, got %d", len(errs))
+	if len(env.Diagnostics) < 2 {
+		t.Errorf("expected at least 2 diagnostics, got %d", len(env.Diagnostics))
 	}
 }
 
