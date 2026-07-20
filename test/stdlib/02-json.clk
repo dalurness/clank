@@ -10,7 +10,7 @@
 # [1, [2, 3], nested]
 # {a: 1}
 
-main : () -> <io> () =
+main : () -> <io, exn> () =
   # Encode a record
   let obj = {x: 1, y: 2}
   let _ = print(json.enc(obj))

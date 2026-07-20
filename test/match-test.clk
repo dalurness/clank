@@ -8,7 +8,7 @@ area : (s: Shape) -> <> Rat =
     Rect(w, h) => w * h
   }
 
-main : () -> <> () =
+main : () -> <io> () =
   let c = Circle(5.0)
   let r = Rect(3.0, 4.0)
   let a1 = area(c)

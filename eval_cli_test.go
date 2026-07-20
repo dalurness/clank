@@ -62,6 +62,45 @@ func TestEval_TypeBuiltinSymbol(t *testing.T) {
 	}
 }
 
+func TestEval_TypeShowsBuiltinEffects(t *testing.T) {
+	// print performs io; fs.read performs io and exn. eval --type now
+	// surfaces builtin effect rows.
+	stdout, _, exitCode := runClank(t, "eval", "--type", `print("x")`)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "io") {
+		t.Errorf("expected io effect for print, got %q", stdout)
+	}
+
+	stdout, _, exitCode = runClank(t, "eval", "--type", "fs.read")
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "io") || !strings.Contains(stdout, "exn") {
+		t.Errorf("expected <io, exn> for fs.read, got %q", stdout)
+	}
+}
+
+func TestEval_TypeJSONBuiltinEffects(t *testing.T) {
+	stdout, _, exitCode := runClank(t, "--json", "eval", "--type", `print("x")`)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d\nstdout: %s", exitCode, stdout)
+	}
+	var env struct {
+		OK   bool `json:"ok"`
+		Data *struct {
+			Effects []string `json:"effects"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		t.Fatalf("bad json: %v\n%s", err, stdout)
+	}
+	if env.Data == nil || len(env.Data.Effects) != 1 || env.Data.Effects[0] != "io" {
+		t.Errorf("expected effects [io], got %+v", env.Data)
+	}
+}
+
 func TestEval_TypeErrorFails(t *testing.T) {
 	stdout, stderr, exitCode := runClank(t, "eval", "--type", "1 + true")
 	if exitCode != 1 {

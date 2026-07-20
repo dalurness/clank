@@ -55,7 +55,7 @@ func ShowType(t checker.Type) string {
 					names[i] = fmt.Sprintf("e%d", e.ID)
 				}
 			}
-			effs = " {" + strings.Join(names, ", ") + "}"
+			effs = " <" + strings.Join(names, ", ") + ">"
 		}
 		paramStr := ShowType(t.Param)
 		if _, ok := t.Param.(checker.TFn); ok {
@@ -123,7 +123,7 @@ func ShowTypeExpr(te ast.TypeExpr) string {
 			for i, e := range te.Effects {
 				names[i] = e.Name
 			}
-			effs = " {" + strings.Join(names, ", ") + "}"
+			effs = " <" + strings.Join(names, ", ") + ">"
 		}
 		return ShowTypeExpr(te.Param) + " ->" + effs + " " + ShowTypeExpr(te.Result)
 	case ast.TypeGeneric:

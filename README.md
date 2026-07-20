@@ -82,7 +82,7 @@ main : () -> <io> () =
   print(show(factorial(10)))
 ```
 
-Every function declares its effect row. `<>` means pure; `<io>` means performs I/O.
+Every function declares its effect row. `<>` means pure; `<io>` means performs I/O. Effect rows are inferred and enforced: the checker tracks the effects of builtin calls (`print`→`<io>`, `fs.read`→`<io, exn>`, `spawn`→`<async>`) and propagates them through calls and higher-order functions, so an under-declared row is a compile error (E401).
 
 ### Sum types and pattern matching
 

@@ -8,9 +8,10 @@ import (
 
 // InferredInfo is the checker's answer for a single definition: the
 // resolved type of its body (rendered with readable typevar names) and
-// the user-declared effects the body performs. Builtin effects (io from
-// print, net from http.*) are not tracked by the checker and so are not
-// reported here.
+// the effects the body performs. Effects include those from builtin calls
+// (io from print, io+exn from fs.read, async from spawn, ...) as well as
+// user-declared operations, propagated transitively through calls and
+// effect-polymorphic higher-order functions.
 type InferredInfo struct {
 	Type    string
 	Effects []string

@@ -2,7 +2,7 @@
 # The template doubles as the schema; the checker gives the result the
 # template's record type. Some(exemplar) fields are optional.
 
-main : () -> <io> () =
+main : () -> <io, exn> () =
   let body = "{\"name\": \"widget\", \"age\": 42, \"score\": 9.5, \"tags\": [\"a\", \"b\"], \"nick\": null, \"extra\": true}"
   let user = json.as(json.dec(body), {name: "", age: 0, score: 0.0, tags: [""], nick: Some("")})
   let _ = print(user.name ++ " " ++ show(user.age) ++ " " ++ show(user.score))

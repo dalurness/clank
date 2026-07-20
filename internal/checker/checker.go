@@ -31,20 +31,128 @@ type checkerState struct {
 	fnParamTypeExps map[string][]ast.TypeExpr
 
 	// Row/type variable substitution
-	rowSubst         map[int]*rowSubstEntry
-	effectRowSubst   map[int]*effectRowSubstEntry
-	namedRowVars     map[string]int
-	namedEffectVars  map[string]int
-	typeSubst        map[int]Type
-	knownTypes       map[string]bool
-	fnTypeParamVs    map[string]map[string]Type
+	rowSubst        map[int]*rowSubstEntry
+	effectRowSubst  map[int]*effectRowSubstEntry
+	namedRowVars    map[string]int
+	namedEffectVars map[string]int
+	typeSubst       map[int]Type
+	knownTypes      map[string]bool
+	fnTypeParamVs   map[string]map[string]Type
 
 	// Registries
 	implRegistry map[string][]implEntry
 
 	// Module resolution
-	moduleResolver             ModuleTypeResolver
-	moduleEffectAliasResolver  ModuleEffectAliasResolver
+	moduleResolver            ModuleTypeResolver
+	moduleEffectAliasResolver ModuleEffectAliasResolver
+
+	// Effect inference: opMap resolves an operation name to its effect
+	// (user `effect` decls plus builtin `raise`→`exn`). effectScopes is a
+	// stack of the effects performed by the function/lambda body currently
+	// being inferred; the top scope accumulates effects from applications
+	// and `perform`, and is checked against the declared row at the def
+	// boundary. Empty stack = not inside a tracked body (effects ignored).
+	opMap        effectOpMap
+	effectScopes []*effectScope
+}
+
+// effectScope accumulates the effects performed by one function or lambda
+// body during inference. `named` holds concrete effect labels (io, exn,
+// async, or user effect names); `tail` carries an unresolved open row
+// variable if a called function's effect row is still polymorphic (-1 if
+// none).
+type effectScope struct {
+	named map[string]bool
+	tail  int
+}
+
+// pushEffectScope begins accumulating effects for a new body.
+func (s *checkerState) pushEffectScope() {
+	s.effectScopes = append(s.effectScopes, &effectScope{named: make(map[string]bool), tail: -1})
+}
+
+// popEffectScope ends the current body's accumulation and returns it.
+func (s *checkerState) popEffectScope() *effectScope {
+	n := len(s.effectScopes)
+	if n == 0 {
+		return &effectScope{named: make(map[string]bool), tail: -1}
+	}
+	sc := s.effectScopes[n-1]
+	s.effectScopes = s.effectScopes[:n-1]
+	return sc
+}
+
+// addEffectName records a single concrete effect in the current scope.
+// No-op when not inside a tracked body.
+func (s *checkerState) addEffectName(name string) {
+	if n := len(s.effectScopes); n > 0 {
+		s.effectScopes[n-1].named[name] = true
+	}
+}
+
+// effectScopeToRow renders an accumulated scope as an effect row: its
+// concrete effects (sorted for determinism) plus an open tail variable if
+// one was propagated from a polymorphic callee.
+func effectScopeToRow(sc *effectScope) []Effect {
+	names := make([]string, 0, len(sc.named))
+	for n := range sc.named {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	row := make([]Effect, 0, len(names)+1)
+	for _, n := range names {
+		row = append(row, ENamed{Name: n})
+	}
+	if sc.tail >= 0 {
+		row = append(row, EVar{ID: sc.tail})
+	}
+	return row
+}
+
+// addEffectRow records a resolved effect row (concrete effects plus an
+// optional open tail) in the current scope. No-op when not inside a
+// tracked body.
+func (s *checkerState) addEffectRow(effects []Effect) {
+	n := len(s.effectScopes)
+	if n == 0 {
+		return
+	}
+	resolved, tail := s.applyEffectRowSubst(effects)
+	sc := s.effectScopes[n-1]
+	for _, e := range resolved {
+		if en, ok := e.(ENamed); ok {
+			sc.named[en.Name] = true
+		}
+	}
+	if tail >= 0 {
+		sc.tail = tail
+	}
+}
+
+// declaredEffectRow resolves a signature's declared effect row (expanding
+// aliases and applying subtraction) into concrete effects and row
+// variables. Attaching it to a function's type lets call sites propagate
+// the callee's effects into the caller's inferred row. Alias-resolution
+// errors are surfaced by the main pass, so they are discarded here.
+func (s *checkerState) declaredEffectRow(effects, subtracted []ast.EffectRef, aliases map[string]*effectAliasEntry) []Effect {
+	var ignore []TypeError
+	expanded := expandEffects(effects, aliases, &ignore, token.Loc{})
+	expandedSub := expandEffects(subtracted, aliases, &ignore, token.Loc{})
+	resolved := resolveEffectSubtraction(expanded, expandedSub, &ignore, token.Loc{})
+	var row []Effect
+	for _, r := range resolved {
+		if s.isEffectRowVar(r.Name) {
+			id, ok := s.namedEffectVars[r.Name]
+			if !ok {
+				id = FreshVar()
+				s.namedEffectVars[r.Name] = id
+			}
+			row = append(row, EVar{ID: id})
+		} else {
+			row = append(row, ENamed{Name: r.Name})
+		}
+	}
+	return row
 }
 
 // ModuleTypeResolver resolves a module path to exported name → type.
@@ -1399,12 +1507,21 @@ func showTypeWith(t Type, varNames map[int]string) string {
 				case ENamed:
 					names[i] = e.Name
 				case EVar:
-					names[i] = fmt.Sprintf("e%d", e.ID)
+					if varNames == nil {
+						names[i] = fmt.Sprintf("e%d", e.ID)
+					} else {
+						name, ok := varNames[e.ID]
+						if !ok {
+							name = string(rune('a' + len(varNames)%26))
+							varNames[e.ID] = name
+						}
+						names[i] = name
+					}
 				default:
 					names[i] = "?"
 				}
 			}
-			effs = " {" + strings.Join(names, ", ") + "}"
+			effs = " <" + strings.Join(names, ", ") + ">"
 		}
 		return fmt.Sprintf("(%s ->%s %s)", showTypeWith(t.Param, varNames), effs, showTypeWith(t.Result, varNames))
 	case TList:
@@ -2508,7 +2625,7 @@ func (s *checkerState) inferExpr(
 
 		if !typeEqual(thenType, elseType) && !numCompatible(thenType, elseType) {
 			*errors = append(*errors, TypeError{
-				Code:     "E302",
+				Code: "E302",
 				Message: func() string {
 					a, b := s.showT2(thenType, elseType)
 					return fmt.Sprintf("if branches have different types: %s vs %s", a, b)
@@ -2534,7 +2651,14 @@ func (s *checkerState) inferExpr(
 				aff.registerAffine(p.Name, e.Loc)
 			}
 		}
+		// A lambda's body effects belong to the lambda's type, not the
+		// enclosing body — they fire when the lambda is called. Infer the
+		// body in its own scope and attach the accumulated row to the
+		// lambda's last (result-producing) arrow so higher-order callers
+		// can propagate it via effect-row unification.
+		s.pushEffectScope()
 		retType := s.inferExpr(e.Body, lamEnv, errors, registry, aff)
+		lamScope := s.popEffectScope()
 		if containsBorrow(retType) {
 			*errors = append(*errors, TypeError{
 				Code:     "E603",
@@ -2551,12 +2675,17 @@ func (s *checkerState) inferExpr(
 				})
 			}
 		}
+		lamEffects := effectScopeToRow(lamScope)
 		var fnType Type = retType
 		if len(paramTypes) == 0 {
-			fnType = NewTFn(TUnit, fnType)
+			fnType = TFn{Param: TUnit, Result: fnType, Effects: lamEffects}
 		} else {
 			for i := len(paramTypes) - 1; i >= 0; i-- {
-				fnType = NewTFn(paramTypes[i], fnType)
+				if i == len(paramTypes)-1 {
+					fnType = TFn{Param: paramTypes[i], Result: fnType, Effects: lamEffects}
+				} else {
+					fnType = NewTFn(paramTypes[i], fnType)
+				}
 			}
 		}
 		return fnType
@@ -2565,18 +2694,25 @@ func (s *checkerState) inferExpr(
 		rawFnType := s.inferExpr(e.Fn, env, errors, registry, aff)
 		fnType := s.freshenRowVars(rawFnType, nil)
 		if fn, ok := fnType.(TFn); ok {
-			// 0-arg call on Unit -> T
+			// 0-arg call on Unit -> T: the single arrow is consumed, so its
+			// effects fire.
 			if len(e.Args) == 0 {
 				if p, ok := fn.Param.(TPrimitive); ok && p.Name == "unit" {
+					s.addEffectRow(fn.Effects)
 					return fn.Result
 				}
 			}
-			// Uncurry
+			// Uncurry, collecting the effect rows of each arrow actually
+			// consumed by this application. By convention effects sit on the
+			// last arrow, so a full application incurs them while a partial
+			// application (which stops short of that arrow) stays pure.
 			var paramTypes []Type
+			var consumedEffects []Effect
 			cur := fnType
 			for {
 				if f, ok := cur.(TFn); ok && len(paramTypes) < len(e.Args) {
 					paramTypes = append(paramTypes, f.Param)
+					consumedEffects = append(consumedEffects, f.Effects...)
 					cur = f.Result
 				} else {
 					break
@@ -2614,6 +2750,12 @@ func (s *checkerState) inferExpr(
 						Location: e.Args[i].ExprLoc(),
 					})
 				}
+			}
+
+			// The effects of the consumed arrows fire now that the args (and
+			// thus any effect-row variables in the callee's type) are bound.
+			if len(consumedEffects) > 0 {
+				s.addEffectRow(consumedEffects)
 			}
 
 			// Refinement checking at call sites
@@ -2784,7 +2926,7 @@ func (s *checkerState) inferExpr(
 				resultType = armType
 			} else if !typeEqual(resultType, armType) && !numCompatible(resultType, armType) {
 				*errors = append(*errors, TypeError{
-					Code:     "E305",
+					Code: "E305",
 					Message: func() string {
 						a, b := s.showT2(resultType, armType)
 						return fmt.Sprintf("match arms have inconsistent types: %s vs %s", a, b)
@@ -2813,7 +2955,7 @@ func (s *checkerState) inferExpr(
 			et := s.inferExpr(e.Elements[i], env, errors, registry, aff)
 			if !typeEqual(elemType, et) && !numCompatible(elemType, et) {
 				*errors = append(*errors, TypeError{
-					Code:     "E306",
+					Code: "E306",
 					Message: func() string {
 						got, want := s.showT2(et, elemType)
 						return fmt.Sprintf("list element %d has type %s, expected %s", i+1, got, want)
@@ -2832,7 +2974,30 @@ func (s *checkerState) inferExpr(
 		return TTuple{Elements: elems}
 
 	case ast.ExprHandle:
+		// Infer the handled computation in a child effect scope so the
+		// effects it performs can have the handled operations discharged
+		// before the remainder flows to the enclosing body. io/async are
+		// not user-handleable and so are never in the discharge set.
+		s.pushEffectScope()
 		exprType := s.inferExpr(e.Expr, env, errors, registry, aff)
+		inner := s.popEffectScope()
+		discharged := make(map[string]bool)
+		for _, arm := range e.Arms {
+			if arm.Name == "return" {
+				continue
+			}
+			if eff, ok := s.opMap[arm.Name]; ok {
+				discharged[eff] = true
+			}
+		}
+		for name := range inner.named {
+			if !discharged[name] {
+				s.addEffectName(name)
+			}
+		}
+		if inner.tail >= 0 {
+			s.addEffectRow([]Effect{EVar{ID: inner.tail}})
+		}
 		resultType := TAny
 		for _, arm := range e.Arms {
 			armEnv := env.extend()
@@ -2872,6 +3037,18 @@ func (s *checkerState) inferExpr(
 
 	case ast.ExprPerform:
 		preErr := len(*errors)
+		// Record the performed effect in the current body's scope. The
+		// operation name is the callee when the perform wraps a call, else
+		// the bare identifier (mirrors walkEffects' extraction).
+		var opExpr ast.Expr = e.Expr
+		if app, ok := e.Expr.(ast.ExprApply); ok {
+			opExpr = app.Fn
+		}
+		if v, ok := opExpr.(ast.ExprVar); ok {
+			if eff, ok := s.opMap[v.Name]; ok {
+				s.addEffectName(eff)
+			}
+		}
 		t := s.inferExpr(e.Expr, env, errors, registry, aff)
 		// Effect operations take exactly one parameter; a multi-arg perform
 		// surfaces as a bare arity error, so add the tuple hint.
@@ -3102,7 +3279,7 @@ func (s *checkerState) inferExpr(
 			bodyType := s.inferExpr(e.Body, forEnv, errors, registry, aff)
 			if !typeEqual(bodyType, initType) && !numCompatible(bodyType, initType) {
 				*errors = append(*errors, TypeError{
-					Code:     "E302",
+					Code: "E302",
 					Message: func() string {
 						a, b := s.showT2(bodyType, initType)
 						return fmt.Sprintf("for-fold body type %s doesn't match accumulator type %s", a, b)
@@ -3336,7 +3513,7 @@ func registerBuiltins(env *typeEnv) {
 	env.set("or", NewTFn(TBool, NewTFn(TBool, TBool)))
 	// Strings
 	env.set("str.cat", NewTFn(TStr, NewTFn(TStr, TStr)))
-	env.set("print", NewTFn(TStr, TUnit))
+	env.set("print", NewTFn(TStr, TUnit, ENamed{"io"}))
 	// concat is polymorphic: Str -> Str -> Str or [a] -> [a] -> [a]
 
 	// More string operations
@@ -3369,63 +3546,79 @@ func registerBuiltins(env *typeEnv) {
 	})
 	registerPolyBuiltin(env, "rev", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, TList{Element: v[0]}) })
 	registerPolyBuiltin(env, "get", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, NewTFn(TInt, v[0])) })
+	// map/filter/fold/flat-map are effect-polymorphic: a shared effect
+	// variable links the callback's effect row to the result, so the
+	// callback's effect propagates to the caller (and an effectful lambda
+	// is accepted where a pure one would be too).
 	registerPolyBuiltin(env, "map", 2, func(v []Type) Type {
-		return NewTFn(TList{Element: v[0]}, NewTFn(NewTFn(v[0], v[1]), TList{Element: v[1]}))
+		e := EVar{ID: FreshVar()}
+		cb := TFn{Param: v[0], Result: v[1], Effects: []Effect{e}}
+		return NewTFn(TList{Element: v[0]}, TFn{Param: cb, Result: TList{Element: v[1]}, Effects: []Effect{e}})
 	})
 	registerPolyBuiltin(env, "filter", 1, func(v []Type) Type {
-		return NewTFn(TList{Element: v[0]}, NewTFn(NewTFn(v[0], TBool), TList{Element: v[0]}))
+		e := EVar{ID: FreshVar()}
+		cb := TFn{Param: v[0], Result: TBool, Effects: []Effect{e}}
+		return NewTFn(TList{Element: v[0]}, TFn{Param: cb, Result: TList{Element: v[0]}, Effects: []Effect{e}})
 	})
 	registerPolyBuiltin(env, "fold", 2, func(v []Type) Type {
-		return NewTFn(TList{Element: v[0]}, NewTFn(v[1], NewTFn(NewTFn(v[1], NewTFn(v[0], v[1])), v[1])))
+		e := EVar{ID: FreshVar()}
+		reducer := NewTFn(v[1], TFn{Param: v[0], Result: v[1], Effects: []Effect{e}})
+		return NewTFn(TList{Element: v[0]}, NewTFn(v[1], TFn{Param: reducer, Result: v[1], Effects: []Effect{e}}))
 	})
 	registerPolyBuiltin(env, "flat-map", 2, func(v []Type) Type {
-		return NewTFn(TList{Element: v[0]}, NewTFn(NewTFn(v[0], TList{Element: v[1]}), TList{Element: v[1]}))
+		e := EVar{ID: FreshVar()}
+		cb := TFn{Param: v[0], Result: TList{Element: v[1]}, Effects: []Effect{e}}
+		return NewTFn(TList{Element: v[0]}, TFn{Param: cb, Result: TList{Element: v[1]}, Effects: []Effect{e}})
 	})
 	registerPolyBuiltin(env, "zip", 2, func(v []Type) Type {
 		return NewTFn(TList{Element: v[0]}, NewTFn(TList{Element: v[1]}, TList{Element: TTuple{Elements: []Type{v[0], v[1]}}}))
 	})
 	registerPolyBuiltin(env, "fst", 2, func(v []Type) Type { return NewTFn(TTuple{Elements: []Type{v[0], v[1]}}, v[0]) })
 	registerPolyBuiltin(env, "snd", 2, func(v []Type) Type { return NewTFn(TTuple{Elements: []Type{v[0], v[1]}}, v[1]) })
-	registerPolyBuiltin(env, "raise", 2, func(v []Type) Type { return NewTFn(v[0], v[1]) })
+	registerPolyBuiltin(env, "raise", 2, func(v []Type) Type { return NewTFn(v[0], v[1], ENamed{"exn"}) })
 
 	// Async / concurrency
 	env.set("async", TAny)
-	env.set("spawn", NewTFn(TAny, TAny))
-	env.set("await", NewTFn(TAny, TAny))
-	env.set("task-group", NewTFn(TAny, TAny))
-	env.set("task-yield", NewTFn(TUnit, TUnit))
-	env.set("sleep", NewTFn(TInt, TUnit))
-	env.set("is-cancelled", NewTFn(TUnit, TBool))
-	env.set("check-cancel", NewTFn(TUnit, TUnit))
-	env.set("shield", NewTFn(TAny, TAny))
+	env.set("spawn", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("await", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("task-group", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("task-yield", NewTFn(TUnit, TUnit, ENamed{"async"}))
+	env.set("sleep", NewTFn(TInt, TUnit, ENamed{"async"}))
+	env.set("is-cancelled", NewTFn(TUnit, TBool, ENamed{"async"}))
+	env.set("check-cancel", NewTFn(TUnit, TUnit, ENamed{"async"}))
+	env.set("shield", NewTFn(TAny, TAny, ENamed{"async"}))
 
 	// Channels
-	env.set("channel", NewTFn(TInt, TAny))
-	env.set("send", NewTFn(TAny, NewTFn(TAny, TUnit)))
-	env.set("recv", NewTFn(TAny, TAny))
-	env.set("try-recv", NewTFn(TAny, TAny))
-	env.set("recv-opt", NewTFn(TAny, TAny))
-	env.set("iter-recv", NewTFn(TAny, TAny))
-	env.set("select-wait", NewTFn(TAny, TAny))
-	env.set("close-sender", NewTFn(TAny, TUnit))
-	env.set("close-receiver", NewTFn(TAny, TUnit))
+	env.set("channel", NewTFn(TInt, TAny, ENamed{"async"}))
+	env.set("send", NewTFn(TAny, NewTFn(TAny, TUnit, ENamed{"async"})))
+	env.set("recv", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("try-recv", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("recv-opt", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("iter-recv", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("select-wait", NewTFn(TAny, TAny, ENamed{"async"}))
+	env.set("close-sender", NewTFn(TAny, TUnit, ENamed{"async"}))
+	env.set("close-receiver", NewTFn(TAny, TUnit, ENamed{"async"}))
 
-	// Filesystem (std.fs)
-	env.set("fs.read", NewTFn(TStr, TStr))
-	env.set("fs.write", NewTFn(TStr, NewTFn(TStr, TUnit)))
-	env.set("fs.exists", NewTFn(TStr, TBool))
-	env.set("fs.ls", NewTFn(TStr, TList{Element: TStr}))
-	env.set("fs.mkdir", NewTFn(TStr, TUnit))
-	env.set("fs.rm", NewTFn(TStr, TUnit))
+	// Filesystem (std.fs). Reads that can fail to find their target carry
+	// <io, exn>; best-effort/status ops carry <io>.
+	env.set("fs.read", NewTFn(TStr, TStr, ENamed{"io"}, ENamed{"exn"}))
+	env.set("fs.write", NewTFn(TStr, NewTFn(TStr, TUnit, ENamed{"io"})))
+	env.set("fs.exists", NewTFn(TStr, TBool, ENamed{"io"}))
+	env.set("fs.ls", NewTFn(TStr, TList{Element: TStr}, ENamed{"io"}, ENamed{"exn"}))
+	env.set("fs.mkdir", NewTFn(TStr, TUnit, ENamed{"io"}))
+	env.set("fs.rm", NewTFn(TStr, TUnit, ENamed{"io"}))
 
 	// JSON (std.json)
 	env.set("json.enc", NewTFn(TAny, TStr))
-	env.set("json.dec", NewTFn(TStr, TAny))
+	// Decoding can fail on malformed input — <exn>, but no I/O.
+	env.set("json.dec", NewTFn(TStr, TAny, ENamed{"exn"}))
 	env.set("json.get", NewTFn(TAny, NewTFn(TStr, TAny)))
 	env.set("json.set", NewTFn(TAny, NewTFn(TStr, NewTFn(TAny, TAny))))
 	env.set("json.keys", NewTFn(TAny, TList{Element: TStr}))
 	env.set("json.merge", NewTFn(TAny, NewTFn(TAny, TAny)))
-	registerPolyBuiltin(env, "json.as", 1, func(v []Type) Type { return NewTFn(TAny, NewTFn(v[0], v[0])) })
+	// json.as fails on a shape mismatch (<exn>); json.or falls back to
+	// defaults and never fails (pure).
+	registerPolyBuiltin(env, "json.as", 1, func(v []Type) Type { return NewTFn(TAny, NewTFn(v[0], v[0], ENamed{"exn"})) })
 	registerPolyBuiltin(env, "json.or", 1, func(v []Type) Type { return NewTFn(TAny, NewTFn(v[0], v[0])) })
 
 	// Built-in Option constructors: Some/None are constructible without
@@ -3439,21 +3632,21 @@ func registerBuiltins(env *typeEnv) {
 	})
 
 	// Environment (std.env)
-	env.set("env.get", NewTFn(TStr, TAny))
-	env.set("env.set", NewTFn(TStr, NewTFn(TStr, TUnit)))
-	env.set("env.has", NewTFn(TStr, TBool))
-	env.set("env.all", NewTFn(TUnit, TAny))
+	env.set("env.get", NewTFn(TStr, TAny, ENamed{"io"}))
+	env.set("env.set", NewTFn(TStr, NewTFn(TStr, TUnit, ENamed{"io"})))
+	env.set("env.has", NewTFn(TStr, TBool, ENamed{"io"}))
+	env.set("env.all", NewTFn(TUnit, TAny, ENamed{"io"}))
 
-	// Process execution (std.proc)
-	env.set("proc.run", NewTFn(TStr, NewTFn(TList{Element: TStr}, TAny)))
-	env.set("proc.sh", NewTFn(TStr, TStr))
-	env.set("proc.exit", NewTFn(TInt, TUnit))
+	// Process execution (std.proc) — spawning can fail, so <io, exn>.
+	env.set("proc.run", NewTFn(TStr, NewTFn(TList{Element: TStr}, TAny, ENamed{"io"}, ENamed{"exn"})))
+	env.set("proc.sh", NewTFn(TStr, TStr, ENamed{"io"}, ENamed{"exn"}))
+	env.set("proc.exit", NewTFn(TInt, TUnit, ENamed{"io"}))
 
-	// HTTP (std.http)
-	env.set("http.get", NewTFn(TStr, TAny))
-	env.set("http.post", NewTFn(TStr, NewTFn(TStr, TAny)))
-	env.set("http.put", NewTFn(TStr, NewTFn(TStr, TAny)))
-	env.set("http.del", NewTFn(TStr, TAny))
+	// HTTP (std.http) — network calls can fail, so <io, exn>.
+	env.set("http.get", NewTFn(TStr, TAny, ENamed{"io"}, ENamed{"exn"}))
+	env.set("http.post", NewTFn(TStr, NewTFn(TStr, TAny, ENamed{"io"}, ENamed{"exn"})))
+	env.set("http.put", NewTFn(TStr, NewTFn(TStr, TAny, ENamed{"io"}, ENamed{"exn"})))
+	env.set("http.del", NewTFn(TStr, TAny, ENamed{"io"}, ENamed{"exn"}))
 
 	// Regex (std.rx)
 	env.set("rx.ok", NewTFn(TStr, NewTFn(TStr, TBool)))
@@ -3471,11 +3664,12 @@ func registerBuiltins(env *typeEnv) {
 	env.set("math.ceil", NewTFn(TAny, TInt))
 	env.set("math.sqrt", NewTFn(TAny, TAny))
 
-	// Streaming I/O
-	env.set("fs.stream-lines", NewTFn(TStr, TAny))
-	env.set("http.stream-lines", NewTFn(TStr, TAny))
-	env.set("proc.stream", NewTFn(TStr, TAny))
-	env.set("io.stdin-lines", NewTFn(TUnit, TAny))
+	// Streaming I/O — opening the stream can fail, so <io, exn>; stdin is
+	// always available so <io>.
+	env.set("fs.stream-lines", NewTFn(TStr, TAny, ENamed{"io"}, ENamed{"exn"}))
+	env.set("http.stream-lines", NewTFn(TStr, TAny, ENamed{"io"}, ENamed{"exn"}))
+	env.set("proc.stream", NewTFn(TStr, TAny, ENamed{"io"}, ENamed{"exn"}))
+	env.set("io.stdin-lines", NewTFn(TUnit, TAny, ENamed{"io"}))
 
 	// String operations
 	env.set("str.get", NewTFn(TStr, NewTFn(TInt, TStr)))
@@ -3507,17 +3701,18 @@ func registerBuiltins(env *typeEnv) {
 	env.set("srv.post", NewTFn(TAny, NewTFn(TStr, NewTFn(TAny, TAny))))
 	env.set("srv.put", NewTFn(TAny, NewTFn(TStr, NewTFn(TAny, TAny))))
 	env.set("srv.del", NewTFn(TAny, NewTFn(TStr, NewTFn(TAny, TAny))))
-	env.set("srv.start", NewTFn(TAny, NewTFn(TInt, TAny)))
-	env.set("srv.stop", NewTFn(TAny, TUnit))
+	env.set("srv.start", NewTFn(TAny, NewTFn(TInt, TAny, ENamed{"io"})))
+	env.set("srv.stop", NewTFn(TAny, TUnit, ENamed{"io"}))
 	env.set("srv.res", NewTFn(TInt, NewTFn(TStr, TAny)))
 	env.set("srv.json", NewTFn(TInt, NewTFn(TAny, TAny)))
 	env.set("srv.hdr", NewTFn(TAny, NewTFn(TStr, NewTFn(TStr, TAny))))
 	env.set("srv.mw", NewTFn(TAny, NewTFn(TAny, TAny)))
 
-	// DateTime (std.dt)
-	env.set("dt.now", NewTFn(TUnit, TAny))
-	env.set("dt.unix", NewTFn(TUnit, TInt))
-	env.set("dt.unix-ms", NewTFn(TUnit, TInt))
+	// DateTime (std.dt) — reading the clock is I/O; the rest are pure
+	// transformations.
+	env.set("dt.now", NewTFn(TUnit, TAny, ENamed{"io"}))
+	env.set("dt.unix", NewTFn(TUnit, TInt, ENamed{"io"}))
+	env.set("dt.unix-ms", NewTFn(TUnit, TInt, ENamed{"io"}))
 	env.set("dt.from", NewTFn(TInt, TAny))
 	env.set("dt.to", NewTFn(TAny, TInt))
 	env.set("dt.parse", NewTFn(TStr, NewTFn(TStr, TAny)))
@@ -3537,26 +3732,26 @@ func registerBuiltins(env *typeEnv) {
 	tCsvData := TList{Element: tStrList}
 	env.set("csv.dec", NewTFn(TStr, tCsvData))
 	env.set("csv.enc", NewTFn(tCsvData, TStr))
-	env.set("csv.decf", NewTFn(TStr, tCsvData))
-	env.set("csv.encf", NewTFn(TStr, NewTFn(tCsvData, TUnit)))
+	env.set("csv.decf", NewTFn(TStr, tCsvData, ENamed{"io"}, ENamed{"exn"}))
+	env.set("csv.encf", NewTFn(TStr, NewTFn(tCsvData, TUnit, ENamed{"io"})))
 	env.set("csv.hdr", NewTFn(tCsvData, tStrList))
 	env.set("csv.rows", NewTFn(tCsvData, tCsvData))
 	env.set("csv.maps", NewTFn(tCsvData, TAny))
 	env.set("csv.opts", NewTFn(TAny, NewTFn(TStr, tCsvData)))
 
 	// Logging (std.log)
-	env.set("log.trace", NewTFn(TStr, TUnit))
-	env.set("log.debug", NewTFn(TStr, TUnit))
-	env.set("log.info", NewTFn(TStr, TUnit))
-	env.set("log.warn", NewTFn(TStr, TUnit))
-	env.set("log.error", NewTFn(TStr, TUnit))
-	env.set("log.level", NewTFn(TStr, TUnit))
-	env.set("log.ctx", NewTFn(TStr, NewTFn(TStr, TUnit)))
-	env.set("log.json", NewTFn(TBool, TUnit))
+	env.set("log.trace", NewTFn(TStr, TUnit, ENamed{"io"}))
+	env.set("log.debug", NewTFn(TStr, TUnit, ENamed{"io"}))
+	env.set("log.info", NewTFn(TStr, TUnit, ENamed{"io"}))
+	env.set("log.warn", NewTFn(TStr, TUnit, ENamed{"io"}))
+	env.set("log.error", NewTFn(TStr, TUnit, ENamed{"io"}))
+	env.set("log.level", NewTFn(TStr, TUnit, ENamed{"io"}))
+	env.set("log.ctx", NewTFn(TStr, NewTFn(TStr, TUnit, ENamed{"io"})))
+	env.set("log.json", NewTFn(TBool, TUnit, ENamed{"io"}))
 
 	// CLI (std.cli)
-	env.set("cli.args", NewTFn(TUnit, TList{Element: TStr}))
-	env.set("cli.parse", NewTFn(TAny, TAny))
+	env.set("cli.args", NewTFn(TUnit, TList{Element: TStr}, ENamed{"io"}))
+	env.set("cli.parse", NewTFn(TAny, TAny, ENamed{"io"}))
 	env.set("cli.opt", NewTFn(TStr, NewTFn(TStr, NewTFn(TStr, TAny))))
 	env.set("cli.req", NewTFn(TAny, TAny))
 	env.set("cli.def", NewTFn(TAny, NewTFn(TStr, TAny)))
@@ -3631,8 +3826,12 @@ func registerBuiltins(env *typeEnv) {
 	registerPolyBuiltin(env, "col.enum", 1, func(v []Type) Type {
 		return NewTFn(TList{Element: v[0]}, TList{Element: TTuple{Elements: []Type{TInt, v[0]}}})
 	})
-	registerPolyBuiltin(env, "col.chunk", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}})) })
-	registerPolyBuiltin(env, "col.win", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}})) })
+	registerPolyBuiltin(env, "col.chunk", 1, func(v []Type) Type {
+		return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}}))
+	})
+	registerPolyBuiltin(env, "col.win", 1, func(v []Type) Type {
+		return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}}))
+	})
 	registerPolyBuiltin(env, "col.intersperse", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, NewTFn(v[0], TList{Element: v[0]})) })
 	registerPolyBuiltin(env, "col.rep", 1, func(v []Type) Type { return NewTFn(v[0], NewTFn(TInt, TList{Element: v[0]})) })
 	env.set("col.sum", NewTFn(TList{Element: TInt}, TInt))
@@ -3647,123 +3846,10 @@ func registerBuiltins(env *typeEnv) {
 	})
 }
 
-// ── Effect collection ──
-
+// effectOpMap maps an operation name to the effect it performs — user
+// `effect` declaration ops plus the builtin `raise`→`exn`. Consulted by
+// inferExpr's perform/handle handling to accumulate and discharge effects.
 type effectOpMap = map[string]string
-
-func collectEffects(expr ast.Expr, opMap effectOpMap, handled map[string]bool) map[string]bool {
-	effects := make(map[string]bool)
-	walkEffects(expr, opMap, handled, effects)
-	return effects
-}
-
-func walkEffects(e ast.Expr, opMap effectOpMap, handled, effects map[string]bool) {
-	switch e := e.(type) {
-	case ast.ExprPerform:
-		var inner ast.Expr
-		if app, ok := e.Expr.(ast.ExprApply); ok {
-			inner = app.Fn
-		} else {
-			inner = e.Expr
-		}
-		if v, ok := inner.(ast.ExprVar); ok {
-			if eff, ok := opMap[v.Name]; ok {
-				if !handled[eff] {
-					effects[eff] = true
-				}
-			}
-		}
-		walkEffects(e.Expr, opMap, handled, effects)
-	case ast.ExprHandle:
-		innerHandled := make(map[string]bool, len(handled))
-		for k := range handled {
-			innerHandled[k] = true
-		}
-		for _, arm := range e.Arms {
-			if arm.Name != "return" {
-				if eff, ok := opMap[arm.Name]; ok {
-					innerHandled[eff] = true
-				}
-			}
-		}
-		for eff := range collectEffects(e.Expr, opMap, innerHandled) {
-			effects[eff] = true
-		}
-		for _, arm := range e.Arms {
-			walkEffects(arm.Body, opMap, handled, effects)
-		}
-	case ast.ExprLet:
-		walkEffects(e.Value, opMap, handled, effects)
-		if e.Body != nil {
-			walkEffects(e.Body, opMap, handled, effects)
-		}
-	case ast.ExprIf:
-		walkEffects(e.Cond, opMap, handled, effects)
-		walkEffects(e.Then, opMap, handled, effects)
-		walkEffects(e.Else, opMap, handled, effects)
-	case ast.ExprLambda:
-		walkEffects(e.Body, opMap, handled, effects)
-	case ast.ExprApply:
-		walkEffects(e.Fn, opMap, handled, effects)
-		for _, a := range e.Args {
-			walkEffects(a, opMap, handled, effects)
-		}
-	case ast.ExprMatch:
-		walkEffects(e.Subject, opMap, handled, effects)
-		for _, arm := range e.Arms {
-			walkEffects(arm.Body, opMap, handled, effects)
-		}
-	case ast.ExprList:
-		for _, el := range e.Elements {
-			walkEffects(el, opMap, handled, effects)
-		}
-	case ast.ExprTuple:
-		for _, el := range e.Elements {
-			walkEffects(el, opMap, handled, effects)
-		}
-	case ast.ExprBlock:
-		for _, expr := range e.Exprs {
-			walkEffects(expr, opMap, handled, effects)
-		}
-	case ast.ExprFor:
-		walkEffects(e.Collection, opMap, handled, effects)
-		if e.Guard != nil {
-			walkEffects(e.Guard, opMap, handled, effects)
-		}
-		if e.Fold != nil {
-			walkEffects(e.Fold.Init, opMap, handled, effects)
-		}
-		walkEffects(e.Body, opMap, handled, effects)
-	case ast.ExprRange:
-		walkEffects(e.Start, opMap, handled, effects)
-		walkEffects(e.End, opMap, handled, effects)
-	case ast.ExprPipeline:
-		walkEffects(e.Left, opMap, handled, effects)
-		walkEffects(e.Right, opMap, handled, effects)
-	case ast.ExprInfix:
-		walkEffects(e.Left, opMap, handled, effects)
-		walkEffects(e.Right, opMap, handled, effects)
-	case ast.ExprUnary:
-		walkEffects(e.Operand, opMap, handled, effects)
-	case ast.ExprRecord:
-		for _, f := range e.Fields {
-			walkEffects(f.Value, opMap, handled, effects)
-		}
-	case ast.ExprRecordUpdate:
-		walkEffects(e.Base, opMap, handled, effects)
-		for _, f := range e.Fields {
-			walkEffects(f.Value, opMap, handled, effects)
-		}
-	case ast.ExprFieldAccess:
-		walkEffects(e.Object, opMap, handled, effects)
-	case ast.ExprBorrow:
-		walkEffects(e.Expr, opMap, handled, effects)
-	case ast.ExprClone:
-		walkEffects(e.Expr, opMap, handled, effects)
-	case ast.ExprDiscard:
-		walkEffects(e.Expr, opMap, handled, effects)
-	}
-}
 
 // ── Effect aliases ──
 
@@ -3909,7 +3995,6 @@ func TypeCheckWithModules(program *ast.Program, resolver ModuleTypeResolver) []T
 	return typeCheckImpl(program, resolver, nil, nil)
 }
 
-
 // TypeCheckWithResolvers validates a program with cross-package type and effect alias resolution.
 func TypeCheckWithResolvers(program *ast.Program, typeResolver ModuleTypeResolver, aliasResolver ModuleEffectAliasResolver) []TypeError {
 	return typeCheckImpl(program, typeResolver, aliasResolver, nil)
@@ -3919,26 +4004,33 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 	var errors []TypeError
 
 	s := &checkerState{
-		fnRefInfo:                  make(map[string]*fnRefInfo),
-		varRefinements:             make(map[string]string),
-		fnConstraints:              make(map[string]*fnConstraintInfo),
-		fnParamTypeExps:            make(map[string][]ast.TypeExpr),
-		rowSubst:                   make(map[int]*rowSubstEntry),
-		effectRowSubst:             make(map[int]*effectRowSubstEntry),
-		namedRowVars:               make(map[string]int),
-		namedEffectVars:            make(map[string]int),
-		typeSubst:                  make(map[int]Type),
-		knownTypes:                 make(map[string]bool),
-		fnTypeParamVs:              make(map[string]map[string]Type),
-		implRegistry:               make(map[string][]implEntry),
-		moduleResolver:             resolver,
-		moduleEffectAliasResolver:  aliasResolver,
+		fnRefInfo:                 make(map[string]*fnRefInfo),
+		varRefinements:            make(map[string]string),
+		fnConstraints:             make(map[string]*fnConstraintInfo),
+		fnParamTypeExps:           make(map[string][]ast.TypeExpr),
+		rowSubst:                  make(map[int]*rowSubstEntry),
+		effectRowSubst:            make(map[int]*effectRowSubstEntry),
+		namedRowVars:              make(map[string]int),
+		namedEffectVars:           make(map[string]int),
+		typeSubst:                 make(map[int]Type),
+		knownTypes:                make(map[string]bool),
+		fnTypeParamVs:             make(map[string]map[string]Type),
+		implRegistry:              make(map[string][]implEntry),
+		moduleResolver:            resolver,
+		moduleEffectAliasResolver: aliasResolver,
 	}
 	ResetVarCounter()
 
 	env := newTypeEnv(nil)
-	registry := make(map[string][]string)    // type name → variant names
-	opMap := make(effectOpMap)                // op name → effect name
+	registry := make(map[string][]string) // type name → variant names
+	opMap := make(effectOpMap)            // op name → effect name
+	// The builtin `raise` performs `exn`; seeding it here lets `handle`
+	// arms named `raise` discharge exn and keeps perform/handle symmetric.
+	opMap["raise"] = "exn"
+	// Share opMap with the checker state so inferExpr can resolve perform
+	// ops and handle discharges. Same map reference: first-pass population
+	// of user effect ops below is visible here too.
+	s.opMap = opMap
 	effectAliases := make(map[string]*effectAliasEntry)
 	interfaces := make(map[string]*interfaceEntry)
 	affineTypes := make(map[string]bool)
@@ -4006,6 +4098,23 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 	}
 	s.knownTypes["Ordering"] = true
 	s.knownTypes["Self"] = true
+
+	// Resolve effect aliases up front (in source order) so that when
+	// function signatures are registered below, an aliased effect row can
+	// be expanded and attached to the function's type — enabling accurate
+	// cross-call effect propagation. Errors here are reported when each
+	// alias is re-validated during the main pass.
+	{
+		var ignore []TypeError
+		for _, tl := range program.TopLevels {
+			if d, ok := tl.(ast.TopEffectAlias); ok {
+				expandedBase := expandEffects(d.Effects, effectAliases, &ignore, d.Loc)
+				expandedSub := expandEffects(d.Subtracted, effectAliases, &ignore, d.Loc)
+				resolved := resolveEffectSubtraction(expandedBase, expandedSub, &ignore, d.Loc)
+				effectAliases[d.Name] = &effectAliasEntry{params: d.Params, effects: resolved}
+			}
+		}
+	}
 
 	// First pass: register declarations
 	for _, tl := range program.TopLevels {
@@ -4307,6 +4416,10 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 				}
 			}
 
+			// The declared effect row attaches to the arrow that produces the
+			// return value (the last arrow of the curried chain), so callers
+			// propagate this function's effects into their own inferred row.
+			effRow := s.declaredEffectRow(d.Sig.Effects, d.Sig.Subtracted, effectAliases)
 			if len(sigTypeParams) > 0 {
 				varMapping := make(map[string]Type, len(sigTypeParams))
 				var varIds []int
@@ -4319,11 +4432,16 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 				retType := resolveTypeWithVars(d.Sig.ReturnType, varMapping, s)
 				var fnType Type
 				if len(d.Sig.Params) == 0 {
-					fnType = NewTFn(TUnit, retType)
+					fnType = TFn{Param: TUnit, Result: retType, Effects: effRow}
 				} else {
 					fnType = retType
 					for i := len(d.Sig.Params) - 1; i >= 0; i-- {
-						fnType = NewTFn(resolveTypeWithVars(d.Sig.Params[i].Type, varMapping, s), fnType)
+						param := resolveTypeWithVars(d.Sig.Params[i].Type, varMapping, s)
+						if i == len(d.Sig.Params)-1 {
+							fnType = TFn{Param: param, Result: fnType, Effects: effRow}
+						} else {
+							fnType = NewTFn(param, fnType)
+						}
 					}
 				}
 				env.set(d.Name, fnType)
@@ -4332,11 +4450,16 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 				retType := resolveType(d.Sig.ReturnType, s)
 				var fnType Type
 				if len(d.Sig.Params) == 0 {
-					fnType = NewTFn(TUnit, retType)
+					fnType = TFn{Param: TUnit, Result: retType, Effects: effRow}
 				} else {
 					fnType = retType
 					for i := len(d.Sig.Params) - 1; i >= 0; i-- {
-						fnType = NewTFn(resolveType(d.Sig.Params[i].Type, s), fnType)
+						param := resolveType(d.Sig.Params[i].Type, s)
+						if i == len(d.Sig.Params)-1 {
+							fnType = TFn{Param: param, Result: fnType, Effects: effRow}
+						} else {
+							fnType = NewTFn(param, fnType)
+						}
 					}
 				}
 				env.set(d.Name, fnType)
@@ -4416,14 +4539,19 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 			}
 		}
 
+		s.pushEffectScope()
 		bodyType := s.inferExpr(def.Body, bodyEnv, &errors, registry, aff)
+		bodyScope := s.popEffectScope()
 		aff.checkUnconsumed(affineParams, def.Loc, &errors)
 
 		captureThisDef := capture != nil && def.Name == capture.defName
 		if captureThisDef {
 			capture.found = true
 			capture.bodyType = bodyType
-			capture.effects = collectEffects(def.Body, opMap, make(map[string]bool))
+			capture.effects = make(map[string]bool, len(bodyScope.named))
+			for name := range bodyScope.named {
+				capture.effects[name] = true
+			}
 		}
 
 		expectedRet := bodyResolve(def.Sig.ReturnType)
@@ -4464,7 +4592,7 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 			}
 			if !typeEqual(bodyType, expectedRet) && !numCompatible(bodyType, expectedRet) {
 				errors = append(errors, TypeError{
-					Code:     "E307",
+					Code: "E307",
 					Message: func() string {
 						got, want := s.showT2(bodyType, expectedRet)
 						return fmt.Sprintf("function '%s' returns %s, expected %s", def.Name, got, want)
@@ -4495,24 +4623,31 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 			}
 		}
 
-		// The captured definition also skips the W401 undeclared-effect
-		// warning — its declared row is the wrapper's `<>`, not something
-		// the user wrote. The performed effects are reported in the
-		// capture instead.
+		// The captured definition skips the effect check — its declared row
+		// is eval's `<>` wrapper, not something the user wrote. The performed
+		// effects are reported through the capture instead.
+		//
+		// Subsumption: declaring more effects than the body performs is fine
+		// (`<> ⊆ <io>`); only performing an effect the signature omits is an
+		// error. An open row-var tail in the declared row absorbs any extras.
 		if !hasEffectRowVar && !captureThisDef {
-			bodyEffects := collectEffects(def.Body, opMap, make(map[string]bool))
 			declaredEffects := make(map[string]bool, len(resolvedEffects))
 			for _, r := range resolvedEffects {
 				declaredEffects[r.Name] = true
 			}
-			for eff := range bodyEffects {
+			undeclared := make([]string, 0)
+			for eff := range bodyScope.named {
 				if !declaredEffects[eff] {
-					errors = append(errors, TypeError{
-						Code:     "W401",
-						Message:  fmt.Sprintf("function '%s' performs effect '%s' not declared in signature", def.Name, eff),
-						Location: def.Loc,
-					})
+					undeclared = append(undeclared, eff)
 				}
+			}
+			sort.Strings(undeclared)
+			for _, eff := range undeclared {
+				errors = append(errors, TypeError{
+					Code:     "E401",
+					Message:  fmt.Sprintf("function '%s' performs effect '%s' not declared in its signature — add <%s> to its effect row", def.Name, eff, eff),
+					Location: def.Loc,
+				})
 			}
 		}
 	}

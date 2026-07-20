@@ -2,7 +2,7 @@
 # iter.take(n) stops pulling before EOF; the file must still be closable —
 # previously fs.rm failed on Windows because the handle stayed open.
 
-main : () -> <io> () =
+main : () -> <io, exn> () =
   let dir = "stream-cleanup-tmp"
   let _ = fs.mkdir(dir)
   let path = dir ++ "/lines.txt"

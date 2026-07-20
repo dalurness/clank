@@ -10,7 +10,7 @@
 # true
 # overwritten
 
-main : () -> <io> () =
+main : () -> <io, exn> () =
   # Write and read a file
   let _ = fs.write("_test_out.txt", "hello from clank")
   let _ = print(fs.read("_test_out.txt"))
