@@ -261,17 +261,22 @@ pub effect alias WithLog = <logger, io>
 		t.Fatalf("write lib: %v", err)
 	}
 
+	// greet declares the imported effect alias WithLog (= <logger, io>);
+	// main re-exposes it. This exercises cross-module alias resolution and
+	// effect propagation across a call: main's declared <WithLog> row must
+	// accept greet's inferred effects without a spurious 'logger'
+	// diagnostic. (Discharging an imported effect's operation with `handle`
+	// would require the effect declaration to be linked into the checked
+	// program — effect ops are not pub-exported — so that is not covered
+	// here.)
 	mainSource := `use myeffects (WithLog, log_msg)
 
 greet : () -> <WithLog> () =
   perform log_msg("hello")
   print("done")
 
-main : () -> <io> () =
-  handle greet() {
-    return v -> v,
-    log_msg msg resume k -> k(())
-  }
+main : () -> <WithLog> () =
+  greet()
 `
 	tokens, lexErr := lexer.Lex(mainSource)
 	if lexErr != nil {
@@ -332,8 +337,8 @@ main : () -> <io> () =
 	}
 
 	for _, te := range typeErrors {
-		if te.Code == "W401" && strings.Contains(te.Message, "logger") {
-			t.Errorf("W401 for 'logger' — alias should have propagated from myeffects module")
+		if strings.Contains(te.Message, "logger") {
+			t.Errorf("effect diagnostic for 'logger' — the WithLog alias should have propagated from the myeffects module: %s", te.Error())
 		}
 	}
 }

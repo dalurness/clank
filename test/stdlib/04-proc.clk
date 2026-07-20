@@ -5,7 +5,7 @@
 # hello
 # hello world
 
-main : () -> <io> () =
+main : () -> <io, exn> () =
   let out = proc.sh("echo hello")
   let _ = print(trim(out))
 

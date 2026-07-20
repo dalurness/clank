@@ -5,7 +5,7 @@
 # world
 # bye
 
-main : () -> <io> () =
+main : () -> <io, exn> () =
   # Write a test file
   let _ = fs.write("_test_stream.txt", "hello\nworld\nbye")
 

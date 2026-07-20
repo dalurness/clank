@@ -33,7 +33,7 @@ fizz : (n: Int) -> <> Str =
     _ => show(n)
   }
 
-main : () -> <> () =
+main : () -> <io> () =
   print(describe(Red))
   print(describe(Blue))
   print(show(unwrap-or(Some(42), 0)))

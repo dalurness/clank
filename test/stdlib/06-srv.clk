@@ -2,7 +2,7 @@
 # Middleware registered first runs outermost; each middleware's 'next' invokes
 # the rest of the chain exactly once.
 
-main : () -> <io, async> () =
+main : () -> <io, async, exn> () =
   let routes = srv.new(())
     |> srv.get("/hello/:who", fn(req) => srv.res(200, "hello " ++ req.params.who))
     |> srv.mw(fn(req, next) => {
