@@ -536,7 +536,7 @@ Conflict resolution: if two packages require incompatible versions of the same d
 
 ---
 
-## 7. REPL / Eval Surface
+## 7. Eval Surface
 
 ### 7.1 `clank eval` — Single Expression Evaluation
 
@@ -546,7 +546,7 @@ clank eval "map([1,2,3], fn(x) => x * 2)"
 echo 'str.up("hi")' | clank eval --stdin         # code on stdin — immune to shell quoting
 clank eval --file snippet.clk                    # eval a file, print the result
 clank eval --file src/app/main.clk "mean([1,2,3])"  # eval expr with file's definitions in scope
-clank eval --type "map"                          # print type of symbol (see 7.3)
+clank eval --type "map"                          # print type of symbol (see 7.2)
 ```
 
 `clank eval` is the single inline-execution command: a bare expression is
@@ -587,24 +587,7 @@ program still runs. On a runtime error the envelope carries
 `"ok": false` and an `"error"` diagnostic alongside whatever `stdout` was
 produced.
 
-### 7.2 Session Mode (planned — not yet implemented)
-
-For multi-step exploration, `clank eval --session` maintains state across invocations via a session file:
-
-```bash
-clank eval --session my-session "let x = 42"
-clank eval --session my-session "x + 1"
-# => { "ok": true, "data": { "value": 43, "type": "Int", "effects": [] } }
-
-clank eval --session my-session --bindings
-# => { "bindings": [{ "name": "x", "type": "Int", "value": 42 }] }
-
-clank eval --session my-session --reset
-```
-
-Session state is stored at `.clank/sessions/<name>.json`. This lets an agent build up definitions incrementally, test hypotheses, and explore behavior — without managing a persistent REPL process.
-
-### 7.3 `clank eval --type`
+### 7.2 `clank eval --type`
 
 Print the checker's inferred type of an expression or symbol without
 evaluating anything:
@@ -860,10 +843,6 @@ MVS is deterministic without a lock file, simpler to reason about, and avoids th
 ### Why per-function checking?
 
 Agents edit code one function at a time. Checking the entire module after each edit wastes cycles. Per-function checking gives tight feedback loops — change a function, verify it, move on. The signature stability property means this doesn't cascade.
-
-### Why session-based eval instead of a persistent REPL?
-
-Agents don't maintain long-running processes well. A session file is stateless from the agent's perspective — it invokes `clank eval --session X "expr"` and gets a JSON response. No process management, no stdin/stdout coordination, no hanging connections.
 
 ### Why type-directed search in the package registry?
 
