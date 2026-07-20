@@ -97,6 +97,16 @@ Every function type includes an effect annotation: `T -> <effects> U`.
 
 Built-in effects: `io`, `exn[E]`, `async`. User-defined via `effect Name { op : T -> U }`. Effect aliases: `effect alias Pure = <>`.
 
+Effect rows are **inferred and enforced**, not decorative. Builtins carry
+their rows (`print : Str -> <io> ()`, `fs.read : Str -> <io, exn> Str`,
+`spawn : (() -> <e> a) -> <e, async> Future[a]`), and a function's declared
+row must cover every effect its body performs — directly, transitively
+through calls, or through a callback. Higher-order functions are
+effect-polymorphic: `map : ([a], (a -> <e> b)) -> <e> [b]` propagates the
+callback's effect. Declaring more effects than you perform is allowed
+(`<> ⊆ <io>`); performing an undeclared effect is error **E401**. A `handle`
+that covers an operation discharges its effect from the row.
+
 Each effect operation takes exactly one parameter — for multiple values,
 declare a tuple type and perform with a tuple: `put : ((Str, Str)) -> ()`,
 `perform put(("k", "v"))`.

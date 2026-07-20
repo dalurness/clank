@@ -6,6 +6,18 @@
 **Primary Influence:** Koka (Leijen, 2014–present)
 **Adapted For:** Clank's terse applicative syntax
 
+> **Implementation status (2026-07):** Effects are inferred and enforced by
+> the checker. Builtins carry real effect rows (`print : Str -> <io> ()`,
+> `fs.read : Str -> <io, exn> Str`, `spawn : (() -> <e> a) -> <e, async>
+> Future[a]`, ...), effects propagate transitively through calls, and the
+> list HOFs (`map`/`filter`/`fold`/`flat-map`) are effect-polymorphic so a
+> callback's effect flows to the caller. Performing an undeclared effect is
+> error **E401**. The built-in vocabulary is `io`, `exn[E]`, `async` (the
+> `state[S]` effect below remains design-only). Effect-polymorphic
+> propagation through `TAny`-typed combinators (`iter.*`, `srv.*` handlers,
+> `spawn`'s thunk) is not yet realized — those accept effectful callbacks
+> but do not propagate their effects.
+
 ---
 
 ## 1. Overview

@@ -31,20 +31,20 @@ type checkerState struct {
 	fnParamTypeExps map[string][]ast.TypeExpr
 
 	// Row/type variable substitution
-	rowSubst         map[int]*rowSubstEntry
-	effectRowSubst   map[int]*effectRowSubstEntry
-	namedRowVars     map[string]int
-	namedEffectVars  map[string]int
-	typeSubst        map[int]Type
-	knownTypes       map[string]bool
-	fnTypeParamVs    map[string]map[string]Type
+	rowSubst        map[int]*rowSubstEntry
+	effectRowSubst  map[int]*effectRowSubstEntry
+	namedRowVars    map[string]int
+	namedEffectVars map[string]int
+	typeSubst       map[int]Type
+	knownTypes      map[string]bool
+	fnTypeParamVs   map[string]map[string]Type
 
 	// Registries
 	implRegistry map[string][]implEntry
 
 	// Module resolution
-	moduleResolver             ModuleTypeResolver
-	moduleEffectAliasResolver  ModuleEffectAliasResolver
+	moduleResolver            ModuleTypeResolver
+	moduleEffectAliasResolver ModuleEffectAliasResolver
 
 	// Effect inference: opMap resolves an operation name to its effect
 	// (user `effect` decls plus builtin `raise`→`exn`). effectScopes is a
@@ -2625,7 +2625,7 @@ func (s *checkerState) inferExpr(
 
 		if !typeEqual(thenType, elseType) && !numCompatible(thenType, elseType) {
 			*errors = append(*errors, TypeError{
-				Code:     "E302",
+				Code: "E302",
 				Message: func() string {
 					a, b := s.showT2(thenType, elseType)
 					return fmt.Sprintf("if branches have different types: %s vs %s", a, b)
@@ -2926,7 +2926,7 @@ func (s *checkerState) inferExpr(
 				resultType = armType
 			} else if !typeEqual(resultType, armType) && !numCompatible(resultType, armType) {
 				*errors = append(*errors, TypeError{
-					Code:     "E305",
+					Code: "E305",
 					Message: func() string {
 						a, b := s.showT2(resultType, armType)
 						return fmt.Sprintf("match arms have inconsistent types: %s vs %s", a, b)
@@ -2955,7 +2955,7 @@ func (s *checkerState) inferExpr(
 			et := s.inferExpr(e.Elements[i], env, errors, registry, aff)
 			if !typeEqual(elemType, et) && !numCompatible(elemType, et) {
 				*errors = append(*errors, TypeError{
-					Code:     "E306",
+					Code: "E306",
 					Message: func() string {
 						got, want := s.showT2(et, elemType)
 						return fmt.Sprintf("list element %d has type %s, expected %s", i+1, got, want)
@@ -3279,7 +3279,7 @@ func (s *checkerState) inferExpr(
 			bodyType := s.inferExpr(e.Body, forEnv, errors, registry, aff)
 			if !typeEqual(bodyType, initType) && !numCompatible(bodyType, initType) {
 				*errors = append(*errors, TypeError{
-					Code:     "E302",
+					Code: "E302",
 					Message: func() string {
 						a, b := s.showT2(bodyType, initType)
 						return fmt.Sprintf("for-fold body type %s doesn't match accumulator type %s", a, b)
@@ -3826,8 +3826,12 @@ func registerBuiltins(env *typeEnv) {
 	registerPolyBuiltin(env, "col.enum", 1, func(v []Type) Type {
 		return NewTFn(TList{Element: v[0]}, TList{Element: TTuple{Elements: []Type{TInt, v[0]}}})
 	})
-	registerPolyBuiltin(env, "col.chunk", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}})) })
-	registerPolyBuiltin(env, "col.win", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}})) })
+	registerPolyBuiltin(env, "col.chunk", 1, func(v []Type) Type {
+		return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}}))
+	})
+	registerPolyBuiltin(env, "col.win", 1, func(v []Type) Type {
+		return NewTFn(TList{Element: v[0]}, NewTFn(TInt, TList{Element: TList{Element: v[0]}}))
+	})
 	registerPolyBuiltin(env, "col.intersperse", 1, func(v []Type) Type { return NewTFn(TList{Element: v[0]}, NewTFn(v[0], TList{Element: v[0]})) })
 	registerPolyBuiltin(env, "col.rep", 1, func(v []Type) Type { return NewTFn(v[0], NewTFn(TInt, TList{Element: v[0]})) })
 	env.set("col.sum", NewTFn(TList{Element: TInt}, TInt))
@@ -3991,7 +3995,6 @@ func TypeCheckWithModules(program *ast.Program, resolver ModuleTypeResolver) []T
 	return typeCheckImpl(program, resolver, nil, nil)
 }
 
-
 // TypeCheckWithResolvers validates a program with cross-package type and effect alias resolution.
 func TypeCheckWithResolvers(program *ast.Program, typeResolver ModuleTypeResolver, aliasResolver ModuleEffectAliasResolver) []TypeError {
 	return typeCheckImpl(program, typeResolver, aliasResolver, nil)
@@ -4001,26 +4004,26 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 	var errors []TypeError
 
 	s := &checkerState{
-		fnRefInfo:                  make(map[string]*fnRefInfo),
-		varRefinements:             make(map[string]string),
-		fnConstraints:              make(map[string]*fnConstraintInfo),
-		fnParamTypeExps:            make(map[string][]ast.TypeExpr),
-		rowSubst:                   make(map[int]*rowSubstEntry),
-		effectRowSubst:             make(map[int]*effectRowSubstEntry),
-		namedRowVars:               make(map[string]int),
-		namedEffectVars:            make(map[string]int),
-		typeSubst:                  make(map[int]Type),
-		knownTypes:                 make(map[string]bool),
-		fnTypeParamVs:              make(map[string]map[string]Type),
-		implRegistry:               make(map[string][]implEntry),
-		moduleResolver:             resolver,
-		moduleEffectAliasResolver:  aliasResolver,
+		fnRefInfo:                 make(map[string]*fnRefInfo),
+		varRefinements:            make(map[string]string),
+		fnConstraints:             make(map[string]*fnConstraintInfo),
+		fnParamTypeExps:           make(map[string][]ast.TypeExpr),
+		rowSubst:                  make(map[int]*rowSubstEntry),
+		effectRowSubst:            make(map[int]*effectRowSubstEntry),
+		namedRowVars:              make(map[string]int),
+		namedEffectVars:           make(map[string]int),
+		typeSubst:                 make(map[int]Type),
+		knownTypes:                make(map[string]bool),
+		fnTypeParamVs:             make(map[string]map[string]Type),
+		implRegistry:              make(map[string][]implEntry),
+		moduleResolver:            resolver,
+		moduleEffectAliasResolver: aliasResolver,
 	}
 	ResetVarCounter()
 
 	env := newTypeEnv(nil)
-	registry := make(map[string][]string)    // type name → variant names
-	opMap := make(effectOpMap)                // op name → effect name
+	registry := make(map[string][]string) // type name → variant names
+	opMap := make(effectOpMap)            // op name → effect name
 	// The builtin `raise` performs `exn`; seeding it here lets `handle`
 	// arms named `raise` discharge exn and keeps perform/handle symmetric.
 	opMap["raise"] = "exn"
@@ -4589,7 +4592,7 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 			}
 			if !typeEqual(bodyType, expectedRet) && !numCompatible(bodyType, expectedRet) {
 				errors = append(errors, TypeError{
-					Code:     "E307",
+					Code: "E307",
 					Message: func() string {
 						got, want := s.showT2(bodyType, expectedRet)
 						return fmt.Sprintf("function '%s' returns %s, expected %s", def.Name, got, want)
@@ -4641,7 +4644,7 @@ func typeCheckImpl(program *ast.Program, resolver ModuleTypeResolver, aliasResol
 			sort.Strings(undeclared)
 			for _, eff := range undeclared {
 				errors = append(errors, TypeError{
-					Code:     "E308",
+					Code:     "E401",
 					Message:  fmt.Sprintf("function '%s' performs effect '%s' not declared in its signature — add <%s> to its effect row", def.Name, eff, eff),
 					Location: def.Loc,
 				})

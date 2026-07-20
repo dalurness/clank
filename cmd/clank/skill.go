@@ -75,7 +75,13 @@ main : () -> <io> () =
 - Stdlib is import-free and module-qualified: ` + "`fs.read`" + `, ` + "`json.dec`" + `,
   ` + "`http.get`" + `, ` + "`proc.sh`" + `, ` + "`env.get`" + `, ` + "`rx.find`" + `, ` + "`math.abs`" + `, ` + "`str.*`" + `,
   ` + "`col.*`" + `, ` + "`iter.*`" + `
-- Effects are part of the type: pure ` + "`<>`" + `, ` + "`<io>`" + `, ` + "`<exn[E]>`" + `, ` + "`<async>`" + `
+- Effects are part of the type and are ENFORCED: pure ` + "`<>`" + `, ` + "`<io>`" + `,
+  ` + "`<exn[E]>`" + `, ` + "`<async>`" + `. The checker tracks builtin effects and
+  propagates them through calls and higher-order functions, so a wrong
+  row is a compile error (E401). Rules of thumb: printing / ` + "`fs`" + ` / ` + "`env`" + ` /
+  ` + "`log`" + ` / ` + "`dt.now`" + ` → ` + "`<io>`" + `; ` + "`fs.read`" + `, ` + "`http.*`" + `, ` + "`proc.run/sh`" + `,
+  ` + "`json.dec`" + ` (can fail) → add ` + "`exn`" + `; ` + "`spawn`" + `/channels/` + "`sleep`" + ` → ` + "`<async>`" + `.
+  Unsure? ` + "`clank eval --type 'fs.read'`" + ` prints the row.
 
 Gotchas:
 
